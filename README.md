@@ -20,24 +20,33 @@ Keep your existing environment files. For a fresh checkout, copy `.env.example` 
 
 The backend and Alembic automatically read `backend/.env`; shell variables take precedence. `DATABASE_URL`, when set, overrides the separate `POSTGRES_*` fields. Do not put database credentials in `NEXT_PUBLIC_*` variables. Relative `FIXFLOW_DATA_DIR` paths remain relative to `backend/`. `FIXFLOW_PYTHON` is no longer needed: ingestion runs in the backend's own virtual environment, without subprocesses.
 
-## PostgreSQL setup
+## Docker Compose (complete application)
 
-Choose one database setup, not both.
-
-### Docker (fresh checkout)
-
-Use `backend/.env.example` as the template and set a nonempty `POSTGRES_PASSWORD`. Remove any native socket `DATABASE_URL` override before using Docker.
+For a fresh Docker setup, copy `.env.example` to a root `.env`. Set a nonempty `POSTGRES_PASSWORD`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and `CLERK_SECRET_KEY` from your own Clerk application. Keep `.env` private. Compose reads this file automatically; the existing `backend/.env` and `.env.local` remain for native development and are not used by the containers. If you already have Clerk values in `.env.local`, copy those values into the root `.env`. `NEXT_PUBLIC_API_URL` must be reachable by your browser (the default is `http://localhost:8000`); `FRONTEND_ORIGINS` must include the frontend browser origin.
 
 ```bash
-docker compose --env-file backend/.env up -d --wait db
-myenev/bin/alembic upgrade head
+cp .env.example .env
+# Edit .env and fill the required credentials.
+docker compose up --build
 ```
 
-The database binds only to localhost; the named volume survives container/backend restarts. Do not run `docker compose down -v` unless you intend to erase the database.
+The frontend is at http://localhost:3000 and the backend health endpoint is at http://localhost:8000/health. The browser calls the published backend port; the Next.js upload route uses `http://backend:8000` inside Compose. The backend connects to `db:5432`. If host port 5432 is occupied, change `POSTGRES_PORT` in the root `.env`; container-to-container traffic still uses `db:5432`. A one-shot `migrate` service runs `alembic upgrade head` after PostgreSQL becomes healthy; the API starts only after migrations succeed. The database and uploaded documents use separate named volumes. This Compose setup runs one backend instance and remains a local single-user deployment; it does not add backend authorization.
+
+| Action | Command |
+| --- | --- |
+| Start in background | `docker compose up -d --build` |
+| Status | `docker compose ps` |
+| Logs | `docker compose logs -f` |
+| Stop | `docker compose down` |
+| Rebuild | `docker compose build --no-cache` |
+
+`docker compose down` keeps the PostgreSQL and upload volumes. **`docker compose down -v` deletes the volumes and local database data.** Do not use it for normal shutdown. Browser-facing `NEXT_PUBLIC_*` variables are fixed at frontend build time, so rebuild after changing them. The `POSTGRES_PASSWORD` value initializes a new database volume; changing it later does not change credentials inside an existing volume.
+
+For database-only native frontend/backend development, use `docker compose up -d --wait db` with the same root `.env`, then point `backend/.env` at `127.0.0.1` and run Alembic locally.
 
 ### Native Linux (this workspace)
 
-Docker daemon access was unavailable during implementation. A PostgreSQL 18/pgvector runtime and initialized cluster are installed under ignored `.local/postgres/`; the private `backend/.env` points to this cluster. It uses Unix-socket peer authentication and exposes no TCP listener.
+A PostgreSQL 18/pgvector runtime and initialized cluster are installed under ignored `.local/postgres/`; the private `backend/.env` points to this cluster. It uses Unix-socket peer authentication and exposes no TCP listener.
 
 ```bash
 bash scripts/local_postgres.sh start
@@ -57,6 +66,10 @@ npm run dev
 ```
 
 Frontend: http://localhost:3000. Health: http://localhost:8000/health. API documentation: http://localhost:8000/docs. Health checks database connectivity, pgvector, required tables, and the Alembic revision. It reports source/document/chunk/embedding counts and AI configuration separately. Missing migrations or unavailable dependencies return HTTP 503 without exposing credentials or internal errors. Settings displays this readiness information.
+
+## Account entry
+
+Signed-out visits to the frontend workspace open `/sign-up` first. Existing users can switch to `/sign-in`; Clerk handles account field validation and verification. After sign-up or sign-in, users return to the workspace. Frontend pages and the Next.js upload route require a Clerk session. The FastAPI API remains a local shared-data service without backend token verification or per-user isolation; do not expose it as a public multi-user API.
 
 ## Ingestion and persistence
 
@@ -123,7 +136,7 @@ myenev/bin/python -m pytest
 For Docker, create the disposable database first (once):
 
 ```bash
-docker compose --env-file backend/.env exec db sh -c 'createdb -U "$POSTGRES_USER" fixflow_test'
+docker compose exec db sh -c 'createdb -U "$POSTGRES_USER" fixflow_test'
 ```
 
 Then set `TEST_DATABASE_URL` to that database's connection URL using your configured credentials. Missing `TEST_DATABASE_URL` skips DB integration tests rather than touching application data.

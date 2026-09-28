@@ -1,9 +1,14 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Sign in to upload documentation." }, { status: 401 });
+  }
+  const apiUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
   if (!apiUrl) {
-    return NextResponse.json({ error: "NEXT_PUBLIC_API_URL is not configured" }, { status: 503 });
+    return NextResponse.json({ error: "Backend URL is not configured" }, { status: 503 });
   }
   try {
     // Stream the existing route to the single backend ingestion implementation.
