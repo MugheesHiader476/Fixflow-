@@ -16,50 +16,24 @@ import hashlib
 import importlib.util
 import json
 import shutil
+import sys
 import tempfile
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from typing import IO, Protocol
+from typing import IO
+
+# Direct `python scripts/<command>.py` remains a supported entry point.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from backend.processing.loaders import TEXT_EXTENSIONS, LoadedDocument, loader_for
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = PROJECT_ROOT / "doc"
 ORGANIZED_DIR = SOURCE_DIR / "data"
 DEFAULT_OUTPUT = SOURCE_DIR / "processed" / "documents.jsonl"
 
-TEXT_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".rst",
-    ".py",
-    ".js",
-    ".jsx",
-    ".ts",
-    ".tsx",
-    ".java",
-    ".cpp",
-    ".c",
-    ".h",
-    ".cs",
-    ".go",
-    ".rs",
-    ".php",
-    ".rb",
-    ".css",
-    ".scss",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".conf",
-    ".sh",
-    ".bash",
-    ".dockerfile",
-    ".sql",
-    ".log",
-}
 SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | {".pdf", ".html", ".htm", ".csv", ".docx"}
 
 IGNORED_DIRECTORY_NAMES = {
@@ -68,17 +42,6 @@ IGNORED_DIRECTORY_NAMES = {
     "python-3.14-docs-html",
     "python-3.14-docs-texinfo",
 }
-
-
-class LoadedDocument(Protocol):
-    page_content: str
-    metadata: dict[str, object]
-
-
-class DocumentLoader(Protocol):
-    def load(self) -> Sequence[LoadedDocument]: ...
-
-    def lazy_load(self) -> Iterator[LoadedDocument]: ...
 
 
 def file_hash(file_path: Path) -> str:
@@ -169,30 +132,6 @@ def organize_files(
         organized.append(target)
 
     return organized
-
-
-def loader_for(file_path: Path) -> DocumentLoader | None:
-    # Keep optional, parser-heavy dependencies out of organization-only runs.
-    from langchain_community.document_loaders import (  # noqa: PLC0415
-        BSHTMLLoader,
-        CSVLoader,
-        Docx2txtLoader,
-        PyPDFLoader,
-        TextLoader,
-    )
-
-    suffix = file_path.suffix.lower()
-    if suffix == ".pdf":
-        return PyPDFLoader(str(file_path))
-    if suffix in {".html", ".htm"}:
-        return BSHTMLLoader(str(file_path), open_encoding="utf-8")
-    if suffix in TEXT_EXTENSIONS:
-        return TextLoader(str(file_path), encoding="utf-8", autodetect_encoding=True)
-    if suffix == ".csv":
-        return CSVLoader(file_path=str(file_path), encoding="utf-8")
-    if suffix == ".docx":
-        return Docx2txtLoader(str(file_path))
-    return None
 
 
 def load_file(

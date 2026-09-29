@@ -2,6 +2,8 @@
 
 Next.js + FastAPI with PostgreSQL as the primary persistent store. Files → Documents → Chunks → PostgreSQL/pgvector. Embeddings remain NULL; no embedding model or reranker is installed.
 
+The [OKF migration audit and plan](docs/okf-migration.md) describes the current architecture, the staged bundle path, and the compatibility work completed here. A small [OKF bundle](knowledge/index.md) records the current pipeline; it is not automatically imported.
+
 ## Requirements
 
 - Node.js 20.9+ and Python 3.11+

@@ -5,3 +5,4 @@ cryptography
 fonttools
 beautifulsoup4
 docx2txt
+PyYAML>=6.0,<7

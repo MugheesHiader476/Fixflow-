@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import Document, DocumentChunk
-from scripts.chunk_documents import records_for_source
+from backend.processing.chunking import records_for_source
 
 
 def content_hash(text: str) -> str:

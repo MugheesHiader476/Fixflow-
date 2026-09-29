@@ -12,8 +12,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.config import get_settings
 from backend.db.models import Document, DocumentChunk, KnowledgeSource
 from backend.db.session import get_session_factory
+from backend.processing.loaders import loader_for
+from backend.processing.okf import concept_metadata, maybe_parse_concept
 from backend.repositories.corpus import chunk_documents, document_values, insert_chunks, insert_documents, json_metadata
-from scripts.ingest_documents import loader_for
 
 logger = logging.getLogger(__name__)
 PENDING_STATUSES = ("uploaded", "processing", "chunked")
@@ -32,6 +33,13 @@ def load_documents(path: Path, source_id: UUID, digest: str) -> Iterator[dict[st
         if not content:
             continue
         metadata = json_metadata(document.metadata)
+        if path.suffix.lower() == ".md":
+            concept = maybe_parse_concept(content, path.name)
+            if concept is not None:
+                content = concept.body.strip()
+                metadata.update(concept_metadata(concept))
+                if not content:
+                    continue
         metadata.update(
             {
                 "file_hash": digest,
