@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/layout/app-shell";
@@ -37,6 +37,8 @@ function ThemeState() {
 
 beforeEach(() => {
   localStorage.clear();
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute("open", ""); } });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute("open"); } });
   api.checkBackendHealth.mockReset();
   api.listSessions.mockReset();
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -77,12 +79,15 @@ describe("application layout", () => {
 
     expect(await screen.findByText("Connected")).toBeDefined();
     expect(await screen.findByText("Async failure")).toBeDefined();
-    expect(screen.getByText("RAG index")).toBeDefined();
+    expect(screen.getByText("Documentation")).toBeDefined();
     expect(screen.getByText("Context details")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
-    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeDefined();
+    const menu = screen.getByRole("dialog", { name: "Workspace menu" });
+    expect(within(menu).getByRole("link", { name: /Knowledge Sources/ }).getAttribute("aria-current")).toBe("page");
+    expect(within(menu).getByRole("link", { name: /Async failure/ }).getAttribute("href")).toBe("/?session=session-1");
+    fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Toggle context panel" }));
     expect(togglePanel).toHaveBeenCalledOnce();
   });
@@ -122,6 +127,14 @@ describe("application layout", () => {
     expect(screen.getByText("worker.py")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("uses the editorial light theme by default and keeps dark mode available", async () => {
+    render(<ThemeProvider><ThemeState /></ThemeProvider>);
+    expect(await screen.findByRole("button", { name: "Light" })).toBeDefined();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Light" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
   it("restores and persists the selected theme", async () => {

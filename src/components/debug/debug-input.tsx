@@ -52,8 +52,8 @@ export function DebugInput({
   const [showTechs, setShowTechs] = useState(false);
   const { toast } = useToast();
   const areaRef = useRef<HTMLTextAreaElement>(null);
-  let submitLabel = "Diagnose Error";
-  if (busy) submitLabel = "Diagnosing…";
+  let submitLabel = "Search documentation";
+  if (busy) submitLabel = "Searching…";
   if (readingFiles) submitLabel = "Reading files…";
 
   const filteredTechs = TECH_OPTIONS.filter((t) =>
@@ -69,7 +69,7 @@ export function DebugInput({
   const addFiles = async (list: FileList | null) => {
     if (!list?.length || readingFiles || busy) return;
     if (files.length + list.length > MAX_DEBUG_FILES) {
-      toast(`Attach up to ${MAX_DEBUG_FILES} files per diagnosis.`, "error");
+      toast(`Attach up to ${MAX_DEBUG_FILES} files per session.`, "error");
       return;
     }
     const version = ++fileRead.current;
@@ -80,7 +80,7 @@ export function DebugInput({
       const next = [...files, ...attachments];
       setFiles(next);
       onFilesChange(next.map((f) => f.name));
-      toast(`${attachments.length} file(s) ready for diagnosis`, "success");
+      toast(`${attachments.length} file(s) ready for your session`, "success");
     } catch (failure) {
       if (version === fileRead.current) toast(failure instanceof Error ? failure.message : "Could not read files.", "error");
     } finally {
@@ -138,7 +138,7 @@ export function DebugInput({
           submit();
         }
       }}
-      className="overflow-visible rounded-xl border border-border bg-panel shadow-lg shadow-black/20"
+      className="ff-debug-input overflow-visible rounded-xl border border-border bg-panel"
     >
       <fieldset disabled={busy || readingFiles} className="min-w-0">
       <div className="flex items-center pr-2">
@@ -153,7 +153,7 @@ export function DebugInput({
           ]}
         />
         <span className="ml-auto hidden items-center gap-1 font-mono text-[10px] text-muted/60 sm:flex">
-          <Command size={10} /> + Enter to diagnose
+          <Command size={10} /> + Enter to search
         </span>
       </div>
 
@@ -278,7 +278,7 @@ export function DebugInput({
             <span className="ml-auto shrink-0 text-[10px]">{showTechs ? "▲" : "▼"}</span>
           </button>
           {showTechs && (
-            <div className="ff-fade-up absolute bottom-full left-0 z-30 mb-1.5 w-full min-w-72 rounded-lg border border-border-strong bg-panel p-2 shadow-xl shadow-black/50">
+            <div className="ff-fade-up absolute bottom-full left-0 z-30 mb-1.5 w-full min-w-0 sm:min-w-72 rounded-lg border border-border-strong bg-panel p-2 shadow-xl shadow-black/50">
               <input
                 value={techQuery}
                 onChange={(e) => setTechQuery(e.target.value)}
@@ -309,7 +309,7 @@ export function DebugInput({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Tooltip label="Clear all inputs">
             <Button variant="ghost" onClick={clearAll} disabled={busy}>
               <Trash2 size={14} /> Clear

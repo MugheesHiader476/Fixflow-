@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
+import { WorkspaceHero, WorkspaceGuide, WorkspaceFeatures } from "@/components/layout/workspace-intro";
 import { RightPanel } from "@/components/layout/right-panel";
 import { DebugInput } from "@/components/debug/debug-input";
 import { PipelineProgress } from "@/components/debug/pipeline";
@@ -25,6 +26,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
   const resultRef = useRef<HTMLDivElement>(null);
   const diagnosisRequest = useRef<AbortController | null>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const SessionHeading = sessionId ? "h1" : "h2";
   const { toast } = useToast();
   const router = useRouter();
 
@@ -82,7 +84,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
       );
     } catch (failure) {
       if (!controller.signal.aborted) {
-        setError(failure instanceof Error ? failure.message : "Diagnosis failed. Please try again.");
+        setError(failure instanceof Error ? failure.message : "Search failed. Please try again.");
       }
     } finally {
       if (diagnosisRequest.current === controller) {
@@ -114,7 +116,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
 
   return (
     <AppShell
-      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ")} diagnosis` : "New Debug Session"}
+      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Documentation"} session` : "New Debug Session"}
       techs={techs.length ? techs : (diagnosis?.detected ?? [])}
       rightPanel={
         <RightPanel
@@ -129,16 +131,13 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
       rightPanelOpen={rightOpen}
       onToggleRightPanel={() => setRightOpen((o) => !o)}
     >
-      <div className="mx-auto max-w-3xl space-y-5 px-4 py-8 max-xl:max-w-4xl xl:px-8">
-        <div className="ff-grid-bg rounded-xl border border-border px-5 py-7 text-center sm:px-8">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Debug smarter. <span className="text-accent">Fix faster.</span>
-          </h1>
-          <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-muted">
-            Search your documentation, keep debugging context together, and review relevant evidence.
-          </p>
-        </div>
-
+      <div className="ff-home">
+        {!sessionId && <WorkspaceHero />}
+        {!sessionId && <section className="ff-intro"><p className="ff-eyebrow"><span aria-hidden="true" />A CLEARER WAY TO DEBUG</p><div><h2>Every solution starts<br />with the right context.</h2><p>Bring the error. Add the details. Search your documentation for relevant evidence, and keep the whole investigation together.</p></div></section>}
+        <section id="workspace" className="ff-workspace-section" aria-labelledby="session-heading">
+          <div className="ff-section-heading"><div><p className="ff-eyebrow">{sessionId ? "YOUR INVESTIGATION" : "LET’S WORK THROUGH IT"}</p><SessionHeading id="session-heading">{sessionId ? "Continue the conversation." : "What are you working on?"}</SessionHeading></div><span className="ff-mode-label"><span />Documentation search</span></div>
+          <div className={sessionId ? "ff-session-input" : "ff-workspace-grid"}>
+            <div className="min-w-0">
         {loadingSession && <p role="status" className="text-sm text-muted">Loading session…</p>}
         {!loadingSession && <DebugInput
           onDiagnose={runPipeline}
@@ -156,7 +155,12 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
           onClear={() => { setDiagnosis(null); setError(null); setSaved(false); router.replace("/"); }}
         />}
 
-        <div ref={resultRef}>
+              <p className="ff-input-note">Searches your uploaded documents by keyword. AI diagnosis is not connected.</p>
+            </div>
+            {!sessionId && <WorkspaceGuide />}
+          </div>
+        <div ref={resultRef} className="ff-results">
+
           {busy && <PipelineProgress />}
           {error && !busy && (
             <div
@@ -176,7 +180,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
             <div className="rounded-xl border border-dashed border-border px-6 py-10 text-center">
               <p className="text-sm text-muted">
                 Paste an error, code, or context above — then run{" "}
-                <span className="text-foreground">Diagnose Error</span>.
+                <span className="text-foreground">Search documentation</span>.
               </p>
               <p className="mt-1 font-mono text-[11px] text-muted/60">
                 searches your uploaded knowledge base
@@ -193,6 +197,8 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
             />
           )}
         </div>
+        </section>
+        {!sessionId && <WorkspaceFeatures />}
       </div>
     </AppShell>
   );

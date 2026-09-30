@@ -2,6 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
+import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
+import { Brand } from "./brand";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
 
@@ -9,7 +12,7 @@ const PAGE_META: Record<string, { title: string; techs: string[] }> = {
   "/": { title: "New Debug Session", techs: [] },
   "/history": { title: "Debug History", techs: [] },
   "/saved": { title: "Saved Solutions", techs: [] },
-  "/sources": { title: "Knowledge Sources", techs: ["RAG index"] },
+  "/sources": { title: "Knowledge Sources", techs: ["Documentation"] },
   "/settings": { title: "Settings", techs: [] },
 };
 
@@ -29,7 +32,6 @@ export function AppShell({
   onToggleRightPanel?: () => void;
 }) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const meta = PAGE_META[pathname] ?? PAGE_META["/"];
   const showRightToggle = Boolean(onToggleRightPanel);
@@ -43,13 +45,21 @@ export function AppShell({
   const panelTechs = techs.length ? techs : meta.techs;
 
   return (
-    <div className="flex min-h-dvh bg-background">
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
-        mobileOpen={mobileOpen}
-        onMobileClose={() => setMobileOpen(false)}
-      />
+    <div className="ff-app">
+      <a href="#main-content" className="ff-skip-link">Skip to content</a>
+      <header className="ff-site-header">
+        <Brand />
+        <nav className="ff-main-nav" aria-label="Main navigation">
+          {[
+            { href: "/", label: "Workspace" },
+            { href: "/sources", label: "Knowledge" },
+            { href: "/history", label: "History" },
+            { href: "/saved", label: "Saved" },
+          ].map((item) => <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>{item.label}</Link>)}
+        </nav>
+        <Link href="/sources" className="ff-pill ff-pill-dark ff-header-cta">Add documentation <ArrowUpRight size={17} /></Link>
+      </header>
+      <Sidebar open={mobileOpen} onClose={() => setMobileOpen(false)} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           sessionTitle={title}
@@ -59,11 +69,16 @@ export function AppShell({
           onToggleRightPanel={() => onToggleRightPanel?.()}
           showRightToggle={showRightToggle}
         />
-        <div className="flex min-h-0 flex-1">
-          <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+        <div className="ff-main-body">
+          <main id="main-content" className="min-w-0 flex-1">{children}</main>
           {rightPanel}
         </div>
       </div>
+      <footer className="ff-footer">
+        <div><Brand /><p>A little context goes a long way.</p></div>
+        <nav aria-label="Footer navigation"><Link href="/sources">Knowledge sources</Link><Link href="/history">Debug history</Link><Link href="/saved">Saved solutions</Link><Link href="/settings">Settings <ArrowUpRight size={14} /></Link></nav>
+        <div className="ff-footer-bottom"><span>FixFlow · Your debugging workspace</span><span>Built around your documentation.</span></div>
+      </footer>
     </div>
   );
 }

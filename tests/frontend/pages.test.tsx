@@ -85,6 +85,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("application pages", () => {
+  it("connects the editorial hero to the functional workspace and knowledge pages", () => {
+    render(<DebugSessionPage />);
+    expect(screen.getByRole("heading", { level: 1, name: /Less searching/ })).toBeDefined();
+    expect(screen.getByRole("link", { name: "Start a session" }).getAttribute("href")).toBe("#workspace");
+    expect(screen.getByRole("link", { name: "Explore your knowledge" }).getAttribute("href")).toBe("/sources");
+    expect(screen.getByText(/AI diagnosis is not connected/)).toBeDefined();
+    expect(screen.getByRole("link", { name: /Pick up the thread/ }).getAttribute("href")).toBe("/history");
+    expect(screen.getByRole("link", { name: /Keep what works/ }).getAttribute("href")).toBe("/saved");
+  });
+
   it("loads history and links to a session", async () => {
     api.listSessions.mockResolvedValue([
       {

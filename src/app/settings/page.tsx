@@ -15,6 +15,7 @@ import {
   SignUpButton,
   UserButton,
 } from "@clerk/nextjs";
+import { PageHeading } from "@/components/layout/page-heading";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,12 +43,10 @@ export default function SettingsPage() {
 
   return (
     <AppShell sessionTitle="Settings">
-      <div className="mx-auto max-w-3xl space-y-5 px-4 py-8 xl:px-8">
-        <header>
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">Workspace</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Settings</h1>
-          <p className="mt-2 text-sm text-muted">Manage the FixFlow workspace connection and appearance.</p>
-        </header>
+      <div className="ff-page">
+        <PageHeading eyebrow="MAKE IT YOURS" title="Your workspace. Your way.">
+          Adjust your appearance, check your connections, and see what’s ready to work.
+        </PageHeading>
 
         <section className="rounded-xl border border-border bg-panel p-4 sm:p-5">
           <div className="flex items-start gap-3">
@@ -86,7 +85,7 @@ export default function SettingsPage() {
           </div>
           {backend === "offline" && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-danger">
-              <CircleAlert size={13} /> Start FastAPI to enable live diagnosis and history.
+              <CircleAlert size={13} /> Start FastAPI to enable documentation search and history.
             </p>
           )}
           {backend === "online" && (
@@ -113,7 +112,7 @@ export default function SettingsPage() {
               <Database size={16} />
             </span>
             <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-semibold">Knowledge index</h2>
+              <h2 className="text-sm font-semibold">Knowledge collection</h2>
               <p className="mt-1 text-xs text-muted">Sources available to the retrieval service</p>
             </div>
             <Badge tone="lime">{sources.length} sources</Badge>

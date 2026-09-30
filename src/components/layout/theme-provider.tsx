@@ -3,20 +3,20 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 const ThemeCtx = createContext<{ dark: boolean; toggle: () => void }>({
-  dark: true,
+  dark: false,
   toggle: () => {},
 });
 
 export const useTheme = () => useContext(ThemeCtx);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(false);
 
   useEffect(() => {
     let stored: string | null = null;
     try { stored = localStorage.getItem("ff-theme"); } catch { /* Storage may be disabled. */ }
     const applyStoredTheme = window.requestAnimationFrame(() => {
-      setDark(stored !== "light");
+      setDark(stored === "dark");
     });
 
     return () => window.cancelAnimationFrame(applyStoredTheme);

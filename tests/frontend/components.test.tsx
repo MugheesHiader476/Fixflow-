@@ -109,10 +109,10 @@ describe("debug interactions", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Diagnose Error" }));
+    fireEvent.click(screen.getByRole("button", { name: "Search documentation" }));
     expect(screen.getByText("Add an error message, code, or context first")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: /try example/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Diagnose Error" }));
+    fireEvent.click(screen.getByRole("button", { name: "Search documentation" }));
     expect(onDiagnose).toHaveBeenCalledWith(
       expect.objectContaining({ error: "RuntimeError: no running event loop" })
     );

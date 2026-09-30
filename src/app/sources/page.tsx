@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, FileText, GitBranch, Link2, Upload, Database } from "lucide-react";
+import { PageHeading } from "@/components/layout/page-heading";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -160,30 +161,17 @@ export default function SourcesPage() {
   };
 
   return (
-    <AppShell sessionTitle="Knowledge Sources" techs={["RAG index"]}>
-      <div className="mx-auto max-w-5xl space-y-5 px-4 py-8 xl:px-8">
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-              Initial knowledge base
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Give FixFlow its context.</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-              Add documentation here once. These sources will be ready for the embedding pipeline,
-              and you can extend the collection whenever your project grows.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 rounded-md border border-border bg-panel px-3 py-2 text-xs text-muted">
-            <Database size={14} className="text-lime" />
-            {sources.length} sources available
-          </div>
-        </header>
+    <AppShell sessionTitle="Knowledge Sources" techs={["Documentation"]}>
+      <div className="ff-page">
+        <PageHeading eyebrow="YOUR KNOWLEDGE, CONNECTED" title="Good context starts here." action={<span className="ff-source-count"><Database size={16} />{sources.length} sources available</span>}>
+          Your guides, runbooks, and reference docs. Bring them together and make them part of your next investigation.
+        </PageHeading>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
           <section className="rounded-xl border border-border bg-panel p-4 sm:p-5">
             <div className="mb-4">
               <h2 className="text-sm font-semibold">Add documentation</h2>
-              <p className="mt-1 text-xs text-muted">This source will be queued for retrieval in future diagnoses.</p>
+              <p className="mt-1 text-xs text-muted">Upload or paste a document to make it available for keyword search.</p>
             </div>
 
             <div className="grid gap-1.5 sm:grid-cols-3" role="tablist" aria-label="Source type">

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { History, ArrowUpRight } from "lucide-react";
+import { PageHeading } from "@/components/layout/page-heading";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { listSessions } from "@/lib/api";
@@ -15,13 +16,10 @@ export default function HistoryPage() {
 
   return (
     <AppShell sessionTitle="Debug History">
-      <div className="mx-auto max-w-4xl space-y-5 px-4 py-8 xl:px-8">
-        <header>
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">Sessions</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Debug history</h1>
-          <p className="mt-2 text-sm text-muted">Reopen a backend session and continue the investigation.</p>
-          <Button className="mt-3" size="sm" onClick={reload} loading={loading}>Refresh history</Button>
-        </header>
+      <div className="ff-page">
+        <PageHeading eyebrow="YOUR INVESTIGATIONS" title="Pick up the thread." action={<Button size="sm" onClick={reload} loading={loading}>Refresh history</Button>}>
+          Every error, every conversation, every bit of context. Reopen a session and keep moving.
+        </PageHeading>
         {error && <p className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>}
         {loading && <p role="status" className="text-sm text-muted">Loading debug history…</p>}
         <section className="space-y-2">

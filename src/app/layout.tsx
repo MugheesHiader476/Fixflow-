@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FixFlow — Software Debugging RAG",
+  title: "FixFlow — Your debugging workspace",
   description:
     "Search uploaded documentation and preserve debugging context, sessions, and conversations.",
 };

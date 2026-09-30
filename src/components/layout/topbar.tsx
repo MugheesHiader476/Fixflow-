@@ -57,16 +57,13 @@ export function TopBar({
   const connection = connectionDetails(online);
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface/80 px-3 sm:px-4">
+    <div className="ff-workspace-bar">
       <MobileNavButton onClick={onMobileNav} />
 
       <div className="flex min-w-0 items-center gap-2.5">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium leading-tight">
             {sessionTitle}
-          </p>
-          <p className="text-[11px] text-muted leading-tight">
-            current workspace session
           </p>
         </div>
         {techs.length > 0 && (
@@ -145,6 +142,6 @@ export function TopBar({
           </button>
         </Tooltip>
       </div>
-    </header>
+    </div>
   );
 }

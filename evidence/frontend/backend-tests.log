@@ -1,0 +1,50 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/mughees-haider/RAG
+configfile: pyproject.toml
+testpaths: backend/tests, scripts/tests
+plugins: cov-7.1.0, langsmith-0.12.4, anyio-4.15.1
+collected 65 items
+
+backend/tests/test_api.py .......................                        [ 35%]
+backend/tests/test_database.py .............                             [ 55%]
+backend/tests/test_okf.py .............                                  [ 75%]
+backend/tests/test_security.py ........                                  [ 87%]
+scripts/tests/test_chunk_documents.py ....                               [ 93%]
+scripts/tests/test_ingest_documents.py ....                              [100%]
+
+=============================== warnings summary ===============================
+backend/tests/test_api.py::test_upload_ingestion_status_and_persistence
+  /home/mughees-haider/RAG/backend/processing/loaders.py:27: DeprecationWarning: `langchain-community` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages.
+    from langchain_community.document_loaders import (  # noqa: PLC0415
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /home/mughees-haider/RAG/evidence/frontend/backend-tests.xml -
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.14.4-final-0 ________________
+
+Name                                                      Stmts   Miss Branch BrPart  Cover   Missing
+-----------------------------------------------------------------------------------------------------
+backend/api/routes.py                                       105      8     22      2    91%   49-50, 62, 155->158, 159-163
+backend/config.py                                            54      2     10      2    94%   43, 63
+backend/db/migrations/versions/0001_persistent_store.py      28     16      2      0    40%   17, 24-105, 114-122
+backend/main.py                                              66      5     10      2    91%   46, 62, 95-101, 107
+backend/processing/chunking.py                               74      4     20      4    91%   76, 90, 112, 152
+backend/processing/loaders.py                                20      6     10      2    60%   39, 42-46
+backend/processing/okf.py                                    79      5     34      6    90%   58, 64, 79, 83, 100, 108->110
+backend/repositories/corpus.py                               44      2     10      2    93%   23, 80
+backend/repositories/vectors.py                              69      2     20      3    94%   55, 89->99, 105
+backend/schemas/models.py                                   148      2     12      2    98%   50, 53
+backend/services/ingestion.py                                91      6     32      5    91%   30, 42, 80, 103, 131->135, 133-134
+backend/services/readiness.py                                39      0     10      1    98%   53->55
+backend/services/store.py                                    59      1      6      1    97%   76
+backend/services/uploads.py                                  63      1     16      1    97%   25
+scripts/chunk_documents.py                                   68      6     16      7    85%   20, 44, 47, 80->exit, 92, 101, 118
+scripts/import_jsonl_to_db.py                               133     23     36      3    81%   68-69, 199, 209-213, 217-231, 235
+scripts/ingest_documents.py                                 180     73     54      9    56%   28, 58-59, 69, 73-77, 85, 130->132, 143, 150, 164-166, 173-174, 210->exit, 215, 219-227, 240-270, 274-277, 281-309, 313-318, 322-323, 336
+-----------------------------------------------------------------------------------------------------
+TOTAL                                                      1460    162    330     52    86%
+
+13 files skipped due to complete coverage.
+Coverage XML written to file coverage/python-coverage.xml
+======================== 65 passed, 1 warning in 5.95s =========================
