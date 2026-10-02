@@ -78,7 +78,7 @@ export default function SettingsPage() {
             </Badge>
           </div>
           <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
-            <p className="font-mono text-[11px] text-muted">{process.env.NEXT_PUBLIC_API_URL || "Backend URL not configured"}</p>
+            <p className="font-mono text-[11px] text-muted">Authenticated backend gateway</p>
             <Button variant="outline" size="sm" onClick={() => { health.reload(); knowledge.reload(); }} loading={health.loading}>
               Check connection
             </Button>
@@ -135,7 +135,7 @@ export default function SettingsPage() {
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               <h2 className="text-sm font-semibold">Account</h2>
-              <p className="mt-1 text-xs text-muted">Manage your Clerk sign-in. This development workspace does not yet isolate backend data by user.</p>
+              <p className="mt-1 text-xs text-muted">Manage your Clerk sign-in. Backend records are isolated by the account verified at the server gateway.</p>
             </div>
             <Show when="signed-in">
               <UserButton />

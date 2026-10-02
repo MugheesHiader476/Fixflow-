@@ -5,8 +5,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import Document, DocumentChunk, KnowledgeSource
-from backend.schemas.models import KnowledgeKind, SourceStatus
+from backend.schemas.models import EmbeddingStatus, IngestionFormat, KnowledgeKind, SourceStatus
 from backend.schemas.models import KnowledgeSource as SourceResponse
+from backend.services.access import owner_id
 
 
 def source_response(source: KnowledgeSource, document_count: int = 0, chunk_count: int = 0) -> SourceResponse:
@@ -17,6 +18,9 @@ def source_response(source: KnowledgeSource, document_count: int = 0, chunk_coun
         kind=cast(KnowledgeKind, source.source_type),
         source_type=cast(KnowledgeKind, source.source_type),
         status=cast(SourceStatus, source.status),
+        ingestion_format=cast(IngestionFormat, source.ingestion_format),
+        embedding_status=cast(EmbeddingStatus, source.embedding_status),
+        embedding_error=source.embedding_error,
         documents=document_count,
         document_count=document_count,
         chunks=chunk_count,
@@ -42,6 +46,7 @@ async def list_sources(session: AsyncSession, source_id: UUID | None = None) -> 
         select(KnowledgeSource, func.coalesce(docs.c.count, 0), func.coalesce(chunks.c.count, 0))
         .outerjoin(docs, KnowledgeSource.id == docs.c.source_id)
         .outerjoin(chunks, KnowledgeSource.id == chunks.c.source_id)
+        .where(KnowledgeSource.owner_id == owner_id(session))
         .order_by(KnowledgeSource.created_at.desc(), KnowledgeSource.id)
     )
     if source_id is not None:
@@ -52,6 +57,8 @@ async def list_sources(session: AsyncSession, source_id: UUID | None = None) -> 
 
 async def delete_source(session: AsyncSession, source_id: UUID) -> bool:
     result = await session.execute(
-        delete(KnowledgeSource).where(KnowledgeSource.id == source_id).returning(KnowledgeSource.id)
+        delete(KnowledgeSource)
+        .where(KnowledgeSource.id == source_id, KnowledgeSource.owner_id == owner_id(session))
+        .returning(KnowledgeSource.id)
     )
     return result.scalar_one_or_none() is not None

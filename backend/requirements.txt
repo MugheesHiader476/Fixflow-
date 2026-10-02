@@ -6,3 +6,4 @@ asyncpg>=0.30,<1
 alembic>=1.15,<2
 pgvector>=0.4,<1
 pydantic-settings>=2.6,<3
+httpx>=0.28,<1

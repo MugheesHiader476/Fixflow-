@@ -13,7 +13,7 @@ from backend.config import get_settings
 from backend.db.models import Document, DocumentChunk, KnowledgeSource
 from backend.db.session import get_session_factory
 from backend.processing.loaders import loader_for
-from backend.processing.okf import concept_metadata, maybe_parse_concept
+from backend.processing.okf import OkfConcept, concept_metadata, maybe_parse_concept, parse_concept
 from backend.repositories.corpus import chunk_documents, document_values, insert_chunks, insert_documents, json_metadata
 
 logger = logging.getLogger(__name__)
@@ -24,17 +24,34 @@ class IngestionError(RuntimeError):
     """A failed job has rolled back and its safe error has been persisted."""
 
 
-def load_documents(path: Path, source_id: UUID, digest: str) -> Iterator[dict[str, object]]:
+def load_documents(
+    path: Path, source_id: UUID, digest: str, *, strict_okf: bool = False
+) -> Iterator[dict[str, object]]:
     loader = loader_for(path)
     if loader is None:
         raise ValueError("Unsupported document type")
+    extracted_chars = 0
     for index, document in enumerate(loader.lazy_load()):
         content = document.page_content.strip()
         if not content:
             continue
+        if "\x00" in content:
+            raise ValueError("No extractable valid text: null bytes are not supported.")
+        extracted_chars += len(content)
+        if extracted_chars > get_settings().max_extracted_chars:
+            raise ValueError("No extractable text within the configured processing limit.")
         metadata = json_metadata(document.metadata)
         if path.suffix.lower() == ".md":
-            concept = maybe_parse_concept(content, path.name)
+            concept: OkfConcept | None
+            if strict_okf:
+                try:
+                    concept = parse_concept(content, path.name)
+                except ValueError as error:
+                    raise ValueError(
+                        "Invalid OKF concept: check Markdown frontmatter, type and metadata limits."
+                    ) from error
+            else:
+                concept = maybe_parse_concept(content, path.name)
             if concept is not None:
                 content = concept.body.strip()
                 metadata.update(concept_metadata(concept))
@@ -85,12 +102,19 @@ async def ingest_source(source_id: UUID) -> None:
                 or not path.resolve().is_relative_to(settings.upload_dir.resolve())
             ):
                 raise ValueError("The uploaded document is unavailable.")
-            iterator = load_documents(path, source_id, source.file_hash)
+            iterator = (
+                load_documents(path, source_id, source.file_hash, strict_okf=True)
+                if source.ingestion_format == "okf"
+                else load_documents(path, source_id, source.file_hash)
+            )
+            inserted_chunks = 0
             while rows := await asyncio.to_thread(next_batch, iterator, settings.ingestion_batch_size):
                 await insert_documents(session, rows)
                 chunks = iter(chunk_documents(source_id, rows, settings.chunk_size, settings.chunk_overlap))
                 while batch := await asyncio.to_thread(next_batch, chunks, settings.ingestion_batch_size):
-                    await insert_chunks(session, batch)
+                    inserted_chunks += await insert_chunks(session, batch)
+                    if inserted_chunks > settings.max_document_chunks:
+                        raise ValueError("No extractable text within the configured chunk limit.")
             count = await session.scalar(
                 select(func.count()).select_from(Document).where(Document.source_id == source_id)
             )
@@ -105,11 +129,14 @@ async def ingest_source(source_id: UUID) -> None:
             await session.flush()
             source.status = "ready_for_embedding"
             source.error_message = None
+            source.embedding_status = "pending" if settings.embedding_api_url else "not_configured"
     except Exception as error:
         # Loader/driver failures must roll back every document and chunk in this job.
         logger.error("Ingestion failed for %s (%s)", source_id, type(error).__name__)
         message = "Document processing failed. Check the file format and installed ingestion dependencies."
-        if isinstance(error, ValueError) and str(error).startswith(("Remote URL", "The uploaded", "No extractable")):
+        if isinstance(error, ValueError) and str(error).startswith(
+            ("Remote URL", "The uploaded", "No extractable", "Invalid OKF")
+        ):
             message = str(error)
         await set_status(source_id, "failed", message)
         raise IngestionError(message) from error

@@ -14,9 +14,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.api.middleware import RequestGuardMiddleware
 from backend.api.routes import router
 from backend.config import get_settings
 from backend.db.session import close_database
+from backend.services.embeddings import embedding_worker
 from backend.services.ingestion import ingestion_worker
 from backend.services.readiness import database_readiness
 
@@ -26,12 +28,16 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     worker = asyncio.create_task(ingestion_worker(), name="document-ingestion")
+    embeddings = asyncio.create_task(embedding_worker(), name="document-embeddings")
     try:
         yield
     finally:
+        embeddings.cancel()
         worker.cancel()
         with suppress(asyncio.CancelledError):
             await worker
+        with suppress(asyncio.CancelledError):
+            await embeddings
         await close_database()
 
 
@@ -62,6 +68,8 @@ def configured_origins(value: str) -> list[str]:
         raise ValueError("FRONTEND_ORIGINS must contain at least one HTTP(S) origin")
     return origins
 
+
+app.add_middleware(RequestGuardMiddleware)
 
 origins = configured_origins(get_settings().frontend_origins)
 app.add_middleware(

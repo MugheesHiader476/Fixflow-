@@ -1,10 +1,11 @@
+import { validResponse } from "./response-validation";
 import type {
   ChatMessage, DebugRequest, DebugSession, Diagnosis, KnowledgeSource, SavedSolution, SourceType,
 } from "./types";
 
 export type { DebugRequest } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_URL = "/api/backend";
 
 export interface BackendHealth {
   status: string;
@@ -30,7 +31,6 @@ export function checkBackendHealth(signal?: AbortSignal): Promise<BackendHealth>
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit, acceptedStatuses: number[] = []): Promise<T> {
-  if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not configured");
   const headers = new Headers(init?.headers);
   if (init?.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -49,7 +49,7 @@ async function apiFetch<T>(path: string, init?: RequestInit, acceptedStatuses: n
   }
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok && !acceptedStatuses.includes(response.status)) throw new Error(apiErrorMessage(body, response.status));
-  if (body === null) throw new Error("The backend returned an invalid response. Please try again.");
+  if (!validResponse(path, body, init?.method)) throw new Error("The backend returned an invalid response. Please try again.");
   return body as T;
 }
 
@@ -102,12 +102,14 @@ export function getSourceStatus(id: string, signal?: AbortSignal): Promise<Knowl
 
 export function addKnowledgeSource(input: {
   kind: "docs" | "github" | "upload";
+  ingestionFormat?: "document" | "okf";
   value: string;
   content?: string;
   file?: File;
 }, signal?: AbortSignal): Promise<KnowledgeSource> {
   const form = new FormData();
   form.set("kind", input.kind);
+  form.set("ingestion_format", input.ingestionFormat ?? "document");
   form.set("value", input.value);
   if (input.content) form.set("content", input.content);
   if (input.file) form.set("file", input.file);
@@ -131,3 +133,7 @@ export function saveSolution(input: {
 export const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
   docs: "Documentation", github: "GitHub Issue", community: "Community", code: "Code Example",
 };
+
+export function retryEmbedding(id: string): Promise<KnowledgeSource> {
+  return apiFetch(`/api/sources/${encodeURIComponent(id)}/retry-embedding`, { method: "POST" });
+}

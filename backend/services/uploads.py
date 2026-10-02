@@ -1,5 +1,6 @@
 """Validate and stream uploads into private, server-generated directories."""
 
+import asyncio
 import hashlib
 import re
 from pathlib import Path
@@ -69,6 +70,7 @@ async def save_upload(name: str, file: UploadFile | None, content: str | None) -
                     break
         if not size:
             raise HTTPException(422, "Document cannot be empty")
+        await asyncio.to_thread(validate_upload_content, path)
         return path, digest.hexdigest()
     except BaseException:
         discard_upload(path)
@@ -76,3 +78,44 @@ async def save_upload(name: str, file: UploadFile | None, content: str | None) -
     finally:
         if file:
             await file.close()
+
+
+def validate_upload_content(path: Path) -> None:
+    """Bounded format checks before registration; extraction remains the worker's job."""
+    import codecs  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415
+
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        with path.open("rb") as stream:
+            if b"%PDF-" not in stream.read(1024):
+                raise HTTPException(422, "File content is not a PDF")
+        return
+    if suffix == ".docx":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                entries = archive.infolist()
+                names = {entry.filename for entry in entries}
+                if not {"[Content_Types].xml", "word/document.xml"}.issubset(names):
+                    raise HTTPException(422, "File content is not a DOCX document")
+                if len(entries) > 2000 or sum(entry.file_size for entry in entries) > 100 * 1024 * 1024:
+                    raise HTTPException(422, "DOCX archive exceeds processing limits")
+                if any(entry.flag_bits & 1 for entry in entries):
+                    raise HTTPException(422, "Encrypted DOCX files are not supported")
+        except zipfile.BadZipFile as error:
+            raise HTTPException(422, "File content is not a DOCX document") from error
+        return
+    decoder = codecs.getincrementaldecoder("utf-8")("strict")
+    nonblank = False
+    try:
+        with path.open("rb") as stream:
+            while block := stream.read(1024 * 1024):
+                text = decoder.decode(block)
+                if "\x00" in text:
+                    raise HTTPException(422, "Text documents cannot contain null bytes")
+                nonblank = nonblank or bool(text.strip())
+            decoder.decode(b"", final=True)
+    except UnicodeDecodeError as error:
+        raise HTTPException(422, "Text documents must use UTF-8 encoding") from error
+    if not nonblank:
+        raise HTTPException(422, "Document must contain nonblank text")

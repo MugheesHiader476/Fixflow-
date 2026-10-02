@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import DocumentChunk, KnowledgeSource
 from backend.schemas.models import SourceDoc
+from backend.services.access import owner_id
 
 SEARCH_TERMS = re.compile(r"[^\W_]{3,}", re.UNICODE)
 STOP_WORDS = {"the", "and", "for", "with", "this", "that", "how", "does", "what", "from", "can", "you"}
@@ -22,7 +23,8 @@ async def search_chunks(db: AsyncSession, query_text: str, limit: int = 5) -> li
         .join(KnowledgeSource, KnowledgeSource.id == DocumentChunk.source_id)
         .where(
             DocumentChunk.search_text.op("@@")(query),
-            KnowledgeSource.status.in_(("ready_for_embedding", "indexed")),
+            KnowledgeSource.owner_id == owner_id(db),
+            KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
         )
         .order_by(func.ts_rank(DocumentChunk.search_text, query).desc(), DocumentChunk.id)
         .limit(limit)

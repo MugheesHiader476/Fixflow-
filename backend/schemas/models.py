@@ -4,17 +4,32 @@ from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
+
+
+def database_text(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("Text cannot contain null bytes")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError("Text must contain valid Unicode characters") from error
+    return value
+
+
+PersistedText = Annotated[str, AfterValidator(database_text)]
 
 SourceType = Literal["docs", "github", "community", "code"]
 KnowledgeKind = Literal["docs", "github", "community", "upload"]
-SourceStatus = Literal["uploaded", "processing", "chunked", "ready_for_embedding", "indexed", "failed"]
-ShortText = Annotated[str, Field(max_length=200)]
+SourceStatus = Literal["uploaded", "processing", "chunked", "ready_for_embedding", "embedding", "indexed", "failed"]
+IngestionFormat = Literal["document", "okf"]
+EmbeddingStatus = Literal["not_configured", "pending", "processing", "complete", "failed"]
+ShortText = Annotated[PersistedText, Field(max_length=200)]
 
 
 class DebugAttachment(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    content: str = Field(min_length=1, max_length=50_000)
+    name: PersistedText = Field(min_length=1, max_length=255)
+    content: PersistedText = Field(min_length=1, max_length=50_000)
 
     @field_validator("name", "content")
     @classmethod
@@ -25,10 +40,10 @@ class DebugAttachment(BaseModel):
 
 
 class DebugRequest(BaseModel):
-    error: str | None = Field(default=None, max_length=200_000)
-    code: str | None = Field(default=None, max_length=500_000)
-    context: str | None = Field(default=None, max_length=200_000)
-    repo_url: str | None = Field(default=None, max_length=2_048)
+    error: PersistedText | None = Field(default=None, max_length=200_000)
+    code: PersistedText | None = Field(default=None, max_length=500_000)
+    context: PersistedText | None = Field(default=None, max_length=200_000)
+    repo_url: PersistedText | None = Field(default=None, max_length=2_048)
     technology: ShortText | None = None
     techs: list[ShortText] = Field(default_factory=list, max_length=30)
     files: list[DebugAttachment] = Field(default_factory=list, max_length=5)
@@ -98,7 +113,7 @@ class RagDetails(BaseModel):
 
 
 class SourceReference(BaseModel):
-    title: str = Field(max_length=500)
+    title: PersistedText = Field(max_length=500)
     type: SourceType
 
 
@@ -125,7 +140,7 @@ class Diagnosis(DiagnosisDraft):
 
 class ChatRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=100)
-    question: str = Field(min_length=1, max_length=4000)
+    question: PersistedText = Field(min_length=1, max_length=4000)
 
     @field_validator("question")
     @classmethod
@@ -160,6 +175,9 @@ class KnowledgeSource(BaseModel):
     kind: KnowledgeKind
     source_type: KnowledgeKind
     status: SourceStatus
+    ingestion_format: IngestionFormat = "document"
+    embedding_status: EmbeddingStatus = "not_configured"
+    embedding_error: str | None = None
     chunks: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
     documents: int = Field(ge=0)
@@ -184,8 +202,8 @@ class SavedSolution(BaseModel):
 
 
 class SaveRequest(BaseModel):
-    problem: str = Field(min_length=1, max_length=20_000)
-    rootCause: str = Field(max_length=50_000)
+    problem: PersistedText = Field(min_length=1, max_length=20_000)
+    rootCause: PersistedText = Field(max_length=50_000)
     technology: list[ShortText] = Field(default_factory=list, max_length=30)
-    fixSummary: str = Field(max_length=50_000)
+    fixSummary: PersistedText = Field(max_length=50_000)
     sources: list[SourceReference] = Field(default_factory=list, max_length=100)

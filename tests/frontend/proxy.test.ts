@@ -50,7 +50,7 @@ describe("account-first routing", () => {
   });
 
   it("rejects unsigned API requests without a page redirect", async () => {
-    const { response } = await checkRoute("/api/documents");
+    const { response } = await checkRoute("/api/backend/api/documents");
     expect(response?.status).toBe(401);
     expect(response?.headers.get("Location")).toBeNull();
   });

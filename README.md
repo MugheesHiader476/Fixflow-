@@ -1,8 +1,8 @@
 # FixFlow
 
-Next.js + FastAPI with PostgreSQL as the primary persistent store. Files → Documents → Chunks → PostgreSQL/pgvector. Embeddings remain NULL; no embedding model or reranker is installed.
+Next.js + FastAPI with PostgreSQL as the primary persistent store. Files → Documents → Chunks → PostgreSQL/pgvector. Embeddings remain NULL until an HTTPS embedding endpoint, model, and dimension are configured. Retrieval is keyword-based; no diagnosis model or reranker is connected. See the [runtime audit and setup](docs/runtime-readiness.md).
 
-The [OKF migration audit and plan](docs/okf-migration.md) describes the current architecture, the staged bundle path, and the compatibility work completed here. A small [OKF bundle](knowledge/index.md) records the current pipeline; it is not automatically imported.
+The Sources page accepts ordinary documents and standalone OKF Markdown concepts. Explicit OKF mode validates concept frontmatter before the content enters the searchable corpus.
 
 ## Requirements
 
@@ -18,13 +18,13 @@ python3 -m venv myenev
 myenev/bin/python -m pip install -r requirements-dev.txt
 ```
 
-Keep your existing environment files. For a fresh checkout, copy `.env.example` to `.env.local`, add your Clerk keys, and set `NEXT_PUBLIC_API_URL=http://localhost:8000`. Copy `backend/.env.example` to `backend/.env` and set your own `POSTGRES_PASSWORD` (generate one with `openssl rand -hex 32`). Do not commit credentials.
+Keep your existing environment files. For a fresh checkout, copy `.env.example` to `.env.local`, add your Clerk keys, and set `NEXT_PUBLIC_API_URL=http://localhost:8000`. Copy `backend/.env.example` to `backend/.env` and set your own `POSTGRES_PASSWORD` (generate one with `openssl rand -hex 32`). Generate one separate random `FIXFLOW_API_TOKEN` (at least 32 ASCII characters) and set the same value in `.env.local` and `backend/.env`. This gateway credential stays server-side. Do not commit credentials.
 
 The backend and Alembic automatically read `backend/.env`; shell variables take precedence. `DATABASE_URL`, when set, overrides the separate `POSTGRES_*` fields. Do not put database credentials in `NEXT_PUBLIC_*` variables. Relative `FIXFLOW_DATA_DIR` paths remain relative to `backend/`. `FIXFLOW_PYTHON` is no longer needed: ingestion runs in the backend's own virtual environment, without subprocesses.
 
 ## Docker Compose (complete application)
 
-For a fresh Docker setup, copy `.env.example` to a root `.env`. Set a nonempty `POSTGRES_PASSWORD`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and `CLERK_SECRET_KEY` from your own Clerk application. Keep `.env` private. Compose reads this file automatically; the existing `backend/.env` and `.env.local` remain for native development and are not used by the containers. If you already have Clerk values in `.env.local`, copy those values into the root `.env`. `NEXT_PUBLIC_API_URL` must be reachable by your browser (the default is `http://localhost:8000`); `FRONTEND_ORIGINS` must include the frontend browser origin.
+For a fresh Docker setup, copy `.env.example` to a root `.env`. Set a random server-only `FIXFLOW_API_TOKEN` (at least 32 ASCII characters), a nonempty `POSTGRES_PASSWORD`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and `CLERK_SECRET_KEY` from your own Clerk application. Keep `.env` private. Compose reads this file automatically; the existing `backend/.env` and `.env.local` remain for native development and are not used by the containers. If you already have Clerk values in `.env.local`, copy those values into the root `.env`. `INTERNAL_API_URL` is the server gateway target; native development falls back to `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`); `FRONTEND_ORIGINS` must include the frontend browser origin.
 
 ```bash
 cp .env.example .env
@@ -32,7 +32,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The frontend is at http://localhost:3000 and the backend health endpoint is at http://localhost:8000/health. The browser calls the published backend port; the Next.js upload route uses `http://backend:8000` inside Compose. The backend connects to `db:5432`. If host port 5432 is occupied, change `POSTGRES_PORT` in the root `.env`; container-to-container traffic still uses `db:5432`. A one-shot `migrate` service runs `alembic upgrade head` after PostgreSQL becomes healthy; the API starts only after migrations succeed. The database and uploaded documents use separate named volumes. This Compose setup runs one backend instance and remains a local single-user deployment; it does not add backend authorization.
+The frontend is at http://localhost:3000 and the backend health endpoint is at http://localhost:8000/health. The browser calls the same-origin Next.js `/api/backend` gateway; the gateway uses `http://backend:8000` inside Compose. The backend connects to `db:5432`. If host port 5432 is occupied, change `POSTGRES_PORT` in the root `.env`; container-to-container traffic still uses `db:5432`. A one-shot `migrate` service runs `alembic upgrade head` after PostgreSQL becomes healthy; the API starts only after migrations succeed. The database and uploaded documents use separate named volumes. This Compose setup binds locally and runs one backend instance; authenticated account records are isolated through the trusted Next gateway. Public hosting still requires operational protections listed in the runtime audit.
 
 | Action | Command |
 | --- | --- |
@@ -67,21 +67,21 @@ myenev/bin/python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8
 npm run dev
 ```
 
-Frontend: http://localhost:3000. Health: http://localhost:8000/health. API documentation: http://localhost:8000/docs. Health checks database connectivity, pgvector, required tables, and the Alembic revision. It reports source/document/chunk/embedding counts and AI configuration separately. Missing migrations or unavailable dependencies return HTTP 503 without exposing credentials or internal errors. Settings displays this readiness information.
+Frontend: http://localhost:3000. Health: http://localhost:8000/health. API documentation: http://localhost:8000/docs. Health checks database connectivity, pgvector, required tables, and the Alembic revision. Public health omits corpus counts; authenticated `/api/readiness` reports counts for the current account and configuration indicators. Missing migrations or unavailable dependencies return HTTP 503 without exposing credentials or internal errors. Settings displays this readiness information.
 
 ## Account entry
 
-Signed-out visits to the frontend workspace open `/sign-up` first. Existing users can switch to `/sign-in`; Clerk handles account field validation and verification. After sign-up or sign-in, users return to the workspace. Frontend pages and the Next.js upload route require a Clerk session. The FastAPI API remains a local shared-data service without backend token verification or per-user isolation; do not expose it as a public multi-user API.
+Signed-out visits to the frontend workspace open `/sign-up` first. Existing users can switch to `/sign-in`; Clerk handles account field validation and verification. After sign-up or sign-in, users return to the workspace. Frontend pages and all Next.js gateway routes require a Clerk session. The gateway forwards a server-only credential and verified account identity; FastAPI verifies that credential and scopes persisted records and retrieval to the account. Missing authentication configuration fails closed. Keep FastAPI private; browsers must use the gateway. See the runtime audit for legacy-data assignment and deployment limitations.
 
 ## Ingestion and persistence
 
-`POST /api/documents` accepts the existing multipart fields (`kind`, `value`, `content`, `file`) and returns HTTP 202 with `source_id`, `id`, and status. Uploads are streamed into private server-generated paths, validated by extension and capped at 50 MB. The response is acceptance, not completed ingestion.
+`POST /api/documents` accepts the existing multipart fields (`kind`, `value`, `content`, `file`, optional `ingestion_format=document|okf`) and returns HTTP 202 with `source_id`, `id`, and status. Uploads are streamed into private server-generated paths, validated by extension and content and capped at 50 MiB. Text must be nonblank UTF-8 without null bytes; DOCX archive expansion and extracted-text/chunk counts are bounded. Explicit OKF mode accepts standalone Markdown concepts and rejects invalid frontmatter rather than falling back to plain text. The response is acceptance, not completed ingestion.
 
-A database-backed worker loads only the new file, batches document/chunk inserts in one transaction, then transitions `uploaded → processing → chunked → ready_for_embedding`. Failures roll back documents/chunks and persist `failed` plus a safe error. Pending jobs survive restarts. Advisory locks coordinate concurrent workers. Duplicate uploads return the existing source; re-uploading a failed source retries it without creating a second source. No old corpus files are reloaded.
+A database-backed worker loads only the new file, batches document/chunk inserts in one transaction, then transitions `uploaded → processing → chunked → ready_for_embedding`. Failures roll back documents/chunks and persist `failed` plus a safe error. Pending jobs survive restarts. Advisory locks coordinate concurrent workers. Duplicate uploads within the same account and ingestion format return the existing source; re-uploading a failed source retries it without creating a second source. No old corpus files are reloaded.
 
 `GET /api/sources`, `GET /api/sources/{id}`, and `GET /api/sources/{id}/status` return persisted counts/status/errors. Existing debug sessions, chats, and saved solutions are persistent too. No delete HTTP route existed previously; the repository supports cascading deletion for administrative use. Existing follow-up keyword retrieval uses PostgreSQL full-text search, not fabricated vector similarity.
 
-Remote URL registration remains available but reports a clear failed/not-configured state: there is no remote fetcher. Scanned PDFs require OCR before upload. Local single-user access remains the deployment model; the backend is not a multi-tenant authorization service.
+Remote URL registration remains available but reports a clear failed/not-configured state: there is no remote fetcher. Scanned PDFs require OCR before upload. Account isolation is enforced through the private trusted gateway; no public direct-token API or admin roles are provided.
 
 The Knowledge Sources page polls pending jobs, retries transient polling failures, and shows “Ready for embedding,” never “Indexed” before vectors exist. File uploads preserve the original file; pasted text is submitted as a separate input mode. Remote URL controls are disabled until a fetcher is implemented.
 
@@ -91,22 +91,15 @@ The current implementation is **documentation retrieval, not AI diagnosis**. Bot
 
 Debug inputs (error, code, context, repository reference, technologies, and text attachments) are persisted with each session. Attachments are limited to five UTF-8 text/source files, 50 KB each. Repository references are saved, not fetched. Reopening a session restores its inputs and conversation via `GET /api/sessions/{id}` and `GET /api/sessions/{id}/messages`. History, saved details, Markdown export, theme selection, and request error/retry states are supported.
 
-To integrate an AI provider:
-
-1. Implement `DiagnosisProvider` in `backend/services/diagnosis.py` and return it from `get_diagnosis_provider()`. The adapter receives validated inputs and retrieved evidence; follow-up calls also receive the saved diagnosis and conversation. Keep API keys server-side.
-2. Return a validated `DiagnosisDraft` and set the adapter's `generation` to `model`. Add provider timeouts, safe errors, and adapter tests. Update the health configuration indicator when enabling the provider; it currently reports `not_configured`.
-3. Select an embedding model, configure its model/dimension, and implement embedding generation using the vector repository below. The current keyword search can then be replaced or combined with vector retrieval; hybrid search and reranking are not implemented yet.
-4. Before public deployment, implement backend token verification and per-user data isolation, plus upload/API quotas. Clerk sign-in alone does not protect the shared backend. Treat document and attachment text as untrusted model input and avoid sending secrets to a provider.
-
-The provider dependency is tested independently from retrieval and persistence; no paid API calls are made by the test suite.
+`backend/services/diagnosis.py` currently uses `DocumentationProvider`. It returns matching documentation without a model-generated answer. No paid API calls are made by the test suite.
 
 ### Authentication troubleshooting
 
-If the browser loops before the workspace renders and the server logs a Clerk handshake/session redirect warning, check connectivity to your Clerk instance and verify that the publishable and secret keys belong to the same instance. Do not disable authentication or paste secret keys into logs to investigate. A frontend build or mocked component test does not validate live Clerk sign-in. Backend authorization remains a separate production requirement, as noted above.
+If the browser loops before the workspace renders and the server logs a Clerk handshake/session redirect warning, check connectivity to your Clerk instance and verify that the publishable and secret keys belong to the same instance. Do not disable authentication or paste secret keys into logs to investigate. A frontend build or mocked component test does not validate live Clerk sign-in. The gateway requires matching server-only tokens in Next and FastAPI; missing or mismatched tokens return safe errors.
 
 ### Optional legacy import
 
-No existing JSONL is imported or modified automatically.
+No existing JSONL is imported or modified automatically. Imported and pre-migration records remain under `__legacy__`, inaccessible to browser accounts. An administrator can preview and explicitly assign them using `python -m scripts.assign_legacy_owner --owner user_VERIFIED_ID`, then repeat with `--apply` after reviewing the destination; conflicting account hashes abort assignment without deleting data.
 
 ```bash
 myenev/bin/python -m scripts.import_jsonl_to_db \
@@ -116,13 +109,11 @@ myenev/bin/python -m scripts.import_jsonl_to_db \
 
 The importer streams records, skips malformed lines, preserves metadata, reports progress, and deduplicates across reruns. Either input may be omitted. Documents-only imports generate chunks; chunks-only imports retain fragments as documents with `imported_from_chunk=true` metadata because original pages cannot be reconstructed. Each batch is transactional and restartable. Sources without usable chunks remain failed with an explanatory error.
 
-The old `scripts/ingest_documents.py` and `scripts/chunk_documents.py` are optional offline JSONL export/debug tools, not production storage.
+## Optional embedding pipeline
 
-## Future vector pipeline
+`backend/repositories/vectors.py` provides `insert_embeddings()`, `similarity_search()`, `delete_source_vectors()`, and `count_embedded_chunks()`. Mutating calls use the caller's transaction. The optional worker in `backend/services/embeddings.py` uses this repository to persist real endpoint responses; no vectors are generated while configuration is unset.
 
-`backend/repositories/vectors.py` provides `insert_embeddings()`, `similarity_search()`, `delete_source_vectors()`, and `count_embedded_chunks()`. Mutating calls use the caller's transaction. No vectors are generated.
-
-Leave `EMBEDDING_DIM` and `EMBEDDING_MODEL` unset now. The migration uses an unconstrained nullable vector column; when a real model is selected, configure both centrally and add a dimension-specific migration/index as appropriate. The repository validates finite, nonzero vectors and dimensions. Search without configured/populated embeddings raises “Embedding pipeline not configured.” Deterministic vectors exist only in database tests.
+Leave `EMBEDDING_API_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_DIM`, and `EMBEDDING_MODEL` unset by default. The migration uses an unconstrained nullable vector column; when a real model is selected, configure both centrally and add a dimension-specific migration/index as appropriate. The repository validates finite, nonzero vectors and dimensions. Search without configured/populated embeddings raises “Embedding pipeline not configured.” Deterministic vectors exist only in tests. See [runtime readiness](docs/runtime-readiness.md) for the endpoint protocol, failure/retry states, and model-change restrictions. Vector search is not connected to the product retrieval path.
 
 ## Quality checks
 

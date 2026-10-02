@@ -1,6 +1,7 @@
+import { ASYNCIO_DIAGNOSIS } from "./fixtures/diagnosis";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-async function loadApi(apiUrl = "https://api.example.test") {
+async function loadApi(apiUrl = "/api/backend") {
   vi.resetModules();
   vi.stubEnv("NEXT_PUBLIC_API_URL", apiUrl);
   return import("@/lib/api");
@@ -13,6 +14,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+const HEALTH = {
+  status: "ok", service: "fixflow-api", api: "ok", database: "connected", pgvector: "available", schema: "ready",
+  revision: "0002", expected_revision: "0002", sources: 0, documents: 0, chunks: 0, embedded_chunks: 0,
+  pending_sources: 0, failed_sources: 0, embedding_configured: false, ai_generation: "not_configured",
+};
+
+const SOURCE = {
+  id: "source", source_id: "source", name: "Guide", kind: "docs", source_type: "docs", status: "ready_for_embedding",
+  documents: 1, document_count: 1, chunks: 1, chunk_count: 1, error_message: null,
+  created_at: "2026-10-02T00:00:00Z", updated: "2026-10-02T00:00:00Z", detail: "1 document",
+};
+
 describe("backend API client", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -22,28 +35,25 @@ describe("backend API client", () => {
 
   it("does not force a JSON content type onto GET requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({ status: "ok", service: "fixflow-api" })
+      jsonResponse(HEALTH)
     );
     vi.stubGlobal("fetch", fetchMock);
     const { checkBackendHealth } = await loadApi();
 
-    await expect(checkBackendHealth()).resolves.toEqual({
-      status: "ok",
-      service: "fixflow-api",
-    });
+    await expect(checkBackendHealth()).resolves.toEqual(HEALTH);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(new Headers(init.headers).has("Content-Type")).toBe(false);
   });
 
   it("encodes session IDs before adding them to a URL", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ sessionId: "encoded" }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ...ASYNCIO_DIAGNOSIS, sessionId: "encoded" }));
     vi.stubGlobal("fetch", fetchMock);
     const { getSession } = await loadApi();
 
     await getSession("folder/name?admin=true");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.test/api/sessions/folder%2Fname%3Fadmin%3Dtrue",
+      "/api/backend/api/sessions/folder%2Fname%3Fadmin%3Dtrue",
       expect.any(Object)
     );
   });
@@ -61,7 +71,10 @@ describe("backend API client", () => {
   });
 
   it("serializes diagnosis, chat, and saved-solution requests", async () => {
-    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ id: "response" })));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(ASYNCIO_DIAGNOSIS))
+      .mockResolvedValueOnce(jsonResponse({ id: "reply", role: "fixflow", text: "Documentation", sources: [] }))
+      .mockResolvedValueOnce(jsonResponse({ id: "saved", problem: "failure", rootCause: "cause", technology: [], fixSummary: "fix", sources: [], savedAt: "2026-10-02T00:00:00Z" }));
     vi.stubGlobal("fetch", fetchMock);
     const { diagnose, saveSolution, sendFollowUp } = await loadApi();
 
@@ -96,22 +109,22 @@ describe("backend API client", () => {
     await Promise.all([listKnowledgeSources(), listSaved(), listSessions()]);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "https://api.example.test/api/sources",
-      "https://api.example.test/api/saved",
-      "https://api.example.test/api/sessions",
+      "/api/backend/api/sources",
+      "/api/backend/api/saved",
+      "/api/backend/api/sessions",
     ]);
   });
 
   it("encodes source IDs when checking ingestion status", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ status: "ready_for_embedding" }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(SOURCE));
     vi.stubGlobal("fetch", fetchMock);
     const { getSourceStatus } = await loadApi();
     await getSourceStatus("source/path");
-    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/sources/source%2Fpath/status", expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith("/api/backend/api/sources/source%2Fpath/status", expect.any(Object));
   });
 
   it("passes document uploads through multipart form data", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: "source" }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(SOURCE));
     vi.stubGlobal("fetch", fetchMock);
     const { addKnowledgeSource } = await loadApi();
 
@@ -148,18 +161,18 @@ describe("backend API client", () => {
     await expect(request).rejects.toHaveProperty("cause", failure);
   });
 
-  it("requires a real backend instead of returning mock records", async () => {
-    const { listSessions } = await loadApi("");
-    const controller = new AbortController();
-    controller.abort();
-
-    await expect(listSessions(controller.signal)).rejects.toThrow("NEXT_PUBLIC_API_URL is not configured");
+  it("always uses the authenticated same-origin gateway", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listSessions } = await loadApi("https://untrusted.example");
+    await listSessions();
+    expect(fetchMock).toHaveBeenCalledWith("/api/backend/api/sessions", expect.any(Object));
   });
 
   it("reports degraded readiness without hiding database details", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ status: "degraded", schema: "migration_required" }, 503)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ ...HEALTH, status: "degraded", schema: "migration_required" }, 503)));
     const { checkBackendHealth } = await loadApi();
-    await expect(checkBackendHealth()).resolves.toMatchObject({ status: "degraded", schema: "migration_required" });
+    await expect(checkBackendHealth()).resolves.toMatchObject({ status: "degraded", service: "fixflow-api", schema: "migration_required" });
   });
 
   it("rejects malformed successful responses", async () => {
@@ -173,6 +186,6 @@ describe("backend API client", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { listMessages } = await loadApi();
     await listMessages("folder/name");
-    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/sessions/folder%2Fname/messages", expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith("/api/backend/api/sessions/folder%2Fname/messages", expect.any(Object));
   });
 });

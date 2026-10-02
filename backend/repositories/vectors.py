@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.db.models import DocumentChunk, KnowledgeSource
+from backend.services.access import owner_id
 
 
 class EmbeddingPipelineNotConfigured(RuntimeError):
@@ -92,7 +93,7 @@ class VectorRepository:
                     .where(
                         KnowledgeSource.id.in_(source_ids),
                         ~missing,
-                        KnowledgeSource.status.in_(("ready_for_embedding", "indexed")),
+                        KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
                     )
                     .values(status="indexed")
                 )
@@ -106,6 +107,8 @@ class VectorRepository:
         if not await self.session.scalar(
             select(
                 exists().where(
+                    DocumentChunk.source_id == KnowledgeSource.id,
+                    KnowledgeSource.owner_id == owner_id(self.session),
                     DocumentChunk.embedding.is_not(None),
                     DocumentChunk.embedding_model == model,
                     DocumentChunk.embedding_dimension == dimension,
@@ -115,7 +118,9 @@ class VectorRepository:
             raise EmbeddingPipelineNotConfigured()
         matching = (
             select(DocumentChunk)
+            .join(KnowledgeSource, DocumentChunk.source_id == KnowledgeSource.id)
             .where(
+                KnowledgeSource.owner_id == owner_id(self.session),
                 DocumentChunk.embedding.is_not(None),
                 DocumentChunk.embedding_model == model,
                 DocumentChunk.embedding_dimension == dimension,
@@ -140,7 +145,12 @@ class VectorRepository:
     async def delete_source_vectors(self, source_id: UUID) -> None:
         await self.session.execute(
             update(DocumentChunk)
-            .where(DocumentChunk.source_id == source_id)
+            .where(
+                DocumentChunk.source_id == source_id,
+                DocumentChunk.source_id.in_(
+                    select(KnowledgeSource.id).where(KnowledgeSource.owner_id == owner_id(self.session))
+                ),
+            )
             .values(
                 embedding=None,
                 embedding_model=None,
@@ -151,13 +161,19 @@ class VectorRepository:
             update(KnowledgeSource)
             .where(
                 KnowledgeSource.id == source_id,
+                KnowledgeSource.owner_id == owner_id(self.session),
                 KnowledgeSource.status == "indexed",
             )
-            .values(status="ready_for_embedding")
+            .values(status="ready_for_embedding", embedding_status="not_configured", embedding_error=None)
         )
 
     async def count_embedded_chunks(self, source_id: UUID | None = None) -> int:
-        query = select(func.count()).select_from(DocumentChunk).where(DocumentChunk.embedding.is_not(None))
+        query = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .join(KnowledgeSource, DocumentChunk.source_id == KnowledgeSource.id)
+            .where(DocumentChunk.embedding.is_not(None), KnowledgeSource.owner_id == owner_id(self.session))
+        )
         if source_id is not None:
             query = query.where(DocumentChunk.source_id == source_id)
         return int(await self.session.scalar(query) or 0)

@@ -30,11 +30,21 @@ class Timestamped:
     )
 
 
-class KnowledgeSource(Timestamped, Base):
+class Owned:
+    owner_id: Mapped[str] = mapped_column(String(200), default="__legacy__", server_default="__legacy__", index=True)
+
+
+class KnowledgeSource(Owned, Timestamped, Base):
     __tablename__ = "knowledge_sources"
     __table_args__ = (
+        UniqueConstraint("owner_id", "file_hash", name="uq_source_owner_hash"),
+        CheckConstraint("ingestion_format IN ('document','okf')", name="ck_ingestion_format"),
         CheckConstraint(
-            "status IN ('uploaded','processing','chunked','ready_for_embedding','indexed','failed')",
+            "embedding_status IN ('not_configured','pending','processing','complete','failed')",
+            name="ck_embedding_status",
+        ),
+        CheckConstraint(
+            "status IN ('uploaded','processing','chunked','ready_for_embedding','embedding','indexed','failed')",
             name="ck_source_status",
         ),
     )
@@ -45,9 +55,12 @@ class KnowledgeSource(Timestamped, Base):
     version: Mapped[str | None] = mapped_column(String(200))
     path: Mapped[str | None] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text)
-    file_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    file_hash: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(30), default="uploaded", index=True)
     error_message: Mapped[str | None] = mapped_column(String(500))
+    ingestion_format: Mapped[str] = mapped_column(String(20), default="document", server_default="document")
+    embedding_status: Mapped[str] = mapped_column(String(20), default="not_configured", server_default="not_configured")
+    embedding_error: Mapped[str | None] = mapped_column(String(500))
 
 
 class Document(Base):
@@ -96,7 +109,7 @@ class DocumentChunk(Timestamped, Base):
     search_text: Mapped[str] = mapped_column(TSVECTOR, Computed("to_tsvector('simple', content)", persisted=True))
 
 
-class DebugSession(Timestamped, Base):
+class DebugSession(Owned, Timestamped, Base):
     __tablename__ = "debug_sessions"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     diagnosis: Mapped[dict[str, object]] = mapped_column(JSONB)
@@ -110,7 +123,7 @@ class ChatEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class SavedSolution(Timestamped, Base):
+class SavedSolution(Owned, Timestamped, Base):
     __tablename__ = "saved_solutions"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB)

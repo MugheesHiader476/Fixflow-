@@ -52,7 +52,7 @@ def parse_concept(content: str, relative_path: str) -> OkfConcept:
         raise ValueError("OKF concept has no closing frontmatter delimiter")
     try:
         parsed = yaml.safe_load("".join(frontmatter_lines))
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, RecursionError) as error:
         raise ValueError("Invalid OKF YAML frontmatter") from error
     if not isinstance(parsed, dict) or not all(isinstance(key, str) for key in parsed):
         raise ValueError("OKF frontmatter must be a mapping with string keys")
@@ -77,6 +77,10 @@ def _json_value(value: object, active: set[int], remaining: list[int], depth: in
     remaining[0] -= 1
     if remaining[0] < 0 or depth > MAX_METADATA_DEPTH:
         raise ValueError("OKF frontmatter is too complex")
+    if isinstance(value, str) and "\x00" in value:
+        raise ValueError("OKF frontmatter contains null bytes")
+    if isinstance(value, dict) and any("\x00" in str(key) for key in value):
+        raise ValueError("OKF frontmatter keys contain null bytes")
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, float) and not math.isfinite(value):

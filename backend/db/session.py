@@ -1,9 +1,12 @@
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import get_settings
+from backend.services.access import authenticated_owner
 
 
 @lru_cache
@@ -25,8 +28,9 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(get_engine(), expire_on_commit=False)
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
+async def get_session(owner: Annotated[str, Depends(authenticated_owner)]) -> AsyncIterator[AsyncSession]:
     async with get_session_factory()() as session:
+        session.info["owner_id"] = owner
         yield session
 
 

@@ -30,6 +30,7 @@ from backend.repositories.corpus import (
     integer,
     json_metadata,
 )
+from backend.services.access import LEGACY_OWNER
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ async def source_ids(db: AsyncSession, batch: list[Record]) -> dict[str, UUID]:
     rows = [
         {
             "id": uuid4(),
+            "owner_id": LEGACY_OWNER,
             "name": item.name or "Imported documentation",
             "source_type": "docs",
             "file_hash": digest,
@@ -93,10 +95,13 @@ async def source_ids(db: AsyncSession, batch: list[Record]) -> dict[str, UUID]:
         }
         for digest, item in unique.items()
     ]
-    await db.execute(insert(KnowledgeSource).values(rows).on_conflict_do_nothing(index_elements=["file_hash"]))
+    await db.execute(
+        insert(KnowledgeSource).values(rows).on_conflict_do_nothing(index_elements=["owner_id", "file_hash"])
+    )
     result = await db.execute(
         select(KnowledgeSource.file_hash, KnowledgeSource.id).where(
             KnowledgeSource.file_hash.in_(unique),
+            KnowledgeSource.owner_id == LEGACY_OWNER,
         )
     )
     return dict(result.tuples().all())

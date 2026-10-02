@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/toast";
 import {
   addKnowledgeSource,
   listKnowledgeSources,
+  retryEmbedding,
 } from "@/lib/api";
 import type { KnowledgeSource } from "@/lib/types";
 import { isSourcePending, mergeSources, SOURCE_STATUS } from "@/lib/sources";
@@ -51,6 +52,8 @@ function sourceName(mode: SourceMode, title: string, value: string): string {
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  const [ingestionFormat, setIngestionFormat] = useState<"document" | "okf">("document");
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [mode, setMode] = useState<SourceMode>("docs");
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -128,6 +131,7 @@ export default function SourcesPage() {
     try {
       const source = await addKnowledgeSource({
         kind: mode,
+        ingestionFormat,
         value: sourceName(mode, title, value),
         content: mode === "docs" || (mode === "upload" && !selectedFile) ? value : undefined,
         file: mode === "upload" ? selectedFile ?? undefined : undefined,
@@ -147,6 +151,10 @@ export default function SourcesPage() {
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
+    if (ingestionFormat === "okf" && !file.name.toLowerCase().endsWith(".md")) {
+      toast("OKF concepts must be Markdown files.", "error");
+      return;
+    }
     if (!/\.(md|txt|rst|pdf|docx|csv|html?)$/i.test(file.name)) {
       toast("Choose a supported document type.", "error");
       return;
@@ -158,6 +166,19 @@ export default function SourcesPage() {
     setTitle(file.name);
     setSelectedFile(file);
     setValue("");
+  };
+
+  const retrySourceEmbeddings = async (id: string) => {
+    setRetryingId(id);
+    try {
+      const updated = await retryEmbedding(id);
+      uploadsVersion.current += 1;
+      setSources((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (failure) {
+      toast(failure instanceof Error ? failure.message : "Could not retry embeddings", "error");
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   return (
@@ -204,6 +225,15 @@ export default function SourcesPage() {
 
             <form onSubmit={submitSource} className="mt-5 space-y-3">
               <fieldset disabled={busy} className="min-w-0 space-y-3">
+              <label className="block text-xs font-medium">Content format
+                <select aria-label="Content format" value={ingestionFormat} onChange={(event) => {
+                  setIngestionFormat(event.target.value === "okf" ? "okf" : "document"); resetForm();
+                }} className="mt-1.5 block w-full rounded-md border border-border bg-background px-3 py-2">
+                  <option value="document">Document</option>
+                  <option value="okf">OKF concept (strict validation)</option>
+                </select>
+              </label>
+              {ingestionFormat === "okf" && <p className="text-xs text-muted">Upload a standalone Markdown concept with YAML frontmatter and a nonempty type. Bundle ZIP import is not supported.</p>}
               {mode !== "github" && (
                 <label className="block text-xs font-medium text-foreground/80">
                   {mode === "docs" ? "Document title" : "File"}
@@ -305,6 +335,9 @@ export default function SourcesPage() {
                       <p className="mt-0.5 text-[10px] text-muted">
                         {source.kind} · {source.document_count} documents · {source.chunk_count} chunks
                       </p>
+                      {source.embedding_status && <p className="mt-1 text-[10px] text-muted">{source.ingestion_format === "okf" ? "OKF concept" : "Document"} · Embeddings: {source.embedding_status.replaceAll("_", " ")}</p>}
+                      {source.embedding_error && <p role="alert" className="mt-1 text-[10px] text-danger">{source.embedding_error}</p>}
+                      {source.embedding_status === "failed" && <Button size="sm" loading={retryingId === source.id} disabled={retryingId !== null} onClick={() => { void retrySourceEmbeddings(source.id); }}>Retry embeddings</Button>}
                       {source.error_message && <p className="mt-1 text-[10px] text-red-400">{source.error_message}</p>}
                     </div>
                     <Badge tone={SOURCE_STATUS[source.status].tone}>{SOURCE_STATUS[source.status].label}</Badge>

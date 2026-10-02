@@ -1,7 +1,7 @@
 /**
  * Browser proof using real application components.
  * Install Playwright in /tmp/fixflow-browser-tools; start the Vite harness and
- * an isolated FastAPI test instance as described in evidence/frontend/README.md.
+ * an isolated FastAPI test instance backed by a disposable PostgreSQL database.
  * Clerk and Next routing are mocked ONLY by the test harness. Live mode uses
  * the real API, ingestion worker and PostgreSQL database.
  */
@@ -14,8 +14,8 @@ assert.ok(toolRoot, "Set FIXFLOW_BROWSER_TOOLS to your installed Playwright pack
 const { chromium } = await import(pathToFileURL(resolve(toolRoot, "index.mjs")).href);
 const { expect } = await import(pathToFileURL(resolve(toolRoot, "test.mjs")).href);
 const base = "http://127.0.0.1:4173";
-const api = "http://127.0.0.1:8001";
-const output = resolve("evidence/frontend");
+const api = `${base}/api/backend`;
+const output = resolve(".local/browser-evidence");
 await mkdir(output, { recursive: true });
 const report = { startedAt: new Date().toISOString(), harness: "Actual React components; test-only Clerk, Image and Next navigation adapters", checks: [], requests: [], browserErrors: [] };
 const browser = await chromium.launch({ executablePath: process.env.FIXFLOW_CHROME || "/usr/bin/google-chrome", headless: true });
@@ -29,7 +29,7 @@ async function check(name, mode, run) {
 }
 async function noOverflow() { assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Unexpected horizontal overflow"); }
 async function capture(name, fullPage = true) { await page.screenshot({ path: resolve(output, name), fullPage, animations: "disabled" }); }
-const health = { status: "ok", service: "fixflow-api", database: "connected", pgvector: "available", schema: "ready", sources: 0, documents: 0, chunks: 0, embedded_chunks: 0, embedding_configured: false, ai_generation: "not_configured" };
+const health = { status: "ok", service: "fixflow-api", api: "ok", revision: "0002", expected_revision: "0002", pending_sources: 0, failed_sources: 0, database: "connected", pgvector: "available", schema: "ready", sources: 0, documents: 0, chunks: 0, embedded_chunks: 0, embedding_configured: false, ai_generation: "not_configured" };
 try {
   await context.route(`${api}/**`, (route) => route.fulfill({ json: route.request().url().endsWith("/health") ? health : [] }));
   await check("Desktop hero, local image loading and working start link", "mock", async () => {

@@ -19,6 +19,7 @@ from backend.schemas.models import (
     SessionSummary,
     SourceReference,
 )
+from backend.services.access import owner_id
 from backend.services.diagnosis import DiagnosisProvider, diagnostic_text
 
 
@@ -50,13 +51,13 @@ async def diagnose(db: AsyncSession, payload: DebugRequest, provider: DiagnosisP
             topChunks=[],
         ),
     )
-    db.add(DebugSession(id=session_id, diagnosis=diagnosis.model_dump(mode="json")))
+    db.add(DebugSession(id=session_id, owner_id=owner_id(db), diagnosis=diagnosis.model_dump(mode="json")))
     await db.commit()
     return diagnosis
 
 
 async def messages(db: AsyncSession, session_id: UUID) -> list[ChatMessage]:
-    if await db.get(DebugSession, session_id) is None:
+    if await get_session(db, session_id) is None:
         raise SessionNotFoundError("Session not found")
     records = await db.scalars(
         select(ChatEntry)
@@ -91,7 +92,11 @@ async def chat(db: AsyncSession, session_id: UUID, question: str, provider: Diag
 
 
 async def sessions(db: AsyncSession) -> list[SessionSummary]:
-    records = await db.scalars(select(DebugSession).order_by(DebugSession.created_at.desc(), DebugSession.id))
+    records = await db.scalars(
+        select(DebugSession)
+        .where(DebugSession.owner_id == owner_id(db))
+        .order_by(DebugSession.created_at.desc(), DebugSession.id)
+    )
     result = []
     for record in records:
         diagnosis = Diagnosis.model_validate(record.diagnosis)
@@ -112,17 +117,23 @@ async def sessions(db: AsyncSession) -> list[SessionSummary]:
 
 
 async def get_session(db: AsyncSession, session_id: UUID) -> Diagnosis | None:
-    record = await db.get(DebugSession, session_id)
+    record = await db.scalar(
+        select(DebugSession).where(DebugSession.id == session_id, DebugSession.owner_id == owner_id(db))
+    )
     return Diagnosis.model_validate(record.diagnosis) if record else None
 
 
 async def saved(db: AsyncSession) -> list[SavedSolution]:
-    records = await db.scalars(select(SavedRecord).order_by(SavedRecord.created_at.desc(), SavedRecord.id))
+    records = await db.scalars(
+        select(SavedRecord)
+        .where(SavedRecord.owner_id == owner_id(db))
+        .order_by(SavedRecord.created_at.desc(), SavedRecord.id)
+    )
     return [SavedSolution.model_validate(record.payload) for record in records]
 
 
 async def save_solution(db: AsyncSession, payload: SaveRequest) -> SavedSolution:
     solution = SavedSolution(id=str(uuid4()), **payload.model_dump(), savedAt=now())
-    db.add(SavedRecord(id=UUID(solution.id), payload=solution.model_dump(mode="json")))
+    db.add(SavedRecord(id=UUID(solution.id), owner_id=owner_id(db), payload=solution.model_dump(mode="json")))
     await db.commit()
     return solution

@@ -91,6 +91,8 @@ def chunk_documents(
         item = {"page_content": row["page_content"], "metadata": row["metadata"]}
         for record in records_for_source(item, integer(row["document_index"]), chunk_size, overlap, set()):
             metadata = json_metadata(record["metadata"])
+            # Live document projections must be scoped to a source, even for identical uploads.
+            metadata["chunk_id"] = content_hash(f"{source_id}:{metadata['chunk_id']}")
             yield chunk_values(
                 source_id,
                 UUID(str(row["id"])),

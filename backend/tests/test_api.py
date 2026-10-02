@@ -19,14 +19,14 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_health(client: httpx.AsyncClient) -> None:
-    response = await client.get("/health")
+    response = await client.get("/api/readiness")
     assert response.status_code == 200
     health = response.json()
     assert health["status"] == health["api"] == "ok"
     assert health["database"] == "connected"
     assert health["pgvector"] == "available"
     assert health["schema"] == "ready"
-    assert health["revision"] == health["expected_revision"] == "0001"
+    assert health["revision"] == health["expected_revision"] == "0002"
     assert health["sources"] == health["documents"] == health["chunks"] == health["embedded_chunks"] == 0
     assert health["ai_generation"] == "not_configured"
 
@@ -198,7 +198,7 @@ async def test_health_unavailable_has_no_secrets(client: httpx.AsyncClient, monk
         raise OSError("private-database-password")
 
     monkeypatch.setattr("backend.services.readiness.get_engine", unavailable)
-    response = await client.get("/health")
+    response = await client.get("/api/readiness")
     assert response.status_code == 503
     assert response.json()["database"] == "unavailable"
     assert "private" not in response.text
@@ -241,7 +241,7 @@ async def test_titles_with_dots_and_readiness_counts(client: httpx.AsyncClient) 
     assert response.status_code == 202
     assert response.json()["name"] == "Python-3.14.md"
     await ingest_source(UUID(response.json()["source_id"]))
-    health = (await client.get("/health")).json()
+    health = (await client.get("/api/readiness")).json()
     assert health["sources"] == health["documents"] == health["chunks"] == 1
     assert health["embedded_chunks"] == health["pending_sources"] == health["failed_sources"] == 0
 
@@ -251,13 +251,13 @@ async def test_health_detects_migration_mismatch(client: httpx.AsyncClient) -> N
         await db.execute(text("UPDATE alembic_version SET version_num='old'"))
         await db.commit()
     try:
-        response = await client.get("/health")
+        response = await client.get("/api/readiness")
         assert response.status_code == 503
         assert response.json()["database"] == "connected"
         assert response.json()["schema"] == "migration_required"
     finally:
         async with get_session_factory()() as db:
-            await db.execute(text("UPDATE alembic_version SET version_num='0001'"))
+            await db.execute(text("UPDATE alembic_version SET version_num='0002'"))
             await db.commit()
 
 

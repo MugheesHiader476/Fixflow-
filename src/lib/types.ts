@@ -100,11 +100,14 @@ export interface KnowledgeSource {
   name: string;
   kind: "docs" | "github" | "community" | "upload";
   source_type: "docs" | "github" | "community" | "upload";
-  status: "uploaded" | "processing" | "chunked" | "ready_for_embedding" | "indexed" | "failed";
+  status: "uploaded" | "processing" | "chunked" | "ready_for_embedding" | "embedding" | "indexed" | "failed";
   chunks: number;
   documents: number;
   document_count: number;
   chunk_count: number;
+  ingestion_format?: "document" | "okf";
+  embedding_status?: "not_configured" | "pending" | "processing" | "complete" | "failed";
+  embedding_error?: string | null;
   error_message: string | null;
   created_at: string;
   updated: string;

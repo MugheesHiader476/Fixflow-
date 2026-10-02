@@ -114,3 +114,8 @@ def test_okf_rejects_recursive_yaml_alias() -> None:
     content = "---\ntype: Reference\nloop: &loop [*loop]\n---\nbody"
     with pytest.raises(ValueError, match="cycle"):
         parse_concept(content, "recursive.md")
+
+
+def test_okf_rejects_null_bytes_decoded_from_yaml() -> None:
+    with pytest.raises(ValueError, match="null bytes"):
+        parse_concept('---\ntype: Reference\ntitle: "bad\\u0000title"\n---\nbody', "invalid.md")

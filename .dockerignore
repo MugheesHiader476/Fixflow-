@@ -26,7 +26,6 @@ backend/.env.*
 !backend/.env.example
 doc
 backend/tests
-scripts/tests
 tests
 *.md
 !README.md

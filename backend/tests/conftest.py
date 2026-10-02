@@ -41,6 +41,8 @@ async def database(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> AsyncIterator[None]:
+    monkeypatch.setenv("FIXFLOW_API_TOKEN", "test-only-gateway-token-at-least-32-characters")
+    monkeypatch.setenv("EMBEDDING_API_URL", "")
     monkeypatch.setenv("DATABASE_URL", migrated_database)
     monkeypatch.setenv("FIXFLOW_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("EMBEDDING_DIM", raising=False)
@@ -70,5 +72,12 @@ async def db(database: None) -> AsyncIterator[AsyncSession]:
 @pytest.fixture
 async def client(database: None) -> AsyncIterator[httpx.AsyncClient]:
     # Worker execution is explicit in tests; separate lifecycle coverage exercises startup recovery.
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={
+            "Authorization": "Bearer test-only-gateway-token-at-least-32-characters",
+            "X-FixFlow-User-Id": "user_test",
+        },
+    ) as client:
         yield client

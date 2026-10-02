@@ -1,6 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["backend/tests", "scripts/tests"]
+testpaths = ["backend/tests"]
 addopts = [
     "--strict-config",
     "--strict-markers",
@@ -13,7 +13,7 @@ addopts = [
 [tool.coverage.run]
 branch = true
 source = ["backend", "scripts"]
-omit = ["backend/tests/*", "scripts/tests/*"]
+omit = ["backend/tests/*"]
 
 [tool.coverage.report]
 show_missing = true

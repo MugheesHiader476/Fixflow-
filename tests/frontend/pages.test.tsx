@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   listSaved: vi.fn(),
   listSessions: vi.fn(),
   saveSolution: vi.fn(),
+  retryEmbedding: vi.fn(),
 }));
 const toast = vi.hoisted(() => vi.fn());
 const navigation = vi.hoisted(() => ({ session: null as string | null, router: { replace: vi.fn() } }));
@@ -69,6 +70,8 @@ vi.mock("@/components/debug/diagnosis-result", () => ({
 }));
 
 beforeEach(() => {
+  // JSDOM has no layout/scroll API; the browser supplies this method.
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   navigation.session = null;
   navigation.router.replace.mockReset();
   api.addKnowledgeSource.mockReset();
@@ -79,6 +82,7 @@ beforeEach(() => {
   api.listSaved.mockReset();
   api.listSessions.mockReset();
   api.saveSolution.mockReset();
+  api.retryEmbedding.mockReset();
   toast.mockReset();
 });
 
@@ -283,5 +287,38 @@ describe("application pages", () => {
     await act(async () => finishList([existing]));
     expect(screen.getByText("Existing guide")).toBeDefined();
     expect(screen.getByText("New guide")).toBeDefined();
+  });
+
+  it("submits strict OKF mode, clears previous files, and blocks non-Markdown selection", async () => {
+    api.listKnowledgeSources.mockResolvedValue([]);
+    api.addKnowledgeSource.mockResolvedValue({ id: "okf", name: "Concept", kind: "docs", status: "ready_for_embedding", chunks: 1 });
+    render(<SourcesPage />);
+    fireEvent.change(screen.getByLabelText("Content format"), { target: { value: "okf" } });
+    fireEvent.change(screen.getByLabelText("Documentation content"), { target: { value: "---\ntype: Reference\n---\nConcept" } });
+    fireEvent.click(screen.getByRole("button", { name: /Add to knowledge base/ }));
+    await waitFor(() => expect(api.addKnowledgeSource).toHaveBeenCalledWith(expect.objectContaining({ ingestionFormat: "okf" }), expect.any(AbortSignal)));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Upload a file/i }).hasAttribute("disabled")).toBe(false));
+    fireEvent.change(screen.getByLabelText("Content format"), { target: { value: "document" } });
+    fireEvent.click(screen.getByRole("tab", { name: /^Upload a file/i }));
+    fireEvent.change(screen.getByLabelText("Upload document"), { target: { files: [new File(["%PDF-1.7"], "Guide.pdf")] } });
+    fireEvent.change(screen.getByLabelText("Content format"), { target: { value: "okf" } });
+    expect(screen.queryByText(/Guide.pdf.*ready to upload/)).toBeNull();
+    expect(screen.getByRole("button", { name: /Add to knowledge base/ }).hasAttribute("disabled")).toBe(true);
+    fireEvent.change(screen.getByLabelText("Upload document"), { target: { files: [new File(["%PDF-1.7"], "Guide.pdf")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Add to knowledge base/ }));
+    expect(toast).toHaveBeenCalledWith("OKF concepts must be Markdown files.", "error");
+    expect(api.addKnowledgeSource).toHaveBeenCalledOnce();
+  });
+
+  it("retries failed embeddings and resumes polling without hiding usable chunks", async () => {
+    const source = { id: "embed", name: "Guide", kind: "docs", status: "ready_for_embedding", chunks: 5, document_count: 1, chunk_count: 5, embedding_status: "failed", embedding_error: "Embedding failed" };
+    api.listKnowledgeSources.mockResolvedValueOnce([source]).mockResolvedValue([{ ...source, status: "indexed", embedding_status: "complete", embedding_error: null }]);
+    api.retryEmbedding.mockResolvedValue({ ...source, embedding_status: "pending", embedding_error: null });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry embeddings" }));
+    await waitFor(() => expect(api.retryEmbedding).toHaveBeenCalledWith("embed"));
+    expect(screen.getByText(/1 documents · 5 chunks/)).toBeDefined();
+    expect(await screen.findByText("Indexed", {}, { timeout: 4000 })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Retry embeddings" })).toBeNull();
   });
 });
