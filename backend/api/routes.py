@@ -175,10 +175,13 @@ async def documents(
             )
             if existing is None:
                 raise HTTPException(404, "Source not found")
+            if existing.connector_account_id is not None:
+                raise HTTPException(409, "Connected sources must be updated through connector synchronization")
             duplicate = await db.scalar(
                 select(SourceRecord.id).where(
                     SourceRecord.owner_id == owner_id(db),
                     SourceRecord.file_hash == digest,
+                    SourceRecord.external_identity.is_(None),
                     SourceRecord.id != update_source_id,
                 )
             )
@@ -215,14 +218,20 @@ async def documents(
                 error_message=error_message,
                 ingestion_metadata=registration,
             )
-            .on_conflict_do_nothing(index_elements=["owner_id", "file_hash"])
+            .on_conflict_do_nothing(
+                index_elements=["owner_id", "file_hash"], index_where=SourceRecord.external_identity.is_(None)
+            )
             .returning(SourceRecord.id)
         )
         if result is None:
             record = (
                 await db.scalars(
                     select(SourceRecord)
-                    .where(SourceRecord.file_hash == digest, SourceRecord.owner_id == owner_id(db))
+                    .where(
+                        SourceRecord.file_hash == digest,
+                        SourceRecord.owner_id == owner_id(db),
+                        SourceRecord.external_identity.is_(None),
+                    )
                     .with_for_update()
                 )
             ).one()

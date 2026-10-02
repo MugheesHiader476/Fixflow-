@@ -88,6 +88,7 @@ async def embed_source(source_id: UUID, provider: EmbeddingProvider) -> None:
             source = await db.get(KnowledgeSource, source_id)
             if (
                 source is None
+                or not source.is_active
                 or source.status not in {"ready_for_embedding", "embedding"}
                 or source.embedding_status == "failed"
             ):
@@ -155,6 +156,7 @@ async def embedding_worker() -> None:
                                 KnowledgeSource.status.in_(("ready_for_embedding", "embedding")),
                                 KnowledgeSource.embedding_status != "failed",
                                 KnowledgeSource.owner_id != LEGACY_OWNER,
+                                KnowledgeSource.is_active.is_(True),
                             )
                             .order_by(KnowledgeSource.created_at)
                             .limit(get_settings().ingestion_workers)

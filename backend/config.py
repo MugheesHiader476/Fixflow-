@@ -5,6 +5,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
+from backend.connectors.config import ConnectorConfig
 from backend.processing.pipeline.config import PipelineConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     embedding_dim: int | None = Field(default=None, ge=1, le=16000)
     embedding_model: str | None = Field(default=None, max_length=200)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    connectors: ConnectorConfig = Field(default_factory=ConnectorConfig)
 
     @field_validator("fixflow_api_token", "embedding_api_key", "embedding_api_url", "embedding_model", mode="before")
     @classmethod

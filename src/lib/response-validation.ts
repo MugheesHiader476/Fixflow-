@@ -30,7 +30,9 @@ function validHealth(value: unknown): boolean {
 
 export function validSource(value: unknown): boolean {
   if (!record(value) || !fields(value, ["id", "source_id", "name", "created_at", "updated", "detail"])) return false;
-  return ["docs", "github", "community", "upload"].includes(String(value.kind))
+  return (value.is_active === undefined || typeof value.is_active === "boolean")
+    && (value.retrieval_available === undefined || typeof value.retrieval_available === "boolean")
+    && ["docs", "github", "community", "upload"].includes(String(value.kind))
     && ["docs", "github", "community", "upload"].includes(String(value.source_type))
     && ["uploaded", "processing", "chunked", "ready_for_embedding", "embedding", "indexed", "failed"].includes(String(value.status))
     && ["documents", "document_count", "chunks", "chunk_count"].every((name) => count(value[name]))
@@ -71,6 +73,7 @@ function validSession(value: unknown): boolean {
 }
 
 export function validResponse(path: string, value: unknown, method = "GET"): boolean {
+  if (path.startsWith("/api/connectors")) return validConnectorResponse(path, value);
   if (path === "/health") return validHealth(value);
   if (path === "/api/sources") return list(value, validSource);
   if (path.startsWith("/api/sources/")) return validSource(value);
@@ -81,3 +84,4 @@ export function validResponse(path: string, value: unknown, method = "GET"): boo
   if (path === "/api/saved") return method === "POST" ? validSaved(value) : list(value, validSaved);
   return validDiagnosis(value);
 }
+import { validConnectorResponse } from "./connector-contracts";

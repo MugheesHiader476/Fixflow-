@@ -1,3 +1,11 @@
+# Rebuild from the current checkout on every `docker compose up`, using layer cache.
+x-backend-image: &backend-image
+  image: fixflow-backend:local
+  pull_policy: build
+  build:
+    context: .
+    dockerfile: Dockerfile.backend
+
 x-backend-environment: &backend-environment
   FIXFLOW_API_TOKEN: ${FIXFLOW_API_TOKEN:?Set FIXFLOW_API_TOKEN in .env}
   POSTGRES_HOST: db
@@ -22,6 +30,28 @@ x-backend-environment: &backend-environment
   PIPELINE__TOKENIZER: ${PIPELINE__TOKENIZER:-utf8_bytes}
   PIPELINE__TOKENIZER_ENCODING: ${PIPELINE__TOKENIZER_ENCODING:-}
   PIPELINE__PARSER_TIMEOUT_SECONDS: ${PIPELINE__PARSER_TIMEOUT_SECONDS:-60}
+  CONNECTORS__PUBLIC_URL: ${CONNECTORS__PUBLIC_URL:-http://localhost:3000}
+  CONNECTORS__VAULT_KEY: ${CONNECTORS__VAULT_KEY:-}
+  CONNECTORS__VAULT_PREVIOUS_KEYS: ${CONNECTORS__VAULT_PREVIOUS_KEYS:-[]}
+  CONNECTORS__GOOGLE_CLIENT_ID: ${CONNECTORS__GOOGLE_CLIENT_ID:-}
+  CONNECTORS__GOOGLE_CLIENT_SECRET: ${CONNECTORS__GOOGLE_CLIENT_SECRET:-}
+  CONNECTORS__GITHUB_CLIENT_ID: ${CONNECTORS__GITHUB_CLIENT_ID:-}
+  CONNECTORS__GITHUB_CLIENT_SECRET: ${CONNECTORS__GITHUB_CLIENT_SECRET:-}
+  CONNECTORS__GITHUB_APP_ID: ${CONNECTORS__GITHUB_APP_ID:-}
+  CONNECTORS__GITHUB_APP_SLUG: ${CONNECTORS__GITHUB_APP_SLUG:-}
+  CONNECTORS__GITHUB_PRIVATE_KEY: ${CONNECTORS__GITHUB_PRIVATE_KEY:-}
+  CONNECTORS__GITHUB_WEBHOOK_SECRET: ${CONNECTORS__GITHUB_WEBHOOK_SECRET:-}
+  CONNECTORS__GITHUB_API_VERSION: ${CONNECTORS__GITHUB_API_VERSION:-2026-03-10}
+  CONNECTORS__SLACK_CLIENT_ID: ${CONNECTORS__SLACK_CLIENT_ID:-}
+  CONNECTORS__SLACK_CLIENT_SECRET: ${CONNECTORS__SLACK_CLIENT_SECRET:-}
+  CONNECTORS__SLACK_SIGNING_SECRET: ${CONNECTORS__SLACK_SIGNING_SECRET:-}
+  CONNECTORS__EVENTS_ENABLED: ${CONNECTORS__EVENTS_ENABLED:-false}
+  CONNECTORS__GMAIL_PUBSUB_TOPIC: ${CONNECTORS__GMAIL_PUBSUB_TOPIC:-}
+  CONNECTORS__GMAIL_PUBSUB_SERVICE_ACCOUNT: ${CONNECTORS__GMAIL_PUBSUB_SERVICE_ACCOUNT:-}
+  CONNECTORS__POLLING_SECONDS: ${CONNECTORS__POLLING_SECONDS:-300}
+  CONNECTORS__RECONCILIATION_SECONDS: ${CONNECTORS__RECONCILIATION_SECONDS:-86400}
+  CONNECTORS__ACL_TTL_SECONDS: ${CONNECTORS__ACL_TTL_SECONDS:-3600}
+  CONNECTORS__SLACK_HISTORY_INTERVAL_SECONDS: ${CONNECTORS__SLACK_HISTORY_INTERVAL_SECONDS:-60}
 
 services:
   db:
@@ -42,10 +72,7 @@ services:
       retries: 10
 
   migrate:
-    image: fixflow-backend:local
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
+    <<: *backend-image
     environment: *backend-environment
     command: ["alembic", "upgrade", "head"]
     depends_on:
@@ -54,7 +81,7 @@ services:
     restart: "no"
 
   backend:
-    image: fixflow-backend:local
+    <<: *backend-image
     environment: *backend-environment
     volumes:
       - fixflow_uploads:/app/data
@@ -72,6 +99,7 @@ services:
       start_period: 10s
 
   frontend:
+    pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile.frontend

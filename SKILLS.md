@@ -1,6 +1,6 @@
 # Skills Required for FixFlow
 
-Active implementations and repository-defined verification tools are listed; tools offered for local checks are distinguished from CI execution. No LLM diagnosis, reranker, prompt system, agent framework, or admin UI is implemented. Optional HTTP embeddings and trusted gateway account isolation are implemented; embeddings remain disabled until configured.
+Active implementations and repository-defined verification tools are listed; tools offered for local checks are distinguished from CI execution. No LLM diagnosis, reranker, prompt system, agent framework, or admin UI is implemented. Optional HTTP embeddings, trusted gateway account isolation and direct read-only Connected Apps are implemented; embeddings and connectors remain disabled until their respective server configuration is supplied.
 
 | Skill | Used For | Important Locations |
 | --- | --- | --- |
@@ -22,6 +22,29 @@ Active implementations and repository-defined verification tools are listed; too
 | ESLint / SonarJS / Ruff / mypy | Static quality and types | `eslint.config.mjs`, `pyproject.toml`, `package.json` |
 | Bandit / pip-audit | Available local Python security/dependency checks; not invoked by the CI workflow | `requirements-dev.txt`, `AGENTS.md` |
 | GitHub Actions / SonarQube | Coverage pipeline against ephemeral pgvector PostgreSQL; analysis upload | `.github/workflows/sonarqube.yml`, `sonar-project.properties`, `requirements-dev.lock.txt` |
+| Native connector adapters | Gmail REST v1, Drive REST v3, GitHub App REST and Slack user OAuth/Web API, normalizing through one provider-independent envelope | `backend/connectors/`, `backend/schemas/connectors.py`, `docs/connectors.md` |
+| Auth Broker / encrypted TokenVault | One-time owner-bound OAuth state, Google/GitHub PKCE, server-only exchange/refresh, encrypted credentials/previous-key rotation, safe local-first disconnect | `backend/services/connectors.py`, `backend/connectors/{base,vault}.py` |
+| Durable connector synchronization | Resource selection, page/resource checkpoints, incremental cursors, retries/rate limits, scheduled reconciliation, resource/version deduplication | `backend/services/{connector_sync,connector_sources}.py`, `backend/db/models.py`, `backend/db/migrations/versions/0004_connector_layer.py` |
+| Provider events / permission evidence | Signed/identity-checked events, replay receipts, optional watches, owner-private ACL context and SQL retrieval prefilters | `backend/connectors/{events,subscriptions}.py`, `backend/processing/pipeline/context.py`, `backend/repositories/source_access.py` |
+| Connected Apps UI | Real OAuth redirects/callback status, discovery pagination, provider-specific options, polling/progress, reauth/errors, explicit retain/soft-delete/purge | `src/app/connectors/`, `src/components/connectors/`, `src/app/api/connectors/`, `src/lib/{connectors,connector-contracts}.ts` |
 | Logging / readiness | Server failure logs use exception types plus request/source identifiers; read-only DB/vector/schema/revision/count probes | `backend/main.py`, `backend/services/{ingestion,readiness}.py` |
 
 Development and verification commands, architectural constraints, and data-safety rules are in `AGENTS.md`; the current system audit is in `docs/runtime-readiness.md`.
+
+## Implemented user-facing connector capabilities
+
+All four require operator-supplied server credentials and provider approval/installation. Automated tests exercise mocked external boundaries; they do not establish live provider consent or delivery. There is one direct native transport per provider, with no managed Google Cloud connection.
+
+| Capability | Status | Actual behavior and bounds |
+| --- | --- | --- |
+| Connect Gmail | IMPLEMENTED | Authorize server-side Google read-only access, list/select labels and UTC dates, sync individual messages with thread/header metadata, optionally retrieve separate attachments; history updates and controlled selected-label address/date queries; disconnect/revoke. |
+| Connect Google Drive | IMPLEMENTED / PARTIAL formats | Discover/select files, folders and shared drives; synchronize authorized supported originals or DOCX/XLSX/PPTX Workspace exports; preserve native permissions/metadata and changes; disconnect/revoke. Shortcuts are not followed; export/download/parser limits apply. |
+| Connect/install GitHub App | IMPLEMENTED / PARTIAL large repositories | Discover user-authorized installed repositories; select branches/categories; synchronize individual code/README/docs, issues/comments, PRs/reviews/review comments, commits/releases; retain relationships and process signed hints/updates. Truncated trees and empty branchless repositories fail safely; large commit-file metadata may be partial. Disconnect revokes the user token, not the App installation. |
+| Connect Slack workspace | IMPLEMENTED / PARTIAL conversations | Discover/select authorized public/private channels, UTC dates, messages/threads/replies, authors and file metadata; optional supported file downloads and permitted signed events; disconnect/revoke. No DMs or arbitrary private-channel access; history/replies may be slow under native limits. |
+| Select resources / Sync now / Reconcile | IMPLEMENTED | Provider authorization validates choices; durable initial/incremental/reconciliation jobs resume checkpoints/rate delays. UI shows real connection/provider/auth/sync states and fetched/queued counts; Knowledge Sources shows actual parsing/chunk/embedding status and retrieval availability. |
+| Private retrieval / ACL propagation | IMPLEMENTED / PARTIAL sharing | Native evidence travels through envelope, canonical, OKF and chunks. SQL filters exclude another owner's, disconnected, removed or expired-access content before retrieval. No cross-user/group sharing or instantaneous provider ACL mirror. |
+| Verified event callbacks | IMPLEMENTED; optional setup | Gmail authenticated Pub/Sub, token-verified Drive channels, GitHub HMAC, Slack HMAC/timestamp and replay receipts; authoritative asynchronous fetching with periodic polling/reconciliation fallback. Operator delivery configuration is required. |
+| Retain / Soft-delete / Purge | IMPLEMENTED | All policies stop sync/wipe credentials/disable retrieval locally before best-effort remote cleanup. Retain keeps disabled content; soft-delete marks removed; purge removes connector source artifacts/chunks/private files. Independent saved/history snapshots remain. |
+| Controlled provider queries | PARTIAL | Selected-resource list/count interfaces, bounded dates/address filters where supported, limits/cursors and page counts. Full planner, mailbox-wide totals UI and unrestricted model-to-provider access are not implemented. |
+
+Setup, exact callbacks/scopes, tests, commands and remaining operational work are documented in `docs/connectors.md`. Never advertise embeddings, AI diagnosis, live authorization or a successful remote sync from mocked tests or a queued HTTP 202.

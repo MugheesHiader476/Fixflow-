@@ -189,6 +189,8 @@ class KnowledgeSource(BaseModel):
     created_at: datetime
     updated: datetime
     detail: str
+    is_active: bool = True
+    retrieval_available: bool = True
 
 
 class SavedSolution(BaseModel):

@@ -5,12 +5,15 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import Document, DocumentChunk, KnowledgeSource
+from backend.repositories.source_access import accessible_source
 from backend.schemas.models import EmbeddingStatus, IngestionFormat, KnowledgeKind, SourceStatus
 from backend.schemas.models import KnowledgeSource as SourceResponse
 from backend.services.access import owner_id
 
 
-def source_response(source: KnowledgeSource, document_count: int = 0, chunk_count: int = 0) -> SourceResponse:
+def source_response(
+    source: KnowledgeSource, document_count: int = 0, chunk_count: int = 0, accessible: bool = True
+) -> SourceResponse:
     return SourceResponse(
         id=str(source.id),
         source_id=str(source.id),
@@ -32,6 +35,8 @@ def source_response(source: KnowledgeSource, document_count: int = 0, chunk_coun
         url=source.url,
         error_message=source.error_message,
         detail=source.error_message or f"{document_count} documents · {chunk_count} chunks",
+        is_active=source.is_active,
+        retrieval_available=accessible and source.status in {"ready_for_embedding", "embedding", "indexed"},
     )
 
 
@@ -43,7 +48,7 @@ async def list_sources(session: AsyncSession, source_id: UUID | None = None) -> 
         chunks_query = chunks_query.where(DocumentChunk.source_id == source_id)
     docs, chunks = docs_query.subquery(), chunks_query.subquery()
     statement = (
-        select(KnowledgeSource, func.coalesce(docs.c.count, 0), func.coalesce(chunks.c.count, 0))
+        select(KnowledgeSource, func.coalesce(docs.c.count, 0), func.coalesce(chunks.c.count, 0), accessible_source())
         .outerjoin(docs, KnowledgeSource.id == docs.c.source_id)
         .outerjoin(chunks, KnowledgeSource.id == chunks.c.source_id)
         .where(KnowledgeSource.owner_id == owner_id(session))
@@ -52,7 +57,7 @@ async def list_sources(session: AsyncSession, source_id: UUID | None = None) -> 
     if source_id is not None:
         statement = statement.where(KnowledgeSource.id == source_id)
     rows = await session.execute(statement)
-    return [source_response(source, documents, chunks) for source, documents, chunks in rows]
+    return [source_response(source, documents, chunks, accessible) for source, documents, chunks, accessible in rows]
 
 
 async def delete_source(session: AsyncSession, source_id: UUID) -> bool:

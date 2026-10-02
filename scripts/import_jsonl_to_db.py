@@ -96,12 +96,17 @@ async def source_ids(db: AsyncSession, batch: list[Record]) -> dict[str, UUID]:
         for digest, item in unique.items()
     ]
     await db.execute(
-        insert(KnowledgeSource).values(rows).on_conflict_do_nothing(index_elements=["owner_id", "file_hash"])
+        insert(KnowledgeSource)
+        .values(rows)
+        .on_conflict_do_nothing(
+            index_elements=["owner_id", "file_hash"], index_where=KnowledgeSource.external_identity.is_(None)
+        )
     )
     result = await db.execute(
         select(KnowledgeSource.file_hash, KnowledgeSource.id).where(
             KnowledgeSource.file_hash.in_(unique),
             KnowledgeSource.owner_id == LEGACY_OWNER,
+            KnowledgeSource.external_identity.is_(None),
         )
     )
     return dict(result.tuples().all())

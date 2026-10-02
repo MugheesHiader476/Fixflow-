@@ -748,6 +748,7 @@ cryptography==50.0.1 \
     --hash=sha256:fd3718b960d0b5dd213cdf03f3bcb7000e69dda0de8b956061947ff6bcff5558 \
     --hash=sha256:ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
     # via
+    #   -r backend/requirements.txt
     #   -r requirements-ingestion.txt
     #   pdfminer-six
 cyclonedx-python-lib==11.12.0 \
@@ -2328,6 +2329,10 @@ pygments==2.21.0 \
     # via
     #   pytest
     #   rich
+pyjwt==2.15.1 \
+    --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193 \
+    --hash=sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8
+    # via -r backend/requirements.txt
 pyparsing==3.3.3 \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4

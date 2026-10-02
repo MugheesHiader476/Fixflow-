@@ -9,6 +9,7 @@ function isAccountRoute(pathname: string): boolean {
 
 export default clerkMiddleware(async (auth, request) => {
   const pathname = request.nextUrl.pathname;
+  if (request.method === "POST" && /^\/api\/connectors\/events\/(gmail|github|google_drive|slack)$/.test(pathname)) return;
   if (isAccountRoute(pathname)) return;
 
   const { userId } = await auth();

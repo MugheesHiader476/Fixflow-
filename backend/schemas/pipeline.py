@@ -250,6 +250,7 @@ class Concept(Contract):
     content_hash: str
     dependency_hash: str
     markdown: str
+    source_context: dict[str, object] = Field(default_factory=dict)
 
 
 class Chunk(Contract):
@@ -267,6 +268,7 @@ class Chunk(Contract):
     retrieval_content: str
     token_count: int = Field(gt=0)
     content_hash: str
+    source_context: dict[str, object] = Field(default_factory=dict)
 
 
 class ChunkParent(Contract):

@@ -54,4 +54,14 @@ describe("account-first routing", () => {
     expect(response?.status).toBe(401);
     expect(response?.headers.get("Location")).toBeNull();
   });
+
+  it("opens only POST provider events to the signature boundary", async () => {
+    if (!clerk.handler) throw new Error("Missing middleware");
+    const auth = vi.fn().mockResolvedValue({ userId: null });
+    const event = new NextRequest("http://localhost/api/connectors/events/github", { method: "POST" });
+    expect(await clerk.handler(auth, event)).toBeUndefined();
+    expect(auth).not.toHaveBeenCalled();
+    expect((await checkRoute("/api/connectors/gmail/callback")).response?.status).toBe(401);
+    expect((await checkRoute("/api/connectors/events/unknown")).response?.status).toBe(401);
+  });
 });

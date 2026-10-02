@@ -95,6 +95,8 @@ export interface DebugSession {
 }
 
 export interface KnowledgeSource {
+  is_active?: boolean;
+  retrieval_available?: boolean;
   id: string;
   source_id: string;
   name: string;

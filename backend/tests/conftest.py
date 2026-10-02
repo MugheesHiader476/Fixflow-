@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from backend.config import get_settings
 from backend.db.session import close_database, get_engine, get_session_factory
@@ -29,10 +30,23 @@ def migrated_database() -> str:
         pytest.skip("Set TEST_DATABASE_URL to a disposable PostgreSQL database ending in _test")
     if not (make_url(url).database or "").endswith("_test"):
         raise ValueError("Refusing to reset a database whose name does not end in _test")
+    asyncio.run(clear_test_sources(url))
     env = {**os.environ, "DATABASE_URL": url}
     for command in (["downgrade", "base"], ["upgrade", "head"], ["upgrade", "head"]):
         subprocess.run([sys.executable, "-m", "alembic", *command], env=env, check=True, timeout=60)
     return url
+
+
+async def clear_test_sources(url: str) -> None:
+    # Only the disposable database validated above is reset. This permits downgrade
+    # when a prior test created distinct provider identities with identical content.
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as connection:
+            if await connection.scalar(text("SELECT to_regclass('public.knowledge_sources') IS NOT NULL")):
+                await connection.execute(text("TRUNCATE knowledge_sources CASCADE"))
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -53,7 +67,10 @@ async def database(
         await connection.execute(
             text(
                 "TRUNCATE knowledge_sources, documents, document_chunks, "
-                "debug_sessions, chat_messages, saved_solutions CASCADE"
+                "debug_sessions, chat_messages, saved_solutions"
+                ", connector_accounts, connector_credentials, connector_oauth_states, connector_sync_jobs, "
+                "connector_resources, connector_subscriptions, connector_events, connector_audit, "
+                "connector_rate_limits CASCADE"
             )
         )
     try:

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.db.models import DocumentChunk, KnowledgeSource
+from backend.repositories.source_access import accessible_source
 from backend.services.access import owner_id
 
 
@@ -109,6 +110,7 @@ class VectorRepository:
                 exists().where(
                     DocumentChunk.source_id == KnowledgeSource.id,
                     KnowledgeSource.owner_id == owner_id(self.session),
+                    accessible_source(),
                     DocumentChunk.embedding.is_not(None),
                     DocumentChunk.embedding_model == model,
                     DocumentChunk.embedding_dimension == dimension,
@@ -121,6 +123,7 @@ class VectorRepository:
             .join(KnowledgeSource, DocumentChunk.source_id == KnowledgeSource.id)
             .where(
                 KnowledgeSource.owner_id == owner_id(self.session),
+                accessible_source(),
                 DocumentChunk.embedding.is_not(None),
                 DocumentChunk.embedding_model == model,
                 DocumentChunk.embedding_dimension == dimension,

@@ -14,6 +14,7 @@ export const SOURCE_STATUS: Record<KnowledgeSource["status"], {
 };
 
 export function isSourcePending(source: KnowledgeSource): boolean {
+  if (source.is_active === false) return false;
   return ["uploaded", "processing", "chunked", "embedding"].includes(source.status) || source.embedding_status === "pending";
 }
 

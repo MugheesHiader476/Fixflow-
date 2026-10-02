@@ -2,6 +2,8 @@
 
 Next.js + FastAPI with PostgreSQL as the primary persistent store. Files → Documents → Chunks → PostgreSQL/pgvector. Embeddings remain NULL until an HTTPS embedding endpoint, model, and dimension are configured. Retrieval is keyword-based; no diagnosis model or reranker is connected. See the [runtime audit and setup](docs/runtime-readiness.md).
 
+Connected Apps supports Gmail, Google Drive, GitHub App and Slack through direct read-only native APIs, with encrypted OAuth credentials, selected resources, durable synchronization and private retrieval access. Provider credentials and setup are required before connecting. See [connector architecture, setup, verified checks and limits](docs/connectors.md).
+
 The Sources page accepts ordinary documents and standalone OKF Markdown concepts. Explicit OKF mode validates concept frontmatter before the content enters the searchable corpus.
 
 ## Requirements
@@ -20,7 +22,7 @@ myenev/bin/python -m pip install -r requirements-dev.txt
 
 Keep your existing environment files. For a fresh checkout, copy `.env.example` to `.env.local`, add your Clerk keys, and set `NEXT_PUBLIC_API_URL=http://localhost:8000`. Copy `backend/.env.example` to `backend/.env` and set your own `POSTGRES_PASSWORD` (generate one with `openssl rand -hex 32`). Generate one separate random `FIXFLOW_API_TOKEN` (at least 32 ASCII characters) and set the same value in `.env.local` and `backend/.env`. This gateway credential stays server-side. Do not commit credentials.
 
-The backend and Alembic automatically read `backend/.env`; shell variables take precedence. `DATABASE_URL`, when set, overrides the separate `POSTGRES_*` fields. Do not put database credentials in `NEXT_PUBLIC_*` variables. Relative `FIXFLOW_DATA_DIR` paths remain relative to `backend/`. `FIXFLOW_PYTHON` is no longer needed: ingestion runs in the backend's own virtual environment, without subprocesses.
+The backend and Alembic automatically read `backend/.env`; shell variables take precedence. `DATABASE_URL`, when set, overrides the separate `POSTGRES_*` fields. Do not put database credentials in `NEXT_PUBLIC_*` variables. Relative `FIXFLOW_DATA_DIR` paths remain relative to `backend/`. `FIXFLOW_PYTHON` is no longer needed: ingestion uses the backend's virtual environment and bounded parser processes.
 
 ## Docker Compose (complete application)
 
@@ -29,14 +31,16 @@ For a fresh Docker setup, copy `.env.example` to a root `.env`. Set a random ser
 ```bash
 cp .env.example .env
 # Edit .env and fill the required credentials.
-docker compose up --build
+docker compose up
 ```
+
+Compose uses `pull_policy: build` for the frontend, backend and migration services, so each `up` builds the current checkout using cached layers where possible. Source changes and frontend public environment changes are included automatically; no separate `--build` flag is needed. Connector credentials remain optional: configure the corresponding `CONNECTORS__*` values in root `.env` to enable a provider. Embeddings remain optional until configured.
 
 The frontend is at http://localhost:3000 and the backend health endpoint is at http://localhost:8000/health. The browser calls the same-origin Next.js `/api/backend` gateway; the gateway uses `http://backend:8000` inside Compose. The backend connects to `db:5432`. If host port 5432 is occupied, change `POSTGRES_PORT` in the root `.env`; container-to-container traffic still uses `db:5432`. A one-shot `migrate` service runs `alembic upgrade head` after PostgreSQL becomes healthy; the API starts only after migrations succeed. The database and uploaded documents use separate named volumes. This Compose setup binds locally and runs one backend instance; authenticated account records are isolated through the trusted Next gateway. Public hosting still requires operational protections listed in the runtime audit.
 
 | Action | Command |
 | --- | --- |
-| Start in background | `docker compose up -d --build` |
+| Start in background | `docker compose up -d` |
 | Status | `docker compose ps` |
 | Logs | `docker compose logs -f` |
 | Stop | `docker compose down` |
@@ -71,7 +75,7 @@ Frontend: http://localhost:3000. Health: http://localhost:8000/health. API docum
 
 ## Account entry
 
-Signed-out visits to the frontend workspace open `/sign-up` first. Existing users can switch to `/sign-in`; Clerk handles account field validation and verification. After sign-up or sign-in, users return to the workspace. Frontend pages and all Next.js gateway routes require a Clerk session. The gateway forwards a server-only credential and verified account identity; FastAPI verifies that credential and scopes persisted records and retrieval to the account. Missing authentication configuration fails closed. Keep FastAPI private; browsers must use the gateway. See the runtime audit for legacy-data assignment and deployment limitations.
+Signed-out visits to the frontend workspace open `/sign-up` first. Existing users can switch to `/sign-in`; Clerk handles account field validation and verification. After sign-up or sign-in, users return to the workspace. Frontend pages and all Next.js gateway routes require a Clerk session. The gateway forwards a server-only credential and verified account identity; FastAPI verifies that credential and scopes persisted records and retrieval to the account. Only exact provider event POST routes bypass Clerk, under separate signature/identity verification. Missing authentication configuration fails closed. Keep FastAPI private; browsers must use the gateway. See the runtime audit for legacy-data assignment and deployment limitations.
 
 ## Ingestion and persistence
 
@@ -89,7 +93,7 @@ The Knowledge Sources page polls pending jobs, retries transient polling failure
 
 The current implementation is **documentation retrieval, not AI diagnosis**. Both diagnosis and follow-up questions search real PostgreSQL document chunks using keyword retrieval. With no model connected, the UI reports no assessed confidence, does not invent code fixes, and labels retrieved evidence honestly. Upload documentation first: an empty database is structurally ready but cannot provide retrieval evidence.
 
-Debug inputs (error, code, context, repository reference, technologies, and text attachments) are persisted with each session. Attachments are limited to five UTF-8 text/source files, 50 KB each. Repository references are saved, not fetched. Reopening a session restores its inputs and conversation via `GET /api/sessions/{id}` and `GET /api/sessions/{id}/messages`. History, saved details, Markdown export, theme selection, and request error/retry states are supported.
+Debug inputs (error, code, context, repository reference, technologies, and text attachments) are persisted with each session. Attachments are limited to five UTF-8 text/source files, 50 KB each. Debug-form repository references are saved, not fetched; authorized selected repositories are fetched separately through the GitHub connector. Reopening a session restores its inputs and conversation via `GET /api/sessions/{id}` and `GET /api/sessions/{id}/messages`. History, saved details, Markdown export, theme selection, and request error/retry states are supported.
 
 `backend/services/diagnosis.py` currently uses `DocumentationProvider`. It returns matching documentation without a model-generated answer. No paid API calls are made by the test suite.
 

@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import DocumentChunk, KnowledgeSource
+from backend.repositories.source_access import accessible_source
 from backend.schemas.models import SourceDoc
 from backend.services.access import owner_id
 
@@ -24,6 +25,7 @@ async def search_chunks(db: AsyncSession, query_text: str, limit: int = 5) -> li
         .where(
             DocumentChunk.search_text.op("@@")(query),
             KnowledgeSource.owner_id == owner_id(db),
+            accessible_source(),
             KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
         )
         .order_by(func.ts_rank(DocumentChunk.search_text, query).desc(), DocumentChunk.id)

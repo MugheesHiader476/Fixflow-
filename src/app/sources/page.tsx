@@ -339,8 +339,9 @@ export default function SourcesPage() {
                       {source.embedding_error && <p role="alert" className="mt-1 text-[10px] text-danger">{source.embedding_error}</p>}
                       {source.embedding_status === "failed" && <Button size="sm" loading={retryingId === source.id} disabled={retryingId !== null} onClick={() => { void retrySourceEmbeddings(source.id); }}>Retry embeddings</Button>}
                       {source.error_message && <p className="mt-1 text-[10px] text-red-400">{source.error_message}</p>}
+                      {source.retrieval_available === false && ["ready_for_embedding", "embedding", "indexed"].includes(source.status) && <p className="mt-1 text-[10px] text-muted">Unavailable to retrieval. Reconnect and synchronize to verify access.</p>}
                     </div>
-                    <Badge tone={SOURCE_STATUS[source.status].tone}>{SOURCE_STATUS[source.status].label}</Badge>
+                    <Badge tone={source.is_active === false ? "muted" : SOURCE_STATUS[source.status].tone}>{source.is_active === false ? "Unavailable" : SOURCE_STATUS[source.status].label}</Badge>
                   </div>
                 </div>
               ))}

@@ -19,6 +19,7 @@ from backend.processing.pipeline.concepts import (
     validate_okf,
 )
 from backend.processing.pipeline.config import PipelineConfig
+from backend.processing.pipeline.context import apply_context
 from backend.processing.pipeline.inspection import inspect, read_source
 from backend.processing.pipeline.parsers import LayoutParser, NativeParser, OcrParser, Parser
 from backend.schemas.pipeline import Chunk, PipelineResult, Source, digest
@@ -56,10 +57,19 @@ def run_pipeline(
     parsers: list[Parser] | None = None,
     tokenizer: Tokenizer | None = None,
     ingested_at: datetime | None = None,
+    source_context: dict[str, object] | None = None,
 ) -> PipelineResult:
     config = config or PipelineConfig()
     tokenizer_identity = tokenizer.name if tokenizer else f"{config.tokenizer}:{config.tokenizer_encoding}"
-    config_hash = digest([ENGINE_VERSION, config.model_dump(mode="json"), strict_okf, tokenizer_identity])
+    config_hash = digest(
+        [
+            ENGINE_VERSION,
+            config.model_dump(mode="json"),
+            strict_okf,
+            tokenizer_identity,
+            {k: v for k, v in (source_context or {}).items() if k not in {"fetched_at", "permissions"}},
+        ]
+    )
     try:
         data = read_source(path)
         source_hash = hashlib.sha256(data).hexdigest()
@@ -77,7 +87,9 @@ def run_pipeline(
             validate_okf(previous.concepts, previous.canonical)
             validate_chunks(previous.chunks, previous.parents, previous.concepts, previous.canonical, tokenizer, config)
             event("cache_hit", source_id)
-            return previous.model_copy(deep=True)
+            cached = previous.model_copy(deep=True)
+            apply_context(cached, source_context or {})
+            return cached
         inspection = inspect(path, config, data)
         if previous and previous.canonical.source.source_id != source_id:
             raise PipelineError("Pipeline previous output belongs to another source")
@@ -185,7 +197,7 @@ def run_pipeline(
             "concepts": digest([c.content_hash for c in concepts]),
             "chunks": digest([c.content_hash for c in chunks]),
         }
-        return PipelineResult(
+        result = PipelineResult(
             canonical=canonical,
             concepts=concepts,
             chunks=chunks,
@@ -198,6 +210,9 @@ def run_pipeline(
             warnings=[*canonical.parse_quality.warnings, *warnings],
             reused_concepts=reused,
         )
+        apply_context(result, source_context or {})
+        validate_okf(result.concepts, result.canonical)
+        return result
     except PipelineError:
         event("validation_failed", source_id)
         raise

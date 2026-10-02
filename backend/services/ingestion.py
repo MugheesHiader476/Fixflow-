@@ -94,7 +94,7 @@ async def ingest_source(source_id: UUID) -> None:
             if not locked:
                 return
             source = await session.get(KnowledgeSource, source_id)
-            if source is None or source.status not in PENDING_STATUSES:
+            if source is None or source.status not in PENDING_STATUSES or not source.is_active:
                 return
             await set_status(source_id, "processing")
             if source.path is None:
@@ -114,6 +114,7 @@ async def ingest_source(source_id: UUID) -> None:
                 }
             )
             previous = await previous_result(session, source_id)
+            context = source.ingestion_metadata.get("source_envelope")
             result = await asyncio.to_thread(
                 run_pipeline,
                 path,
@@ -122,6 +123,7 @@ async def ingest_source(source_id: UUID) -> None:
                 previous=previous,
                 force=bool(source.ingestion_metadata.get("force")),
                 strict_okf=source.ingestion_format == "okf",
+                source_context=context if isinstance(context, dict) else None,
             )
             if result.canonical.source.sha256 != source.file_hash:
                 raise ValueError("The uploaded document changed after registration.")
@@ -161,7 +163,7 @@ async def ingestion_worker() -> None:
                 ids = list(
                     await session.scalars(
                         select(KnowledgeSource.id)
-                        .where(KnowledgeSource.status.in_(PENDING_STATUSES))
+                        .where(KnowledgeSource.status.in_(PENDING_STATUSES), KnowledgeSource.is_active.is_(True))
                         .order_by(KnowledgeSource.created_at)
                         .limit(get_settings().ingestion_workers)
                     )

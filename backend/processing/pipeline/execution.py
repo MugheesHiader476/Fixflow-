@@ -25,6 +25,7 @@ def _child(
     previous: PipelineResult | None,
     force: bool,
     strict_okf: bool,
+    source_context: dict[str, object] | None,
 ) -> None:
     if os.name == "posix":
         os.setsid()
@@ -35,7 +36,15 @@ def _child(
         resource.setrlimit(resource.RLIMIT_AS, (maximum, maximum))
     try:
         configure_logging()
-        result = run_pipeline(Path(path), source_id, config, previous=previous, force=force, strict_okf=strict_okf)
+        result = run_pipeline(
+            Path(path),
+            source_id,
+            config,
+            previous=previous,
+            force=force,
+            strict_okf=strict_okf,
+            source_context=source_context,
+        )
         payload = result.model_dump_json().encode()
         if len(payload) > config.max_result_bytes:
             raise PipelineError("Pipeline output exceeds configured artifact size limit")
@@ -67,12 +76,15 @@ def execute_pipeline(
     previous: PipelineResult | None = None,
     force: bool = False,
     strict_okf: bool = False,
+    source_context: dict[str, object] | None = None,
 ) -> PipelineResult:
     config = config or PipelineConfig()
     context = multiprocessing.get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(
-        target=_child, args=(sender, str(path), source_id, config, previous, force, strict_okf), daemon=True
+        target=_child,
+        args=(sender, str(path), source_id, config, previous, force, strict_okf, source_context),
+        daemon=True,
     )
     process.start()
     sender.close()

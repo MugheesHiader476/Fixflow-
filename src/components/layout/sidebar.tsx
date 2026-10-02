@@ -16,6 +16,7 @@ export function MobileNavButton({ onClick }: { onClick: () => void }) {
 const NAV = [
   { href: "/", label: "New Debug Session", icon: Plus },
   { href: "/sources", label: "Knowledge Sources", icon: Database },
+  { href: "/connectors", label: "Connected Apps", icon: ArrowUpRight },
   { href: "/history", label: "Debug History", icon: History },
   { href: "/saved", label: "Saved Solutions", icon: Bookmark },
   { href: "/settings", label: "Settings", icon: Settings },

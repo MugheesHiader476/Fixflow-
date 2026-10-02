@@ -14,10 +14,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.api.connectors import events_router
+from backend.api.connectors import router as connector_router
 from backend.api.middleware import RequestGuardMiddleware
 from backend.api.routes import router
 from backend.config import get_settings
+from backend.connectors.core import ConnectorError
 from backend.db.session import close_database
+from backend.services.connector_sync import connector_worker
 from backend.services.embeddings import embedding_worker
 from backend.services.ingestion import ingestion_worker
 from backend.services.readiness import database_readiness
@@ -29,15 +33,19 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     worker = asyncio.create_task(ingestion_worker(), name="document-ingestion")
     embeddings = asyncio.create_task(embedding_worker(), name="document-embeddings")
+    connectors = asyncio.create_task(connector_worker(), name="connector-sync")
     try:
         yield
     finally:
         embeddings.cancel()
         worker.cancel()
+        connectors.cancel()
         with suppress(asyncio.CancelledError):
             await worker
         with suppress(asyncio.CancelledError):
             await embeddings
+        with suppress(asyncio.CancelledError):
+            await connectors
         await close_database()
 
 
@@ -125,3 +133,26 @@ async def health() -> JSONResponse:
 
 
 app.include_router(router, prefix="/api")
+app.include_router(connector_router, prefix="/api")
+app.include_router(events_router)
+
+
+@app.exception_handler(ConnectorError)
+async def connector_error(_: Request, error: ConnectorError) -> JSONResponse:
+    status = (
+        429
+        if error.code == "rate_limited"
+        else 404
+        if error.code == "not_found"
+        else 503
+        if error.code in {"not_configured", "provider_unavailable"}
+        else 401
+        if error.code == "invalid_event"
+        else 409
+        if error.code == "processing"
+        else 422
+    )
+    result = error_response(error.code.upper(), str(error), status)
+    if error.retry_after:
+        result.headers["Retry-After"] = str(max(1, int(error.retry_after)))
+    return result

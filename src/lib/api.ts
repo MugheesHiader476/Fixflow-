@@ -30,7 +30,7 @@ export function checkBackendHealth(signal?: AbortSignal): Promise<BackendHealth>
   return apiFetch("/health", { signal }, [503]);
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit, acceptedStatuses: number[] = []): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit, acceptedStatuses: number[] = []): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
