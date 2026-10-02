@@ -61,6 +61,13 @@ class KnowledgeSource(Owned, Timestamped, Base):
     ingestion_format: Mapped[str] = mapped_column(String(20), default="document", server_default="document")
     embedding_status: Mapped[str] = mapped_column(String(20), default="not_configured", server_default="not_configured")
     embedding_error: Mapped[str | None] = mapped_column(String(500))
+    ingestion_metadata: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict, server_default="{}")
+
+
+class IngestionArtifact(Timestamped, Base):
+    __tablename__ = "ingestion_artifacts"
+    source_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_sources.id", ondelete="CASCADE"), primary_key=True)
+    result: Mapped[dict[str, object]] = mapped_column(JSONB)
 
 
 class Document(Base):

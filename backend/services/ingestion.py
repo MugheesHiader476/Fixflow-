@@ -10,11 +10,15 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.config import get_settings
-from backend.db.models import Document, DocumentChunk, KnowledgeSource
+from backend.db.models import KnowledgeSource
 from backend.db.session import get_session_factory
 from backend.processing.loaders import loader_for
 from backend.processing.okf import OkfConcept, concept_metadata, maybe_parse_concept, parse_concept
-from backend.repositories.corpus import chunk_documents, document_values, insert_chunks, insert_documents, json_metadata
+from backend.processing.pipeline.config import PipelineConfig
+from backend.processing.pipeline.execution import execute_pipeline as run_pipeline
+from backend.processing.pipeline.runner import PipelineError
+from backend.repositories.corpus import document_values, json_metadata
+from backend.repositories.pipeline import persist_result, previous_result
 
 logger = logging.getLogger(__name__)
 PENDING_STATUSES = ("uploaded", "processing", "chunked")
@@ -102,29 +106,34 @@ async def ingest_source(source_id: UUID) -> None:
                 or not path.resolve().is_relative_to(settings.upload_dir.resolve())
             ):
                 raise ValueError("The uploaded document is unavailable.")
-            iterator = (
-                load_documents(path, source_id, source.file_hash, strict_okf=True)
-                if source.ingestion_format == "okf"
-                else load_documents(path, source_id, source.file_hash)
+            config = PipelineConfig.model_validate(
+                {
+                    **settings.pipeline.model_dump(),
+                    "max_characters": settings.max_extracted_chars,
+                    "max_chunks": settings.max_document_chunks,
+                }
             )
-            inserted_chunks = 0
-            while rows := await asyncio.to_thread(next_batch, iterator, settings.ingestion_batch_size):
-                await insert_documents(session, rows)
-                chunks = iter(chunk_documents(source_id, rows, settings.chunk_size, settings.chunk_overlap))
-                while batch := await asyncio.to_thread(next_batch, chunks, settings.ingestion_batch_size):
-                    inserted_chunks += await insert_chunks(session, batch)
-                    if inserted_chunks > settings.max_document_chunks:
-                        raise ValueError("No extractable text within the configured chunk limit.")
-            count = await session.scalar(
-                select(func.count()).select_from(Document).where(Document.source_id == source_id)
+            previous = await previous_result(session, source_id)
+            result = await asyncio.to_thread(
+                run_pipeline,
+                path,
+                str(source_id),
+                config,
+                previous=previous,
+                force=bool(source.ingestion_metadata.get("force")),
+                strict_okf=source.ingestion_format == "okf",
             )
-            if not count:
-                raise ValueError("No extractable text found. Scanned PDFs require OCR before upload.")
-            chunks_count = await session.scalar(
-                select(func.count()).select_from(DocumentChunk).where(DocumentChunk.source_id == source_id)
-            )
-            if not chunks_count:
-                raise ValueError("No extractable text chunks found. Upload a document with more text.")
+            if result.canonical.source.sha256 != source.file_hash:
+                raise ValueError("The uploaded document changed after registration.")
+            await persist_result(session, source_id, result)
+            source.ingestion_metadata = {
+                **source.ingestion_metadata,
+                "force": False,
+                "version": result.canonical.source.version,
+                "mime_type": result.canonical.source.mime_type,
+                "registration": result.canonical.source.model_dump(mode="json"),
+                "profile": result.canonical.profile.model_dump(mode="json"),
+            }
             source.status = "chunked"
             await session.flush()
             source.status = "ready_for_embedding"
@@ -134,6 +143,8 @@ async def ingest_source(source_id: UUID) -> None:
         # Loader/driver failures must roll back every document and chunk in this job.
         logger.error("Ingestion failed for %s (%s)", source_id, type(error).__name__)
         message = "Document processing failed. Check the file format and installed ingestion dependencies."
+        if isinstance(error, PipelineError):
+            message = str(error)
         if isinstance(error, ValueError) and str(error).startswith(
             ("Remote URL", "The uploaded", "No extractable", "Invalid OKF")
         ):

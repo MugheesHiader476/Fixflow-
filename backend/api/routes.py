@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import mimetypes
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,6 +115,8 @@ async def documents(
     value: Annotated[str, Form()] = "",
     content: Annotated[str | None, Form()] = None,
     file: Annotated[UploadFile | None, File()] = None,
+    force: Annotated[bool, Form()] = False,
+    update_source_id: Annotated[UUID | None, Form()] = None,
 ) -> KnowledgeSource:
     if kind not in {"docs", "github", "upload"}:
         raise HTTPException(422, "Unsupported source kind")
@@ -144,10 +149,61 @@ async def documents(
             name = safe_filename(title if title.lower().endswith((".md", ".txt", ".rst")) else f"{title}.md")
         path, digest = await save_upload(name, file, content)
     try:
+        registered_id = update_source_id or uuid4()
+        registration: dict[str, object] = {
+            "source_id": str(registered_id),
+            "filename": name,
+            "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+            "extension": path.suffix.lower() if path else None,
+            "size": (await asyncio.to_thread(path.stat)).st_size if path else None,
+            "sha256": digest,
+            "ingested_at": datetime.now(UTC).isoformat(),
+            "version": 1,
+            "original_uri": f"source:{registered_id}",
+            "force": force,
+        }
+        if update_source_id:
+            if path is None:
+                raise HTTPException(422, "Source updates require uploaded or pasted content")
+            lock_key = int.from_bytes(update_source_id.bytes[:8], "big", signed=True)
+            if not await db.scalar(select(func.pg_try_advisory_xact_lock(lock_key))):
+                raise HTTPException(409, "Source is currently processing")
+            existing = await db.scalar(
+                select(SourceRecord)
+                .where(SourceRecord.id == update_source_id, SourceRecord.owner_id == owner_id(db))
+                .with_for_update()
+            )
+            if existing is None:
+                raise HTTPException(404, "Source not found")
+            duplicate = await db.scalar(
+                select(SourceRecord.id).where(
+                    SourceRecord.owner_id == owner_id(db),
+                    SourceRecord.file_hash == digest,
+                    SourceRecord.id != update_source_id,
+                )
+            )
+            if duplicate:
+                raise HTTPException(409, "This content already belongs to another source")
+            if existing.file_hash == digest and existing.ingestion_format != ingestion_format:
+                raise HTTPException(409, "This content already exists with a different ingestion format")
+            if existing.file_hash == digest and existing.status != "failed" and not force:
+                discard_upload(path)
+                path = None
+            else:
+                prior = existing.ingestion_metadata.get("registration", existing.ingestion_metadata)
+                if isinstance(prior, dict):
+                    registration["version"] = int(prior.get("version", 1)) + int(prior.get("sha256") != digest)
+                existing.path, existing.name, existing.file_hash = str(path), name, digest
+                existing.ingestion_format, existing.status = ingestion_format, "uploaded"
+                existing.source_type, existing.url = kind, None
+                existing.error_message = None
+                existing.ingestion_metadata = registration
+            await db.commit()
+            return await source(update_source_id, db)
         result = await db.scalar(
             insert(SourceRecord)
             .values(
-                id=uuid4(),
+                id=registered_id,
                 owner_id=owner_id(db),
                 ingestion_format=ingestion_format,
                 name=name,
@@ -157,6 +213,7 @@ async def documents(
                 url=remote_url,
                 status=status,
                 error_message=error_message,
+                ingestion_metadata=registration,
             )
             .on_conflict_do_nothing(index_elements=["owner_id", "file_hash"])
             .returning(SourceRecord.id)
@@ -172,12 +229,20 @@ async def documents(
             if record.ingestion_format != ingestion_format:
                 raise HTTPException(409, "This content already exists with a different ingestion format")
             result = record.id
-            if record.status == "failed" and path:
+            if (record.status == "failed" or force) and path:
+                lock_key = int.from_bytes(record.id.bytes[:8], "big", signed=True)
+                if not await db.scalar(select(func.pg_try_advisory_xact_lock(lock_key))):
+                    raise HTTPException(409, "Source is currently processing")
                 # Retry from this upload, even when the previous file was lost.
+                prior = record.ingestion_metadata.get("registration", record.ingestion_metadata)
+                registration.update(source_id=str(record.id), original_uri=f"source:{record.id}")
+                if isinstance(prior, dict):
+                    registration["version"] = int(prior.get("version", 1)) + int(prior.get("sha256") != digest)
                 record.path = str(path)
                 record.name = name
                 record.status = "uploaded"
                 record.error_message = None
+                record.ingestion_metadata = registration
             elif path:
                 discard_upload(path)
                 path = None

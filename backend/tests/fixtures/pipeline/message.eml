@@ -1,0 +1,7 @@
+From: example@example.test
+To: user@example.test
+Subject: Authentication timeout
+Message-ID: <example@example.test>
+Content-Type: text/plain; charset=utf-8
+
+The timeout is thirty seconds.

@@ -6,3 +6,7 @@ fonttools
 beautifulsoup4
 docx2txt
 PyYAML>=6.0,<7
+defusedxml>=0.7.1,<1
+markdown-it-py>=3,<5
+pdfplumber>=0.11,<0.12
+tiktoken>=0.12,<1

@@ -26,7 +26,7 @@ async def test_health(client: httpx.AsyncClient) -> None:
     assert health["database"] == "connected"
     assert health["pgvector"] == "available"
     assert health["schema"] == "ready"
-    assert health["revision"] == health["expected_revision"] == "0002"
+    assert health["revision"] == health["expected_revision"] == "0003"
     assert health["sources"] == health["documents"] == health["chunks"] == health["embedded_chunks"] == 0
     assert health["ai_generation"] == "not_configured"
 
@@ -181,7 +181,12 @@ async def test_cors(client: httpx.AsyncClient) -> None:
 
 
 async def test_lifespan_recovers_pending_job(client: httpx.AsyncClient) -> None:
-    response = await client.post("/api/documents", files={"file": ("queued.md", b"# Queued for restart")})
+    response = await client.post(
+        "/api/documents",
+        files={
+            "file": ("queued.md", b"# Queued for restart\n\nRecover this pending upload after restarting the worker.")
+        },
+    )
     source_id = response.json()["source_id"]
     await close_database()
     async with app.router.lifespan_context(app):
@@ -236,7 +241,8 @@ async def test_invalid_debug_context(client: httpx.AsyncClient, payload: dict[st
 
 async def test_titles_with_dots_and_readiness_counts(client: httpx.AsyncClient) -> None:
     response = await client.post(
-        "/api/documents", data={"kind": "docs", "value": "Python 3.14", "content": "asyncio guide"}
+        "/api/documents",
+        data={"kind": "docs", "value": "Python 3.14", "content": "A useful asyncio guide for recovery."},
     )
     assert response.status_code == 202
     assert response.json()["name"] == "Python-3.14.md"
@@ -257,7 +263,7 @@ async def test_health_detects_migration_mismatch(client: httpx.AsyncClient) -> N
         assert response.json()["schema"] == "migration_required"
     finally:
         async with get_session_factory()() as db:
-            await db.execute(text("UPDATE alembic_version SET version_num='0002'"))
+            await db.execute(text("UPDATE alembic_version SET version_num='0003'"))
             await db.commit()
 
 

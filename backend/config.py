@@ -5,12 +5,17 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
+from backend.processing.pipeline.config import PipelineConfig
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(ROOT / ".env", ROOT / "backend/.env"), extra="ignore", case_sensitive=False
+        env_file=(ROOT / ".env", ROOT / "backend/.env"),
+        extra="ignore",
+        case_sensitive=False,
+        env_nested_delimiter="__",
     )
 
     fixflow_api_token: SecretStr | None = None
@@ -36,6 +41,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=400, ge=0)
     embedding_dim: int | None = Field(default=None, ge=1, le=16000)
     embedding_model: str | None = Field(default=None, max_length=200)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
 
     @field_validator("fixflow_api_token", "embedding_api_key", "embedding_api_url", "embedding_model", mode="before")
     @classmethod

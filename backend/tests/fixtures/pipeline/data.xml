@@ -1,0 +1,1 @@
+<configuration><auth><timeout>30</timeout></auth><recovery><attempts>3</attempts></recovery></configuration>

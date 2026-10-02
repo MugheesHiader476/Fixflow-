@@ -2,7 +2,7 @@
 
 Reviewed and implemented on 2026-10-02. This document describes the current request, ingestion, persistence, and authentication paths.
 
-The working path is: Clerk account → same-origin Next gateway → authenticated private FastAPI → account-owned source → private upload → extraction/strict standalone OKF parsing → transactional documents/chunks → keyword retrieval. Optional configured embeddings continue through validated HTTP batches → atomic pgvector persistence. Diagnosis generation remains disabled.
+The working path is: Clerk account → same-origin Next gateway → authenticated private FastAPI → account-owned source → private upload → adaptive parsing/quality gate → canonical evidence → validated OKF concepts → structural chunks → transactional artifacts/documents/chunks → existing keyword retrieval. [The ingestion pipeline](ingestion-pipeline.md) ends at validated chunks. Optional configured embeddings remain a separate service. Diagnosis generation remains disabled.
 
 | Gap and consequence | Implemented change | Verification |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ The working path is: Clerk account → same-origin Next gateway → authenticate
 | Optional Markdown parsing silently treated invalid OKF as ordinary text. | Explicit `ingestion_format=okf` in API/UI validates standalone Markdown frontmatter and persists a safe failed job with no corpus rows on invalid input. Ordinary document mode retains compatible parsing. | Valid metadata/body roundtrip and invalid strict-format rollback/retrieval tests. |
 | Vector storage existed without a runtime generator, failure state, or retry workflow. | Optional HTTPS adapter and worker, configured model/dimension, timeout, bounded responses, exact batch indexes and finite nonzero vector validation. Source-level advisory lock and transactional vectors; restart recovery and explicit failed-job retry. | Invalid provider responses, later-batch rollback, failure/retry/completion using test doubles and PostgreSQL. No paid or real embedding endpoint was called. |
 | Frontend TypeScript assertions accepted malformed backend JSON. | Runtime checks for consumed responses, restored input fields, collections, enums and counts; safe error/loading/retry behavior. API schemas reject null bytes and invalid Unicode before JSONB persistence, including tags and source titles. | Frontend malformed-response regression tests and production build. |
+| Flat parsing/character chunks lost structural evidence, and unbounded decoders could block workers. | Native/layout/conditional OCR adapters, measured escalation, canonical/OKF/chunk gates, complete provenance and graphs, source-scoped caching/updates, bounded killable process execution. | Golden native/table/column fixtures, real OCR, parser fallback/deadline tests, PostgreSQL cache/update/vector preservation, failed-version rollback and CLI recovery tests. |
 
 ## Configuration and migration
 
@@ -27,7 +28,7 @@ myenev/bin/python -m scripts.assign_legacy_owner --owner user_VERIFIED_ID --appl
 
 Assignment preserves IDs, documents, chunks, messages, and snapshots; account file-hash conflicts abort rather than delete or merge records. Stop writers during an administrative assignment. Migration downgrade similarly refuses cross-account duplicate hashes rather than discard data.
 
-This workspace's ignored native environment was given a matching gateway token. Its application database was backed up privately and upgraded to `0002`; row counts across all six application tables were unchanged, and `alembic check` found no pending model changes. No legacy ownership assignment was inferred or performed. Restart existing Next/FastAPI processes to load configuration and code changes. Other checkouts must configure the token and run `alembic upgrade head`.
+This workspace's ignored native environment has a matching gateway token. Its application database was backed up privately and upgraded to `0003`, which adds source metadata and ingestion artifacts. Row counts across all six existing application tables were preserved, including three debug sessions; `alembic check` found no pending model changes. No legacy ownership assignment was inferred or performed. Restart existing Next/FastAPI processes to load configuration and code changes. Other checkouts must configure the token and run `alembic upgrade head`.
 
 ## Optional embeddings
 
@@ -48,15 +49,15 @@ Indexed sources are not automatically re-embedded after a model change. Plan an 
 
 ## Executed checks
 
-- PostgreSQL-backed Python suite: 89 passed, zero skipped; includes upgrade preservation and legacy assignment preview/conflict tests. One existing LangChain loader deprecation warning.
+- PostgreSQL-backed Python/CLI suite: 153 passed, zero skipped with real Tesseract/Poppler available; includes upgrade preservation, pipeline golden fixtures, cache/update/rollback and legacy assignment tests. One existing LangChain loader deprecation warning.
 - Frontend suite: 78 passed. ESLint and TypeScript passed.
 - Next.js production build passed, including the dynamic gateway route.
 - Ruff and mypy passed; application database `alembic check` passed.
 - pip-audit found no known vulnerabilities in the resolved development requirements.
-- Bandit production source scan passed. The unfiltered scan reports low-severity test assertions and controlled test migration subprocesses in the executed full scan, with no medium/high findings; these were not suppressed in source.
+- Bandit production source scan passed. Fixed-argv, bounded OCR decoder calls have specific documented false-positive suppressions; no shell or source-provided command is executed. Test assertions remain outside the production scan.
 
 Unit/integration doubles verify gateway trust and provider failures. They do not establish live Clerk sign-in, external embedding availability, Docker image execution, internet deployment capacity, or a guarantee against all malicious parser inputs. The browser harness uses a test-only synthetic trusted principal; it never weakens production authentication.
 
 ## Current limits
 
-The app has no account upload/storage/API quotas, rate limits, retention policy, production backup/restore monitoring, or isolated parser workers for hostile workloads. FastAPI is bound privately in the supplied Compose setup. The server gateway credential delegates verified identity and must remain secret. Direct public-client token verification, admin roles, ZIP OKF bundle graph import, OCR, repository/remote URL fetching, LLM diagnosis, and vector retrieval are not implemented.
+The app has no account upload/storage/API quotas, rate limits, retention policy or production backup/restore monitoring. The bounded parser process is not an OS security sandbox. FastAPI is bound privately in the supplied Compose setup. The server gateway credential delegates verified identity and must remain secret. Direct public-client token verification, admin roles, ZIP OKF bundle graph import, repository/remote URL fetching, LLM diagnosis and vector retrieval are not implemented. Audio/video, irregular visual documents and oversized non-Python code require suitable installed adapters. Native OCR requires system tools and configuration; Docker includes the English OCR dependencies.

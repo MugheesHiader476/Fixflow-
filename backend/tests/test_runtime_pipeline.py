@@ -333,6 +333,7 @@ async def test_embedding_batches_roll_back_after_later_provider_failure(
     monkeypatch.setattr(settings, "embedding_batch_size", 1)
     monkeypatch.setattr(settings, "chunk_size", 60)
     monkeypatch.setattr(settings, "chunk_overlap", 5)
+    monkeypatch.setattr(settings.pipeline, "max_chunk_tokens", 180)
     source = (
         await client.post("/api/documents", data={"content": "Chunkedtestmarker. A recovery procedure. " * 30})
     ).json()

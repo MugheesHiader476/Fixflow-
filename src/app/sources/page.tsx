@@ -260,7 +260,7 @@ export default function SourcesPage() {
                       <input
                         ref={fileRef}
                         type="file"
-                        accept=".md,.txt,.rst,.pdf,.docx,.csv,.html,.htm"
+                        accept=".md,.txt,.rst,.pdf,.docx,.pptx,.csv,.xlsx,.html,.htm,.json,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.cs,.sh,.sql,.rb,.php,.eml,.log,.srt,.vtt,.png,.jpg,.jpeg,.tif,.tiff,.wav,.mp3,.mp4,.webm"
                         aria-label="Upload document"
                         onChange={(event) => handleFile(event.target.files?.[0])}
                         className="hidden"
@@ -305,7 +305,7 @@ export default function SourcesPage() {
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-                <p className="text-[11px] text-muted">Files up to 50 MB. Scanned PDFs need OCR first.</p>
+                <p className="text-[11px] text-muted">Files up to 50 MB. Scans and images require configured OCR. Audio/video require a transcription adapter.</p>
                 <Button type="submit" variant="primary" loading={busy} disabled={!selectedFile && !value.trim()}>
                   <Upload size={14} />
                   Add to knowledge base

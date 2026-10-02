@@ -13,6 +13,34 @@ MAX_METADATA_DEPTH = 32
 RESERVED_NAMES = {"index.md", "log.md"}
 
 
+def unique_mapping(pairs: list[tuple[object, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if not isinstance(key, str) or key in result:
+            raise ValueError("Structured mapping requires unique string keys")
+        result[key] = value
+    return result
+
+
+class UniqueSafeLoader(yaml.SafeLoader):
+    pass
+
+
+def _yaml_mapping(loader: UniqueSafeLoader, node: object) -> dict[str, object]:
+    return unique_mapping(loader.construct_pairs(node))
+
+
+UniqueSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _yaml_mapping)
+
+
+def load_yaml(content: str) -> object:
+    loader = UniqueSafeLoader(content)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
+
+
 @dataclass(frozen=True)
 class OkfConcept:
     concept_id: str
@@ -51,7 +79,7 @@ def parse_concept(content: str, relative_path: str) -> OkfConcept:
     if body_start is None:
         raise ValueError("OKF concept has no closing frontmatter delimiter")
     try:
-        parsed = yaml.safe_load("".join(frontmatter_lines))
+        parsed = load_yaml("".join(frontmatter_lines))
     except (yaml.YAMLError, RecursionError) as error:
         raise ValueError("Invalid OKF YAML frontmatter") from error
     if not isinstance(parsed, dict) or not all(isinstance(key, str) for key in parsed):

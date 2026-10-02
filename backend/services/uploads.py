@@ -11,9 +11,10 @@ import anyio
 from fastapi import HTTPException, UploadFile
 
 from backend.config import get_settings
+from backend.processing.pipeline.inspection import EXTENSIONS
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-ALLOWED_EXTENSIONS = {".md", ".txt", ".rst", ".pdf", ".docx", ".csv", ".html", ".htm"}
+ALLOWED_EXTENSIONS = set(EXTENSIONS)
 
 
 def safe_filename(name: str) -> str:
@@ -91,19 +92,30 @@ def validate_upload_content(path: Path) -> None:
             if b"%PDF-" not in stream.read(1024):
                 raise HTTPException(422, "File content is not a PDF")
         return
-    if suffix == ".docx":
+    if suffix in {".docx", ".pptx", ".xlsx"}:
         try:
             with zipfile.ZipFile(path) as archive:
                 entries = archive.infolist()
                 names = {entry.filename for entry in entries}
-                if not {"[Content_Types].xml", "word/document.xml"}.issubset(names):
-                    raise HTTPException(422, "File content is not a DOCX document")
+                required = {".docx": "word/document.xml", ".pptx": "ppt/presentation.xml", ".xlsx": "xl/workbook.xml"}[
+                    suffix
+                ]
+                if not {"[Content_Types].xml", required}.issubset(names):
+                    raise HTTPException(422, "File content does not match its office format")
                 if len(entries) > 2000 or sum(entry.file_size for entry in entries) > 100 * 1024 * 1024:
                     raise HTTPException(422, "DOCX archive exceeds processing limits")
                 if any(entry.flag_bits & 1 for entry in entries):
                     raise HTTPException(422, "Encrypted DOCX files are not supported")
         except zipfile.BadZipFile as error:
             raise HTTPException(422, "File content is not a DOCX document") from error
+        return
+    if EXTENSIONS[suffix] in {"image", "audio", "video"}:
+        from backend.processing.pipeline.inspection import inspect  # noqa: PLC0415
+
+        try:
+            inspect(path, get_settings().pipeline)
+        except ValueError as error:
+            raise HTTPException(422, "File content does not match its media format") from error
         return
     decoder = codecs.getincrementaldecoder("utf-8")("strict")
     nonblank = False

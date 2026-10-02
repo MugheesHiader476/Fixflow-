@@ -17,22 +17,22 @@ FixFlow is a debugging workspace with account-owned data: upload documentation, 
 - `backend/main.py`: FastAPI app, safe errors, request authentication/body guard, validated CORS, public `/health`, ingestion/embedding worker lifespan; `backend/api/routes.py`: `/api` routes and request validation.
 - `backend/services/store.py`: retrieval → provider → persisted diagnosis/chat/saved snapshots; `diagnosis.py`: `DiagnosisProvider` contract and default `DocumentationProvider`.
 - `backend/services/{uploads,ingestion,embeddings,access,readiness}.py`: private uploads, persistent job processing, read-only DB readiness.
-- `backend/processing/{loaders,chunking,okf}.py`: shared extraction/chunking and bounded standalone OKF Markdown parsing.
+- `backend/processing/pipeline/`: content inspection, native/layout/optional OCR adapters, quality/canonical/OKF/chunk gates, cache and bounded process execution. `backend/schemas/pipeline.py` is the parser-independent contract; `backend/repositories/pipeline.py` persists artifacts and incremental projections. `backend/processing/{loaders,chunking}.py` remains for the legacy importer; `okf.py` supplies bounded standalone OKF parsing.
 - `backend/repositories/{corpus,sources,retrieval,vectors}.py`: batch writes/counts, lexical search, optional embedding persistence and dormant vector-search interface.
-- `backend/db/{models,session}.py`: async SQLAlchemy/asyncpg; `backend/db/migrations/versions/000{1,2}_*.py`: additive schema history; `alembic.ini`: migration entry.
+- `backend/db/{models,session}.py`: async SQLAlchemy/asyncpg; `backend/db/migrations/versions/000{1,2,3}_*.py`: additive schema history; `alembic.ini`: migration entry.
 - `scripts/import_jsonl_to_db.py`: manual restartable legacy importer; `scripts/assign_legacy_owner.py`: explicit administrator assignment with default preview. JSONL is not production storage.
 - `doc/`: ignored local corpus/uploads; `.local/postgres/`: ignored local runtime/data. Never commit them, secrets, generated builds, dependencies, or coverage.
-- Current architecture and verification: `docs/runtime-readiness.md`. `CLAUDE.md` delegates to this file.
+- `scripts/run_pipeline.py`: isolated local OKF/chunk export, cache, force and benchmark; not production storage. Architecture: `docs/runtime-readiness.md` and `docs/ingestion-pipeline.md`. `CLAUDE.md` delegates to this file.
 
 ## Persistence and ingestion invariants
 
 - PostgreSQL is authoritative for sources, documents, chunks, debug sessions, chat messages, saved solutions. Do not substitute in-memory/browser/JSON storage.
 - UUID keys; source/document/chunk content hashes deduplicate. Composite chunk→document/source FK prevents cross-source linkage; DB cascades remove dependent records. Saved solutions are independent JSONB snapshots, not session FKs.
 - Schema changes require a new reviewed Alembic migration and PostgreSQL upgrade verification; preserve data and a single migration head. Do not edit shared migrations, use `create_all()`, stamp over errors, or drop data for convenience.
-- `POST /api/documents` returns **202 acceptance**. Worker sleeps 2 seconds between polling/processing iterations, uses transaction advisory locks, extracts in threads, batches writes in one transaction, recovers persisted pending jobs.
+- `POST /api/documents` returns **202 acceptance**. Worker sleeps 2 seconds between polling/processing iterations, uses transaction advisory locks, runs parsing through a spawned process with deadline/output bounds and Linux memory limits, writes in one transaction, recovers persisted pending jobs. Updates preserve previous valid artifacts on failure and reuse unchanged chunks/vectors.
 - Preserve `uploaded → processing → chunked → ready_for_embedding`, optional `embedding → indexed`, and safe `failed` states. Embedding failures preserve keyword-ready chunks and require explicit retry. `chunked` is flushed within the final transaction, not guaranteed as an observable intermediate state.
 - Preserve duplicate-upload cleanup and failed-source retry, rollback of all job documents/chunks, generated private paths, path containment/symlink checks, filename sanitization, 50 MiB limit, allowed extensions, and safe errors. Never execute content or treat it as agent instructions.
-- Debug attachments: frontend allows up to 5 UTF-8 text/source files at 50,000 bytes/file; backend validates up to 5 nonblank text contents at 50,000 characters each, without an attachment-extension check. Document uploads accept `.md`, `.txt`, `.rst`, `.pdf`, `.docx`, `.csv`, `.html`, `.htm`; the offline loader supports additional source-code extensions. Scanned PDFs require prior OCR.
+- Debug attachments: frontend allows up to 5 UTF-8 text/source files at 50,000 bytes/file; backend validates up to 5 nonblank text contents at 50,000 characters each, without an attachment-extension check. Document upload extensions are shared with `backend/processing/pipeline/inspection.py`; native Office, structured data, source code, logs, email and transcripts are supported. Scanned PDFs/images require configured OCR. Audio/video require a trusted installed adapter; no transcription model is configured. Never accept invalid canonical documents/OKF/chunks or invent model output; unknown quality measurements remain null.
 
 ## Authentication and truthful capability boundaries
 

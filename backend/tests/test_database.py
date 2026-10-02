@@ -42,7 +42,7 @@ async def make_corpus(db: AsyncSession, name: str = "guide.md") -> tuple[UUID, U
 async def test_connection_pgvector_and_migrations(db: AsyncSession) -> None:
     assert await db.scalar(text("SELECT 1")) == 1
     assert await db.scalar(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'"))
-    assert await db.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+    assert await db.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
     assert await db.scalar(text("SELECT vector_dims('[1,0,0]'::vector)")) == 3
     assert get_engine() is get_engine()
 
@@ -78,13 +78,14 @@ async def test_partial_ingestion_rolls_back_then_retries(
 ) -> None:
     response = await client.post("/api/documents", files={"file": ("retry.md", b"Original document text")})
     source_id = UUID(response.json()["source_id"])
-    real_loader = ingestion.load_documents
+    real_persistence = ingestion.persist_result
 
-    def failed_loader(path: Path, identifier: UUID, digest: str):
-        yield document_values(identifier, "An inserted document that must roll back.", {}, 0)
+    async def failed_persistence(session, identifier, result):
+        await real_persistence(session, identifier, result)
+        await session.flush()
         raise RuntimeError("sensitive-driver-error")
 
-    monkeypatch.setattr(ingestion, "load_documents", failed_loader)
+    monkeypatch.setattr(ingestion, "persist_result", failed_persistence)
     monkeypatch.setattr(get_settings(), "ingestion_batch_size", 1)
     with pytest.raises(ingestion.IngestionError):
         await ingestion.ingest_source(source_id)
@@ -92,7 +93,7 @@ async def test_partial_ingestion_rolls_back_then_retries(
     assert detail["status"] == "failed"
     assert detail["document_count"] == detail["chunk_count"] == 0
     assert "sensitive" not in detail["error_message"]
-    monkeypatch.setattr(ingestion, "load_documents", real_loader)
+    monkeypatch.setattr(ingestion, "persist_result", real_persistence)
     # A replacement upload must also recover a lost original file.
     original = next(get_settings().upload_dir.glob("*/retry.md"))
     original.unlink()
@@ -107,15 +108,23 @@ async def test_only_new_file_is_loaded_and_workers_deduplicate(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = []
-    real_loader = ingestion.load_documents
+    real_runner = ingestion.run_pipeline
 
-    def tracked_loader(path: Path, identifier: UUID, digest: str):
+    def tracked_runner(path: Path, identifier: str, config, **kwargs):
         calls.append(path.name)
-        return real_loader(path, identifier, digest)
+        return real_runner(path, identifier, config, **kwargs)
 
-    monkeypatch.setattr(ingestion, "load_documents", tracked_loader)
+    monkeypatch.setattr(ingestion, "run_pipeline", tracked_runner)
     for name in ("first.md", "second.md"):
-        response = await client.post("/api/documents", files={"file": (name, f"# Documentation for {name}".encode())})
+        response = await client.post(
+            "/api/documents",
+            files={
+                "file": (
+                    name,
+                    f"# Documentation for {name}\n\nThis document explains a useful recovery procedure.".encode(),
+                )
+            },
+        )
         identifier = UUID(response.json()["id"])
         await asyncio.gather(ingestion.ingest_source(identifier), ingestion.ingest_source(identifier))
         await ingestion.ingest_source(identifier)
