@@ -5,7 +5,7 @@ import ConnectorsPage from "@/app/connectors/page";
 import type { ConnectorAccount, ConnectorCard } from "@/lib/connector-contracts";
 import { authorizationUrl, validConnectorResponse } from "@/lib/connector-contracts";
 
-const api = vi.hoisted(() => ({ listConnectors: vi.fn(), connectProvider: vi.fn(), discoverResources: vi.fn(), configureConnector: vi.fn(), syncConnector: vi.fn(), disconnectConnector: vi.fn() }));
+const api = vi.hoisted(() => ({ listConnectors: vi.fn(), connectProvider: vi.fn(), discoverResources: vi.fn(), configureConnector: vi.fn(), syncConnector: vi.fn(), disconnectConnector: vi.fn(), checkConnector: vi.fn() }));
 vi.mock("@/lib/connectors", () => api);
 vi.mock("@/components/layout/app-shell", () => ({ AppShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 
@@ -24,6 +24,7 @@ beforeEach(() => {
   api.discoverResources.mockResolvedValue({ resources: [{ id: "INBOX", name: "Inbox", kind: "label", parent_id: null, version: null, metadata: {} }], next_cursor: "second" });
   api.configureConnector.mockResolvedValue(ACCOUNT);
   api.syncConnector.mockResolvedValue(ACCOUNT);
+  api.checkConnector.mockResolvedValue(ACCOUNT);
   api.disconnectConnector.mockResolvedValue({ ...ACCOUNT, status: "disconnected" });
 });
 afterEach(cleanup);
@@ -92,6 +93,24 @@ describe("Connected Apps", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(api.configureConnector).not.toHaveBeenCalled();
   });
+
+  it("checks provider authorization and refreshes a failed operation's status", async () => {
+    api.checkConnector.mockRejectedValue(new Error("Authorization expired; reconnect"));
+    render(<ConnectorsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check connection" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Authorization expired; reconnect");
+    expect(api.checkConnector).toHaveBeenCalledWith(ACCOUNT.id);
+    expect(api.listConnectors.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("can clear every resource to stop synchronization", async () => {
+    api.listConnectors.mockResolvedValue([{ ...CARDS[0], accounts: [{ ...ACCOUNT, configuration: { ...ACCOUNT.configuration, resource_ids: ["INBOX"] } }] }]);
+    render(<ConnectorsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Configure resources" }));
+    fireEvent.click(await screen.findByLabelText(/Inbox/));
+    fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
+    await waitFor(() => expect(api.configureConnector).toHaveBeenCalledWith(ACCOUNT.id, expect.objectContaining({ resource_ids: [] })));
+  });
 });
 
 describe("connector response validation", () => {
@@ -102,5 +121,7 @@ describe("connector response validation", () => {
     expect(validConnectorResponse("/api/connectors/gmail/connect", { authorization_url: "javascript:alert(1)" })).toBe(false);
     expect(authorizationUrl("https://accounts.google.com/o/oauth2/v2/auth?state=state")).toBe(true);
     expect(authorizationUrl("https://accounts.google.com.attacker.test/o/oauth2/v2/auth")).toBe(false);
+    expect(validConnectorResponse(`/api/connectors/${ACCOUNT.id}/query`, { resources: [], count: 0, exact: true, next_cursor: null })).toBe(true);
+    expect(validConnectorResponse(`/api/connectors/${ACCOUNT.id}/query`, { resources: [], count: -1, exact: true, next_cursor: null })).toBe(false);
   });
 });

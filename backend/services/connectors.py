@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.connectors.core import ConnectorError
+from backend.connectors.github import GitHubConnector
 from backend.connectors.registry import adapter, configured, verify_selection
 from backend.connectors.vault import TokenVault
 from backend.db.models import (
@@ -173,6 +174,12 @@ async def callback(db: AsyncSession, provider: Provider, state: str, code: str) 
     account.error_message = None
     account.reconcile_at = datetime.now(UTC)
     # Reconnect never re-enables retained sources until authoritative synchronization succeeds.
+    account.sync_cursor = {}
+    await db.execute(
+        update(KnowledgeSource)
+        .where(KnowledgeSource.connector_account_id == account.id)
+        .values(is_active=False, access_expires_at=datetime.now(UTC))
+    )
     await db.execute(
         update(ConnectorSyncJob)
         .where(ConnectorSyncJob.account_id == account.id, ConnectorSyncJob.status.in_(PENDING))
@@ -188,10 +195,13 @@ async def configure(db: AsyncSession, identifier: UUID, selection: Selection) ->
     account = await owned_account(db, identifier)
     if account.status not in ACTIVE:
         raise ConnectorError("reauth_required", "Reconnect this account before selecting resources")
-    await verify_selection(adapter(cast(Provider, account.provider), get_settings().connectors, account), selection)
+    connector = adapter(cast(Provider, account.provider), get_settings().connectors, account)
+    await verify_selection(connector, selection)
     await db.refresh(account, with_for_update=True)
     if account.status not in ACTIVE:
         raise ConnectorError("reauth_required", "Connection is no longer authorized")
+    if isinstance(connector, GitHubConnector):
+        account.meta = {**account.meta, "installations": connector.observed_installations}
     if account.configuration != selection.model_dump(mode="json"):
         await db.execute(
             update(ConnectorSyncJob)
@@ -243,7 +253,7 @@ async def enqueue(db: AsyncSession, account: ConnectorAccount, mode: str = "incr
         cursor={
             "state": account.sync_cursor if effective_mode == "incremental" else {},
             "selection": selection.model_dump(mode="json"),
-            "pending": account.meta.get("failed_refs", []),
+            "pending": account.meta.get("failed_refs", []) if effective_mode == "incremental" else [],
             "verified": False,
         },
         progress={"discovered": 0, "queued": 0, "unchanged": 0, "removed": 0, "failed": 0},
@@ -316,6 +326,8 @@ async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> Connect
     account.status, account.authentication_status, account.sync_status = "disconnected", "revoked", "cancelled"
     account.error_message = warning
     account.meta = {**account.meta, "disconnected_policy": policy}
+    # Keep selection/account identity for reconnect; clear pending account payloads.
+    account.meta = {k: v for k, v in account.meta.items() if k not in {"pending_events", "failed_refs"}}
     await db.execute(
         update(ConnectorSyncJob)
         .where(ConnectorSyncJob.account_id == account.id, ConnectorSyncJob.status.in_(PENDING))
@@ -323,9 +335,13 @@ async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> Connect
     )
     paths: list[Path] = []
     if policy == "purge":
+        from backend.db.models import ConnectorResource  # noqa: PLC0415
+
         rows = list(await db.scalars(select(KnowledgeSource).where(KnowledgeSource.connector_account_id == account.id)))
         paths = [Path(row.path) for row in rows if row.path]
         await db.execute(delete(KnowledgeSource).where(KnowledgeSource.connector_account_id == account.id))
+        await db.execute(delete(ConnectorResource).where(ConnectorResource.account_id == account.id))
+        await db.execute(update(ConnectorSyncJob).where(ConnectorSyncJob.account_id == account.id).values(cursor={}))
     else:
         await db.execute(
             update(KnowledgeSource)
@@ -342,6 +358,9 @@ async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> Connect
             )
     audit(db, account.owner_id, "connection_revoked", account.id, policy=policy, local_access_disabled=True)
     await db.commit()
+    for path in paths:
+        if not path.is_symlink() and path.resolve().is_relative_to(get_settings().upload_dir.resolve()):
+            discard_upload(path)
     # Retrieval and workers are already disabled while remote cleanup is attempted.
     if connector and token:
         from backend.connectors.subscriptions import stop_subscriptions  # noqa: PLC0415
@@ -360,7 +379,4 @@ async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> Connect
     account.error_message = warning
     audit(db, account.owner_id, "remote_cleanup_completed", account.id, confirmed=warning is None)
     await db.commit()
-    for path in paths:
-        if not path.is_symlink() and path.resolve().is_relative_to(get_settings().upload_dir.resolve()):
-            discard_upload(path)
     return account

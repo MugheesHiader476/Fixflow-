@@ -39,7 +39,14 @@ class SlackConnector(OAuthConnector):
             await reserve(
                 "slack:" + self.account.external_account_id + ":" + method, self.config.slack_history_interval_seconds
             )
-        result = await super().get(path, params, token=token)
+        result = record(
+            await self.http.request(
+                "GET",
+                self.api_root + path,
+                params=params,
+                token=token or await self.access_token(),
+            )
+        )
         if result.get("ok") is not True:
             error = result.get("error")
             code = (
@@ -58,6 +65,7 @@ class SlackConnector(OAuthConnector):
                 "Slack request failed; check authorization and selected resources",
                 60 if code == "rate_limited" else 0,
             )
+        await self.success()
         return result
 
     async def handle_callback(self, code: str, verifier: str) -> tuple[Credentials, str, str, dict[str, object]]:
@@ -97,7 +105,28 @@ class SlackConnector(OAuthConnector):
     async def channel(self, identifier: str) -> dict[str, object]:
         if not ID.fullmatch(identifier):
             raise ConnectorError("invalid_resource", "Invalid Slack channel")
-        return record((await self.get("/conversations.info", {"channel": identifier}))["channel"])
+        channel = record((await self.get("/conversations.info", {"channel": identifier}))["channel"])
+        if channel.get("is_private") and channel.get("is_member") is False:
+            raise ConnectorError("inaccessible", "Join the selected private channel before synchronizing it")
+        return channel
+
+    def channel_access(self, channel: dict[str, object]) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "user",
+                "id": (self.account.meta or {}).get("user_id", "") if self.account else "",
+                "role": "reader",
+                "channel_id": channel["id"],
+                "is_private": channel.get("is_private"),
+            }
+        ]
+
+    @staticmethod
+    def selected_timestamp(value: str, selection: Selection) -> bool:
+        created = datetime.fromtimestamp(float(value), UTC).date()
+        return (selection.start_date is None or created >= selection.start_date) and (
+            selection.end_date is None or created <= selection.end_date
+        )
 
     def message_ref(self, channel: dict[str, object], message: dict[str, object]) -> Resource:
         ts = string(message["ts"])
@@ -150,6 +179,12 @@ class SlackConnector(OAuthConnector):
             latest = str(
                 min(float(anchor), datetime.combine(selection.end_date + timedelta(days=1), time(), UTC).timestamp())
             )
+        if float(oldest) >= float(latest):
+            return SyncPage(
+                next_state={"index": index + 1, "anchor": anchor, "since": state.get("since", "0")},
+                checkpoint={"since": anchor},
+                complete=index + 1 >= len(selection.resource_ids),
+            )
         result = await self.get(
             "/conversations.history",
             {
@@ -188,6 +223,8 @@ class SlackConnector(OAuthConnector):
         channel = await self.channel(channel_id)
         if resource.kind == "slack_event_message":
             ts = string(resource.metadata["message_ts"])
+            if not self.selected_timestamp(ts, selection):
+                return FetchResult(removed_ids=[channel_id + ":" + ts])
             result = await self.get(
                 "/conversations.history",
                 {"channel": channel_id, "oldest": ts, "latest": ts, "inclusive": "true", "limit": 1},
@@ -197,6 +234,8 @@ class SlackConnector(OAuthConnector):
                 return FetchResult(removed_ids=[channel_id + ":" + ts])
             return await self.normalize(self.message_ref(channel, messages[0]), selection, include_thread=True)
         if resource.kind == "slack_thread_page":
+            if not selection.threads:
+                return FetchResult()
             result = await self.get(
                 "/conversations.replies",
                 {
@@ -208,10 +247,14 @@ class SlackConnector(OAuthConnector):
             )
             envelopes = []
             followups = []
+            removed = []
             for message in records(result.get("messages", [])):
-                fetched = await self.normalize(self.message_ref(channel, message), selection, include_thread=False)
+                ref = self.message_ref(channel, message)
+                ref.metadata["sync_group"] = "slack_thread:" + channel_id + ":" + string(resource.metadata["thread_ts"])
+                fetched = await self.normalize(ref, selection, include_thread=False)
                 envelopes.extend(fetched.envelopes)
                 followups.extend(fetched.followups)
+                removed.extend(fetched.removed_ids)
             cursor = string(record(result.get("response_metadata", {})).get("next_cursor", ""))
             if result.get("has_more") and not cursor:
                 raise ConnectorError("invalid_response", "Slack omitted its thread pagination cursor")
@@ -228,20 +271,42 @@ class SlackConnector(OAuthConnector):
                         }
                     )
                 )
-            return FetchResult(envelopes=envelopes, followups=followups)
+            return FetchResult(
+                envelopes=envelopes,
+                followups=followups,
+                removed_ids=removed,
+                completed_inventory_groups=[]
+                if cursor
+                else ["slack_thread:" + channel_id + ":" + string(resource.metadata["thread_ts"])],
+            )
         if resource.kind == "slack_file":
             item = record((await self.get("/files.info", {"file": string(resource.metadata["file_id"])}))["file"])
             url = string(item.get("url_private_download", item.get("url_private", "")))
             parsed = urlsplit(url)
-            if parsed.hostname != "files.slack.com" or parsed.scheme != "https":
+            if parsed.hostname not in {"files.slack.com", "slack.com"} or parsed.scheme != "https":
                 raise ConnectorError("unsupported", "Slack file does not offer a supported private download")
             data = await self.http.request("GET", url, token=await self.access_token(), raw=True)
             if not isinstance(data, bytes):
                 raise ConnectorError("invalid_response", "Invalid Slack file download")
+            ref = resource.model_copy(
+                update={
+                    "metadata": {
+                        **resource.metadata,
+                        "filename": string(item["name"]),
+                        "file_size": item.get("size"),
+                        "mime_type": item.get("mimetype"),
+                        "provider_channels": item.get("channels", []),
+                    }
+                }
+            )
             return FetchResult(
                 envelopes=[
                     await self.binary(
-                        resource, data, string(item["name"]), string(item.get("mimetype", "application/octet-stream"))
+                        ref,
+                        data,
+                        string(item["name"]),
+                        string(item.get("mimetype", "application/octet-stream")),
+                        permissions=self.channel_access(channel),
                     )
                 ]
             )
@@ -249,6 +314,8 @@ class SlackConnector(OAuthConnector):
 
     async def normalize(self, resource: Resource, selection: Selection, *, include_thread: bool) -> FetchResult:
         item = record(resource.metadata["object"])
+        if not self.selected_timestamp(string(item["ts"]), selection):
+            return FetchResult(removed_ids=[resource.id])
         metadata = {key: value for key, value in resource.metadata.items() if key != "object"}
         metadata["attachments"] = item.get("attachments", [])
         author = item.get("user")
@@ -275,7 +342,13 @@ class SlackConnector(OAuthConnector):
             + string(item.get("text", ""))
         )
         ref = resource.model_copy(update={"metadata": metadata})
-        envelope = self.factory.text(ref, raw, "message.md", "text/markdown")
+        envelope = self.factory.text(
+            ref,
+            raw,
+            "message.md",
+            "text/markdown",
+            permissions=self.channel_access({"id": metadata["channel_id"], "is_private": metadata["is_private"]}),
+        )
         followups = []
         if include_thread and selection.threads and number(item.get("reply_count", 0)) > 0:
             followups.append(

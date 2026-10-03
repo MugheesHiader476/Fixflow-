@@ -11,7 +11,7 @@ from urllib.parse import quote
 import jwt
 
 from backend.connectors.base import OAuthConnector
-from backend.connectors.core import ConnectorError, number, record, records, string, unbase64
+from backend.connectors.core import ConnectorError, cursor_record, number, record, records, string, unbase64
 from backend.processing.pipeline.inspection import CODE_LANGUAGES, EXTENSIONS
 from backend.schemas.connectors import (
     Credentials,
@@ -32,6 +32,10 @@ class GitHubConnector(OAuthConnector):
     authorization_endpoint = "https://github.com/login/oauth/authorize"
     exchange_endpoint = "https://github.com/login/oauth/access_token"
     api_root = "https://api.github.com"
+
+    @property
+    def observed_installations(self) -> dict[str, object]:
+        return getattr(self, "_observed_installations", {})
 
     def api_headers(self) -> dict[str, str]:
         return {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": self.config.github_api_version}
@@ -57,7 +61,7 @@ class GitHubConnector(OAuthConnector):
         return credentials, str(number(user["id"])), string(user["login"]), {"login": string(user["login"])}
 
     async def list_resources(self, cursor: str | None = None) -> ResourcePage:
-        state = record(json.loads(cursor)) if cursor else {}
+        state = cursor_record(cursor)
         installation_page = number(state.get("installation_page", 1))
         installation_ids = state.get("installations")
         total = number(state.get("total", 0))
@@ -115,6 +119,18 @@ class GitHubConnector(OAuthConnector):
             raise ConnectorError("invalid_response", "Provider returned an invalid repository name")
         return repo
 
+    def repository_access(self, repo: dict[str, object]) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "user",
+                "id": self.account.external_account_id if self.account else "",
+                "role": "reader",
+                "repository_id": str(number(repo["id"])),
+                "private": repo.get("private"),
+                "user_permissions": repo.get("permissions"),
+            }
+        ]
+
     def app_jwt(self) -> str:
         if self.config.github_private_key is None or self.config.github_app_id is None:
             raise ConnectorError("not_configured", "GitHub App signing is not configured")
@@ -133,6 +149,10 @@ class GitHubConnector(OAuthConnector):
         installation = await self.get("/repos/" + string(repo["full_name"]) + "/installation", token=self.app_jwt())
         if str(installation.get("app_id")) != self.config.github_app_id:
             raise ConnectorError("inaccessible", "Repository is not installed for this GitHub App")
+        self._observed_installations = {
+            **self.observed_installations,
+            str(number(repo["id"])): number(installation["id"]),
+        }
         permissions: dict[str, object] = {"metadata": "read"}
         if set(selection.categories) & {"code", "commits", "releases"}:
             permissions["contents"] = "read"
@@ -151,6 +171,54 @@ class GitHubConnector(OAuthConnector):
         )
         return string(result["token"])
 
+    async def code_inventory(
+        self, name: str, head: str, state: dict[str, object]
+    ) -> tuple[list[dict[str, object]], dict[str, object], bool]:
+        """Persist each subtree/page so a truncated recursive tree remains resumable."""
+        cache = records(state.get("tree_cache", []))
+        queue = records(state.get("tree_queue", []))
+        offset = number(state.get("tree_offset", 0))
+        scanned = number(state.get("tree_scanned", 0))
+        if not cache and not queue and not scanned:
+            tree = await self.get(f"/repos/{name}/git/trees/{quote(head, safe='')}", {"recursive": "1"})
+            if tree.get("truncated") is True:
+                queue = [{"sha": head, "prefix": ""}]
+            else:
+                entries = records(tree.get("tree", []))
+                scanned = len(entries)
+                cache = [item for item in entries if item.get("type") == "blob"]
+        elif not cache and queue:
+            current, queue = queue[0], queue[1:]
+            tree = await self.get(f"/repos/{name}/git/trees/{quote(string(current['sha']), safe='')}")
+            if tree.get("truncated") is True:
+                raise ConnectorError("too_large", "A single repository directory exceeds the provider tree limit")
+            entries = records(tree.get("tree", []))
+            scanned += len(entries)
+            prefix = string(current["prefix"])
+            for item in entries:
+                path = prefix + string(item["path"])
+                if item.get("type") == "tree":
+                    queue.append({"sha": string(item["sha"]), "prefix": path + "/"})
+                elif item.get("type") == "blob":
+                    cache.append({**item, "path": path})
+        if scanned > self.config.max_sync_resources:
+            raise ConnectorError("too_large", "Repository exceeds the configured resource limit")
+        items = cache[offset : offset + self.config.page_size]
+        next_offset = offset + len(items)
+        if next_offset >= len(cache):
+            cache, next_offset = [], 0
+        more = bool(cache or queue)
+        return (
+            items,
+            {
+                "tree_cache": cache,
+                "tree_queue": queue,
+                "tree_offset": next_offset,
+                "tree_scanned": scanned,
+            },
+            more,
+        )
+
     async def initial_sync(self, selection: Selection, state: dict[str, object]) -> SyncPage:
         index = number(state.get("index", 0))
         heads = record(state.get("heads", {}))
@@ -162,9 +230,19 @@ class GitHubConnector(OAuthConnector):
         repo_id = selection.resource_ids[index]
         repo = await self.repository(repo_id)
         name = string(repo["full_name"])
-        branch = selection.branches.get(repo_id, string(repo["default_branch"]))
-        branch_result = await self.get(f"/repos/{name}/branches/{quote(branch, safe='')}")
-        head = string(heads.get(repo_id) or record(branch_result["commit"])["sha"])
+        branch = selection.branches.get(repo_id, string(repo.get("default_branch") or "main"))
+        if repo_id in heads:
+            head = string(heads[repo_id])
+        else:
+            try:
+                branch_result = await self.get(f"/repos/{name}/branches/{quote(branch, safe='')}")
+                head = string(record(branch_result["commit"])["sha"])
+            except ConnectorError as error:
+                if error.code != "not_found" or repo_id in selection.branches:
+                    raise
+                if await self.array(f"/repos/{name}/branches", {"per_page": 1}):
+                    raise
+                head = ""  # Empty repositories still have metadata, issues and releases.
         categories = ["repository", *selection.categories]
         stage = number(state.get("stage", 0))
         category = categories[stage]
@@ -174,9 +252,10 @@ class GitHubConnector(OAuthConnector):
             "repository": name,
             "branch": branch,
             "commit_sha": head,
+            "provider_permissions": self.repository_access(repo),
         }
         refs: list[Resource] = []
-        cache: list[dict[str, object]] = records(state.get("tree_cache", []))
+        code_state: dict[str, object] = {}
         more = False
         if category == "repository":
             refs = [
@@ -204,21 +283,9 @@ class GitHubConnector(OAuthConnector):
             ]
         elif category == "code":
             previous_heads = record(state.get("previous_heads", {}))
-            if since and previous_heads.get(repo_id) == head:
-                cache = []
-            else:
-                if not cache and page == 1:
-                    tree = await self.get(f"/repos/{name}/git/trees/{quote(head, safe='')}", {"recursive": "1"})
-                    if tree.get("truncated") is True:
-                        raise ConnectorError(
-                            "too_large",
-                            "Repository tree is truncated; select a smaller repository or add a tree adapter",
-                        )
-                    cache = [item for item in records(tree.get("tree", [])) if item.get("type") == "blob"]
-                    if len(cache) > self.config.max_sync_resources:
-                        raise ConnectorError("too_large", "Repository exceeds the configured resource limit")
-                offset = (page - 1) * self.config.page_size
-                for item in cache[offset : offset + self.config.page_size]:
+            if head and (not since or previous_heads.get(repo_id) != head):
+                items, code_state, more = await self.code_inventory(name, head, state)
+                for item in items:
                     path = string(item["path"])
                     refs.append(
                         Resource(
@@ -241,7 +308,8 @@ class GitHubConnector(OAuthConnector):
                             },
                         )
                     )
-                more = page * self.config.page_size < len(cache)
+        elif category == "commits" and not head:
+            refs = []
         else:
             endpoint = {"issues": "issues", "pull_requests": "pulls", "commits": "commits", "releases": "releases"}[
                 category
@@ -310,7 +378,7 @@ class GitHubConnector(OAuthConnector):
             "since": since,
             "heads": heads,
             "previous_heads": state.get("previous_heads", {}),
-            "tree_cache": cache if more and category == "code" else [],
+            **(code_state if more and category == "code" else {}),
         }
         return SyncPage(
             resources=refs,
@@ -335,13 +403,19 @@ class GitHubConnector(OAuthConnector):
             raise ConnectorError("inaccessible", "Repository was not selected")
         repo = await self.repository(repository_id)
         name = string(repo["full_name"])
+        permissions = self.repository_access(repo)
         if resource.kind.startswith("event_"):
             kind = resource.kind.removeprefix("event_")
             identifier = string(resource.metadata["number"])
             endpoints = {"issue": "issues", "pull_request": "pulls", "release": "releases"}
             if kind not in endpoints or not identifier.isdigit():
                 raise ConnectorError("invalid_resource", "Invalid GitHub event resource")
-            item = await self.get(f"/repos/{name}/{endpoints[kind]}/{identifier}")
+            try:
+                item = await self.get(f"/repos/{name}/{endpoints[kind]}/{identifier}")
+            except ConnectorError as error:
+                if error.code == "not_found":
+                    return FetchResult(removed_ids=[f"{repository_id}:{kind}:{identifier}"])
+                raise
             allowed = {
                 key: item.get(key)
                 for key in (
@@ -385,15 +459,25 @@ class GitHubConnector(OAuthConnector):
                         "unsupported", "Repository file is not a supported document or UTF-8 source"
                     ) from error
                 return FetchResult(
-                    envelopes=[self.factory.text(resource, content, filename[:245] + ".txt", "text/plain")]
+                    envelopes=[
+                        self.factory.text(
+                            resource, content, filename[:245] + ".txt", "text/plain", permissions=permissions
+                        )
+                    ]
                 )
             return FetchResult(
                 envelopes=[
-                    await self.binary(resource, data, filename, mimetypes.guess_type(filename)[0] or "text/plain")
+                    await self.binary(
+                        resource,
+                        data,
+                        filename,
+                        mimetypes.guess_type(filename)[0] or "text/plain",
+                        permissions=permissions,
+                    )
                 ]
             )
         if resource.kind.startswith("page_"):
-            return await self.fetch_page(resource, name, selection)
+            return await self.fetch_page(resource, name, selection, permissions)
         item = record(resource.metadata.get("object", {}))
         body = string(item.get("body", "")) if item.get("body") is not None else ""
         facts = {key: value for key, value in item.items() if key not in {"body", "commit"} and value is not None}
@@ -409,7 +493,7 @@ class GitHubConnector(OAuthConnector):
             + "\n\n"
             + body
         )
-        envelope = self.factory.text(resource, raw, resource.kind + ".md", "text/markdown")
+        envelope = self.factory.text(resource, raw, resource.kind + ".md", "text/markdown", permissions=permissions)
         followups: list[Resource] = []
         number_id = string(resource.metadata.get("number", ""))
         if resource.kind == "issue":
@@ -420,8 +504,8 @@ class GitHubConnector(OAuthConnector):
                 for category in ("issue_comments", "reviews", "review_comments", "changed_files")
             )
         elif resource.kind == "commit":
-            details = await self.get(f"/repos/{name}/commits/{quote(number_id, safe='')}")
-            envelope.metadata["changed_files"] = [file.get("filename") for file in records(details.get("files", []))]
+            followups.append(self.page_ref(resource, "commit_files", number_id))
+            envelope.metadata["file_inventory_limit"] = 3000
         return FetchResult(envelopes=[envelope], followups=followups)
 
     @staticmethod
@@ -434,7 +518,9 @@ class GitHubConnector(OAuthConnector):
             metadata={**parent.metadata, "number": number_id, "page": page, "parent_resource": parent.id},
         )
 
-    async def fetch_page(self, resource: Resource, name: str, selection: Selection) -> FetchResult:
+    async def fetch_page(
+        self, resource: Resource, name: str, selection: Selection, permissions: list[dict[str, object]]
+    ) -> FetchResult:
         category = resource.kind.removeprefix("page_")
         identifier = string(resource.metadata["number"])
         page = number(resource.metadata["page"])
@@ -443,10 +529,21 @@ class GitHubConnector(OAuthConnector):
             "reviews": f"pulls/{identifier}/reviews",
             "review_comments": f"pulls/{identifier}/comments",
             "changed_files": f"pulls/{identifier}/files",
+            "commit_files": f"commits/{quote(identifier, safe='')}",
         }
-        if category not in routes or not identifier.isdigit():
+        valid_id = (
+            bool(re.fullmatch(r"[A-Za-z0-9_-]{1,100}", identifier))
+            if category == "commit_files"
+            else identifier.isdigit()
+        )
+        if category not in routes or not valid_id:
             raise ConnectorError("invalid_resource", "Invalid GitHub relationship resource")
-        items = await self.array(f"/repos/{name}/{routes[category]}", {"per_page": self.config.page_size, "page": page})
+        params: dict[str, str | int] = {"per_page": self.config.page_size, "page": page}
+        if category == "commit_files":
+            result = await self.get(f"/repos/{name}/{routes[category]}", params)
+            items = records(result.get("files", []))
+        else:
+            items = await self.array(f"/repos/{name}/{routes[category]}", params)
         envelopes = []
         for item in items:
             item_id = str(item.get("id") or item.get("filename"))
@@ -465,6 +562,12 @@ class GitHubConnector(OAuthConnector):
                     "commit_id",
                     "pull_request_review_id",
                     "in_reply_to_id",
+                    "sha",
+                    "patch",
+                    "additions",
+                    "deletions",
+                    "changes",
+                    "previous_filename",
                 )
                 if key in item
             }
@@ -475,6 +578,7 @@ class GitHubConnector(OAuthConnector):
                 "reviews": "review",
                 "review_comments": "review_comment",
                 "changed_files": "changed_file",
+                "commit_files": "changed_file",
             }[category]
             ref = Resource(
                 id=f"{resource.metadata['repository_id']}:{kind}:{resource.metadata['number']}:{item_id}",
@@ -501,7 +605,10 @@ class GitHubConnector(OAuthConnector):
                 + "\n\n"
                 + body
             )
-            envelopes.append(self.factory.text(ref, raw, kind + ".md", "text/markdown"))
+            envelopes.append(self.factory.text(ref, raw, kind + ".md", "text/markdown", permissions=permissions))
+        more = len(items) == self.config.page_size and (
+            category not in {"commit_files", "changed_files"} or page * self.config.page_size < 3000
+        )
         followups = (
             [
                 resource.model_copy(
@@ -511,7 +618,7 @@ class GitHubConnector(OAuthConnector):
                     }
                 )
             ]
-            if len(items) == self.config.page_size
+            if more
             else []
         )
         return FetchResult(
@@ -524,9 +631,13 @@ class GitHubConnector(OAuthConnector):
 
     async def handle_event(self, event: dict[str, object]) -> list[Resource]:
         repository_id = str(record(event.get("repository", {})).get("id", ""))
-        if not self.account or repository_id not in Selection.model_validate(self.account.configuration).resource_ids:
+        selection = Selection.model_validate(self.account.configuration) if self.account else Selection()
+        if not self.account or repository_id not in selection.resource_ids:
             return []
         for key, kind in (("pull_request", "pull_request"), ("issue", "issue"), ("release", "release")):
+            category = {"pull_request": "pull_requests", "issue": "issues", "release": "releases"}[kind]
+            if category not in selection.categories:
+                continue
             item = event.get(key)
             if isinstance(item, dict):
                 identifier = str(item.get("id") if kind == "release" else item.get("number"))

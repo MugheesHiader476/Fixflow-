@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import json
 from datetime import datetime
 from typing import Protocol, cast
 from uuid import UUID, uuid5
@@ -60,6 +61,15 @@ def number(value: object) -> int:
     raise ConnectorError("invalid_response", "Provider returned an invalid numeric field")
 
 
+def cursor_record(cursor: str | None) -> dict[str, object]:
+    if not cursor:
+        return {}
+    try:
+        return record(json.loads(cursor))
+    except (ValueError, RecursionError) as error:
+        raise ConnectorError("invalid_query", "Resource discovery cursor is invalid") from error
+
+
 def unbase64(value: object) -> bytes:
     encoded = string(value)
     try:
@@ -105,18 +115,8 @@ class EnvelopeFactory:
             external_account_id,
         )
 
-    def text(
-        self,
-        resource: Resource,
-        content: str,
-        filename: str,
-        mime: str,
-        *,
-        permissions: list[dict[str, object]] | None = None,
-    ) -> RawSourceEnvelope:
-        identifier = uuid5(self.account_id, resource.id)
-        evidence = permissions or []
-        access = AccessPolicy(
+    def access(self, resource: Resource, evidence: list[dict[str, object]]) -> AccessPolicy:
+        return AccessPolicy(
             application_owner=self.owner,
             provider_resource=resource.id,
             provider_permissions=evidence,
@@ -137,6 +137,18 @@ class EnvelopeFactory:
             ],
             organizations=[str(p["domain"]) for p in evidence if p.get("type") == "domain" and p.get("domain")],
         )
+
+    def text(
+        self,
+        resource: Resource,
+        content: str,
+        filename: str,
+        mime: str,
+        *,
+        permissions: list[dict[str, object]] | None = None,
+    ) -> RawSourceEnvelope:
+        identifier = uuid5(self.account_id, resource.id)
+        access = self.access(resource, permissions or [])
         return RawSourceEnvelope(
             source_id=identifier,
             connector_account_id=self.account_id,

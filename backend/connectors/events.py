@@ -13,14 +13,142 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.connectors.config import ConnectorConfig
-from backend.connectors.core import ConnectorError, record, records, string, unbase64
+from backend.connectors.core import ConnectorError, record, records, string, strings, unbase64
 from backend.connectors.http import ProviderHttp
 from backend.connectors.registry import adapter
-from backend.db.models import ConnectorAccount, ConnectorEvent, ConnectorSubscription, KnowledgeSource
+from backend.db.models import (
+    ConnectorAccount,
+    ConnectorCredential,
+    ConnectorEvent,
+    ConnectorResource,
+    ConnectorSubscription,
+    ConnectorSyncJob,
+    KnowledgeSource,
+)
 from backend.schemas.connectors import Provider
-from backend.services.connectors import ACTIVE, audit, enqueue
+from backend.services.connector_sources import remove
+from backend.services.connectors import ACTIVE, PENDING, audit, enqueue
 
 _jwks: tuple[float, list[dict[str, object]]] = (0, [])
+
+
+async def request_reconciliation(db: AsyncSession, account: ConnectorAccount) -> None:
+    account.meta = {**account.meta, "reconcile_requested": True}
+    account.reconcile_at = datetime.now(UTC)
+    # A fetched response from before the permission event must not reactivate
+    # content after the denial commits. Replace the in-flight inventory.
+    await db.execute(
+        update(ConnectorSyncJob)
+        .where(
+            ConnectorSyncJob.account_id == account.id,
+            ConnectorSyncJob.status.in_(PENDING),
+        )
+        .values(status="cancelled")
+    )
+    account.sync_status = "cancelled"
+
+
+async def revoke_connection(db: AsyncSession, account: ConnectorAccount) -> None:
+    if account.credential_reference:
+        await db.execute(
+            update(ConnectorCredential)
+            .where(
+                ConnectorCredential.id == account.credential_reference,
+                ConnectorCredential.owner_id == account.owner_id,
+            )
+            .values(ciphertext="", revoked_at=datetime.now(UTC))
+        )
+    account.credential_reference = None
+    account.status, account.authentication_status, account.sync_status = "revoked", "invalid", "cancelled"
+    account.error_message = "Provider authorization was revoked. Reconnect to continue."
+    account.meta = {k: v for k, v in account.meta.items() if k not in {"pending_events", "failed_refs"}}
+    await db.execute(
+        update(ConnectorSyncJob)
+        .where(
+            ConnectorSyncJob.account_id == account.id,
+            ConnectorSyncJob.status.in_(PENDING),
+        )
+        .values(status="cancelled")
+    )
+    await db.execute(
+        update(KnowledgeSource)
+        .where(
+            KnowledgeSource.connector_account_id == account.id,
+        )
+        .values(is_active=False, access_expires_at=datetime.now(UTC))
+    )
+
+
+async def lifecycle_event(
+    db: AsyncSession, provider: Provider, account: ConnectorAccount, event: dict[str, object]
+) -> bool:
+    """Verified provider events may immediately deny access; only a native probe can restore it."""
+    if provider == "slack":
+        item = record(event.get("event", {}))
+        kind = item.get("type")
+        if kind == "app_uninstalled" or (
+            kind == "tokens_revoked"
+            and account.meta.get("user_id") in strings(record(item.get("tokens", {})).get("oauth", []))
+        ):
+            await revoke_connection(db, account)
+            return True
+        channel = item.get("channel")
+        if isinstance(channel, dict):
+            channel = channel.get("id")
+        lost_channel = kind in {"channel_deleted", "group_deleted"} or (
+            kind == "member_left_channel" and item.get("user") == account.meta.get("user_id")
+        )
+        ids: list[str] = []
+        if lost_channel and isinstance(channel, str):
+            ids = list(
+                await db.scalars(
+                    select(ConnectorResource.external_id).where(
+                        ConnectorResource.account_id == account.id,
+                        ConnectorResource.meta["channel_id"].astext == channel,
+                    )
+                )
+            )
+        if kind in {"file_deleted", "file_unshared"}:
+            identifier = item.get("file_id", item.get("file"))
+            if isinstance(identifier, str):
+                ids.extend(
+                    await db.scalars(
+                        select(ConnectorResource.external_id).where(
+                            ConnectorResource.account_id == account.id,
+                            ConnectorResource.meta["file_id"].astext == identifier,
+                        )
+                    )
+                )
+        if ids or (lost_channel and channel in strings(account.configuration.get("resource_ids", []))):
+            await remove(db, account.id, ids)
+            await request_reconciliation(db, account)
+    elif provider == "github":
+        if (
+            event.get("action") == "revoked"
+            and str(record(event.get("sender", {})).get("id")) == account.external_account_id
+        ):
+            await revoke_connection(db, account)
+            return True
+        removed = {str(repo.get("id")) for repo in records(event.get("repositories_removed", []))}
+        installation_id = record(event.get("installation", {})).get("id")
+        if event.get("action") in {"deleted", "suspend"} and installation_id is not None and "repository" not in event:
+            removed.update(
+                key
+                for key, value in record(account.meta.get("installations", {})).items()
+                if str(value) == str(installation_id)
+            )
+        if removed:
+            ids = list(
+                await db.scalars(
+                    select(ConnectorResource.external_id).where(
+                        ConnectorResource.account_id == account.id,
+                        ConnectorResource.meta["repository_id"].astext.in_(removed),
+                    )
+                )
+            )
+            await remove(db, account.id, ids)
+            await request_reconciliation(db, account)
+    return False
 
 
 def signed(provider: Provider, body: bytes, headers: dict[str, str], config: ConnectorConfig) -> None:
@@ -153,17 +281,10 @@ async def receive(
             # GitHub signs the body, not the delivery header; changing that header must not bypass replay protection.
             event_id = hashlib.sha256(body).hexdigest()
             repo_id = str(record(event.get("repository", {})).get("id", ""))
+            query = select(ConnectorAccount).where(ConnectorAccount.provider == provider)
             if repo_id:
-                accounts = list(
-                    await db.scalars(
-                        select(ConnectorAccount)
-                        .where(
-                            ConnectorAccount.provider == provider,
-                            ConnectorAccount.configuration["resource_ids"].contains([repo_id]),
-                        )
-                        .with_for_update()
-                    )
-                )
+                query = query.where(ConnectorAccount.configuration["resource_ids"].contains([repo_id]))
+            accounts = list(await db.scalars(query.with_for_update()))
     if not event_id or len(event_id) > 300:
         raise ConnectorError("invalid_event", "Invalid event identity")
     created = await db.scalar(
@@ -178,16 +299,10 @@ async def receive(
     for account in accounts:
         if account.status not in ACTIVE:
             continue
-        if provider == "slack" and record(event.get("event", {})).get("type") in {"tokens_revoked", "app_uninstalled"}:
-            account.status, account.authentication_status = "revoked", "invalid"
-            await db.execute(
-                update(KnowledgeSource)
-                .where(KnowledgeSource.connector_account_id == account.id)
-                .values(is_active=False)
-            )
-        elif account.configuration.get("resource_ids"):
+        revoked = await lifecycle_event(db, provider, account, event)
+        if not revoked and account.configuration.get("resource_ids"):
             refs = await adapter(provider, config, account).handle_event(event)
-            await enqueue(db, account, "incremental")
+            await enqueue(db, account, "reconcile" if account.meta.get("reconcile_requested") else "incremental")
             if refs:
                 pending = records(account.meta.get("pending_events", []))
                 existing_ids = {item.get("id") for item in pending}

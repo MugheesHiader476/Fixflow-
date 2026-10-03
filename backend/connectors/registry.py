@@ -61,11 +61,27 @@ async def verify_selection(connector: Connector, selection: Selection) -> None:
             if identifier.startswith("drive:"):
                 await connector.get("/drives/" + validated)
             else:
-                await connector.get("/files/" + validated, {"fields": "id", "supportsAllDrives": "true"})
+                file = await connector.get(
+                    "/files/" + validated, {"fields": "id,mimeType,trashed", "supportsAllDrives": "true"}
+                )
+                from backend.connectors.drive import FOLDER  # noqa: PLC0415
+
+                if file.get("trashed") is True:
+                    raise ConnectorError("not_found", "A selected Drive resource was removed")
+                if (file.get("mimeType") == FOLDER) != identifier.startswith("folder:"):
+                    raise ConnectorError("invalid_resource", "Drive resource type does not match the selection")
     elif isinstance(connector, GitHubConnector):
         for identifier in selection.resource_ids:
             repo = await connector.repository(identifier)
             await connector.installation_token(repo, selection)
+            if identifier in selection.branches:
+                from urllib.parse import quote  # noqa: PLC0415
+
+                from backend.connectors.core import string  # noqa: PLC0415
+
+                await connector.get(
+                    f"/repos/{string(repo['full_name'])}/branches/{quote(selection.branches[identifier], safe='')}"
+                )
     elif isinstance(connector, SlackConnector):
         for identifier in selection.resource_ids:
             await connector.channel(identifier)

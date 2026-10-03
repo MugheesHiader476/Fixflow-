@@ -2,6 +2,7 @@
 
 import base64
 import json
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -80,6 +81,8 @@ async def test_drive_pagination_and_structure_preserving_export(isolated: Connec
             return httpx.Response(200, json={"files": [native], "nextPageToken": "second"})
         if path.endswith("/files/doc1"):
             return httpx.Response(200, json=native)
+        if path.endswith("/files/root"):
+            return httpx.Response(200, json=drive_file("root", "application/vnd.google-apps.folder", "root"))
         if path.endswith("/export"):
             assert request.url.params["mimeType"].endswith("wordprocessingml.document")
             return httpx.Response(200, content=content)
@@ -402,3 +405,311 @@ async def test_drive_structured_query_enforces_selection_and_page_bound(isolated
     assert result.resources[0].id == "drive:drive1" and requests[0].url.params["pageSize"] == "1"
     with pytest.raises(ConnectorError):
         await connector.structured_query(QuerySpec(resource_id="file:other"), selection)
+
+
+async def test_gmail_external_body_and_folded_header(isolated: ConnectorConfig) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if "/attachments/" in request.url.path:
+            return httpx.Response(200, json={"data": base64.urlsafe_b64encode(b"Large body documentation.").decode()})
+        return httpx.Response(
+            200,
+            json={
+                "id": "m1",
+                "threadId": "t1",
+                "historyId": "10",
+                "labelIds": ["INBOX"],
+                "internalDate": "1760000000000",
+                "payload": {
+                    "mimeType": "text/plain",
+                    "headers": [{"name": "Subject", "value": "Folded\r\n header"}],
+                    "body": {"attachmentId": "body1"},
+                },
+            },
+        )
+
+    connector = GmailConnector(isolated, account("gmail"), ProviderHttp(isolated, httpx.MockTransport(respond)))
+    result = await connector.fetch_resource(
+        Resource(id="m1", name="m1", kind="email_message"), Selection(resource_ids=["INBOX"])
+    )
+    assert "Large body documentation." in str(result.envelopes[0].content)
+    assert "subject: folded" in str(result.envelopes[0].content).casefold()
+    assert not result.followups
+
+
+async def test_gmail_attachment_rechecks_parent_selection(isolated: ConnectorConfig) -> None:
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"internalDate": "1760000000000", "labelIds": ["UNSELECTED"]})
+
+    connector = GmailConnector(isolated, account("gmail"), ProviderHttp(isolated, httpx.MockTransport(respond)))
+    result = await connector.fetch_resource(
+        Resource(
+            id="m1:attachment:1",
+            name="guide.txt",
+            kind="email_attachment",
+            metadata={"message_id": "m1"},
+        ),
+        Selection(resource_ids=["INBOX"], attachments=True),
+    )
+    assert result.removed_ids == ["m1", "m1:attachment:1"]
+    assert len(calls) == 1 and calls[0].url.params["format"] == "metadata"
+
+
+async def test_drive_shared_feeds_keep_independent_cursors(isolated: ConnectorConfig) -> None:
+    calls = []
+    native = {**drive_file("shared1"), "driveId": "d1"}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path.endswith("/startPageToken"):
+            return httpx.Response(
+                200, json={"startPageToken": "drive-anchor" if request.url.params.get("driveId") else "user-anchor"}
+            )
+        if request.url.path.endswith("/files"):
+            return httpx.Response(200, json={"files": [native]})
+        if request.url.path.endswith("/changes"):
+            shared = request.url.params.get("driveId") == "d1"
+            assert request.url.params["pageToken"] == ("drive-anchor" if shared else "user-anchor")
+            return httpx.Response(
+                200,
+                json={
+                    "changes": [{"fileId": "shared1", "file": native}] if shared else [],
+                    "newStartPageToken": "drive-next" if shared else "user-next",
+                },
+            )
+        raise AssertionError(request.url.path)
+
+    connector = GoogleDriveConnector(
+        isolated, account("google_drive"), ProviderHttp(isolated, httpx.MockTransport(respond))
+    )
+    selection = Selection(resource_ids=["drive:d1"])
+    initial = await connector.initial_sync(selection, {})
+    assert initial.complete and initial.checkpoint["drive_tokens"] == {"d1": "drive-anchor"}
+    first = await connector.incremental_sync(selection, initial.checkpoint)
+    assert not first.complete and first.checkpoint["page_token"] == "user-next"
+    second = await connector.incremental_sync(selection, first.next_state)
+    assert second.complete and second.resources[0].id == "file:shared1"
+    assert second.checkpoint["page_token"] == "user-next"
+    assert second.checkpoint["drive_tokens"] == {"d1": "drive-next"}
+    assert sum(request.url.path.endswith("/changes") for request in calls) == 2
+
+
+async def test_github_truncated_tree_walk_resumes_subtrees(isolated: ConnectorConfig) -> None:
+    calls = []
+    config = isolated.model_copy(update={"page_size": 1})
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        path = request.url.path
+        if path == "/repositories/1":
+            return httpx.Response(200, json={"id": 1, "full_name": "owner/repo", "default_branch": "main"})
+        if path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "head"}})
+        if path.endswith("/git/trees/head"):
+            if request.url.params.get("recursive"):
+                return httpx.Response(
+                    200,
+                    json={"truncated": True, "tree": [{"type": "blob", "path": "incomplete.txt", "sha": "discard"}]},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "tree": [
+                        {"type": "blob", "path": "README.md", "sha": "b1"},
+                        {"type": "tree", "path": "src", "sha": "subtree"},
+                    ]
+                },
+            )
+        if path.endswith("/git/trees/subtree"):
+            return httpx.Response(
+                200,
+                json={
+                    "tree": [
+                        {"type": "blob", "path": "a.py", "sha": "b2"},
+                        {"type": "blob", "path": "b.py", "sha": "b3"},
+                    ]
+                },
+            )
+        raise AssertionError(path)
+
+    connector = GitHubConnector(config, account("github"), ProviderHttp(config, httpx.MockTransport(respond)))
+    state: dict[str, object] = {"stage": 1}
+    refs = []
+    for _ in range(8):
+        page = await connector.initial_sync(Selection(resource_ids=["1"], categories=["code"]), state)
+        refs.extend(page.resources)
+        state = json.loads(json.dumps(page.next_state))  # Reload the persisted checkpoint after each step.
+        if page.complete:
+            break
+    assert page.complete and [ref.name for ref in refs] == ["README.md", "src/a.py", "src/b.py"]
+    assert page.completed_inventory_groups == ["repository:1:code:main"]
+    assert sum("/git/trees/" in request.url.path for request in calls) == 3
+
+
+async def test_github_empty_repository_still_syncs_metadata_and_issues(isolated: ConnectorConfig) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/repositories/1":
+            return httpx.Response(200, json={"id": 1, "full_name": "owner/empty", "default_branch": "main"})
+        if request.url.path.endswith("/branches/main"):
+            return httpx.Response(404)
+        if request.url.path.endswith(("/branches", "/issues", "/releases")):
+            return httpx.Response(200, json=[])
+        raise AssertionError(request.url.path)
+
+    connector = GitHubConnector(isolated, account("github"), ProviderHttp(isolated, httpx.MockTransport(respond)))
+    state: dict[str, object] = {}
+    refs = []
+    for _ in range(8):
+        page = await connector.initial_sync(
+            Selection(resource_ids=["1"], categories=["code", "issues", "commits", "releases"]), state
+        )
+        refs.extend(page.resources)
+        state = page.next_state
+        if page.complete:
+            break
+    assert page.complete and [ref.kind for ref in refs] == ["repository_metadata"]
+    assert page.checkpoint["heads"] == {"1": ""}
+
+
+async def test_slack_thread_and_events_respect_dates(isolated: ConnectorConfig) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/conversations.info"):
+            return httpx.Response(200, json={"ok": True, "channel": {"id": "C1", "name": "docs", "is_private": False}})
+        if request.url.path.endswith("/conversations.replies"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "messages": [
+                        {"ts": "1760000000.000001", "text": "Old root."},
+                        {"ts": "1760100000.000001", "text": "Selected reply.", "thread_ts": "1760000000.000001"},
+                    ],
+                },
+            )
+        raise AssertionError(request.url.path)
+
+    connector = SlackConnector(isolated, account("slack"), ProviderHttp(isolated, httpx.MockTransport(respond)))
+    selection = Selection(resource_ids=["C1"], start_date=date(2025, 10, 10), end_date=date(2025, 10, 10))
+    result = await connector.fetch_resource(
+        Resource(
+            id="C1:thread:old",
+            name="Thread",
+            kind="slack_thread_page",
+            metadata={"channel_id": "C1", "thread_ts": "1760000000.000001"},
+        ),
+        selection,
+    )
+    assert len(result.envelopes) == 1
+    assert result.removed_ids == ["C1:1760000000.000001"]
+    assert result.completed_inventory_groups == ["slack_thread:C1:1760000000.000001"]
+    event = await connector.fetch_resource(
+        Resource(
+            id="C1:event:old",
+            name="Changed",
+            kind="slack_event_message",
+            metadata={"channel_id": "C1", "message_ts": "1760000000.000001"},
+        ),
+        selection,
+    )
+    assert event.removed_ids and not event.envelopes
+
+
+async def test_private_file_redirects_stay_inside_provider(isolated: ConnectorConfig) -> None:
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.headers["Authorization"] == "Bearer private-test-token"
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"Location": "https://files.slack.com/download"})
+        if request.url.path == "/unsafe":
+            return httpx.Response(302, headers={"Location": "https://api.github.com/receive"})
+        return httpx.Response(200, content=b"Private document")
+
+    http = ProviderHttp(isolated, httpx.MockTransport(respond))
+    assert (
+        await http.request("GET", "https://slack.com/start", token="private-test-token", raw=True)
+        == b"Private document"
+    )
+    with pytest.raises(ConnectorError, match="redirect is not authorized"):
+        await http.request("GET", "https://files.slack.com/unsafe", token="private-test-token", raw=True)
+    assert not any(request.url.host == "api.github.com" for request in calls)
+
+
+async def test_github_commit_files_paginate_and_category_selection_applies(isolated: ConnectorConfig) -> None:
+    config = isolated.model_copy(update={"page_size": 1})
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/repositories/1":
+            return httpx.Response(200, json={"id": 1, "full_name": "owner/repo"})
+        if request.url.path.endswith("/commits/abc123"):
+            page = int(request.url.params["page"])
+            return httpx.Response(
+                200,
+                json={
+                    "files": []
+                    if page == 3
+                    else [
+                        {
+                            "filename": f"file{page}.py",
+                            "sha": f"blob{page}",
+                            "status": "modified",
+                            "patch": "+return postgres",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(request.url.path)
+
+    connection = account("github")
+    connection.configuration = {"resource_ids": ["1"], "categories": ["code"]}
+    connector = GitHubConnector(config, connection, ProviderHttp(config, httpx.MockTransport(respond)))
+    parent = Resource(
+        id="1:commit:abc123",
+        name="Commit",
+        kind="commit",
+        metadata={
+            "repository_id": "1",
+            "number": "abc123",
+            "object": {"commit": {"message": "Fix pool handling"}},
+        },
+    )
+    fetched = await connector.fetch_resource(parent, Selection(resource_ids=["1"], categories=["commits"]))
+    ref = fetched.followups[0]
+    envelopes = []
+    for _ in range(4):
+        page = await connector.fetch_resource(ref, Selection(resource_ids=["1"], categories=["commits"]))
+        envelopes.extend(page.envelopes)
+        if not page.followups:
+            break
+        ref = page.followups[0]
+    assert len(envelopes) == 2 and all(envelope.external_parent_id == parent.id for envelope in envelopes)
+    assert page.completed_inventory_groups == ["relationships:1:commit:abc123:commit_files"]
+    assert all("+return postgres" in str(envelope.content) for envelope in envelopes)
+    assert not await connector.handle_event({"repository": {"id": 1}, "issue": {"number": 1}})
+
+
+@pytest.mark.parametrize("cls", [GoogleDriveConnector, GitHubConnector])
+async def test_discovery_rejects_malformed_cursors(
+    isolated: ConnectorConfig, cls: type[GoogleDriveConnector] | type[GitHubConnector]
+) -> None:
+    connector = cls(isolated)
+    with pytest.raises(ConnectorError, match="cursor is invalid"):
+        await connector.list_resources("{malformed")
+
+
+async def test_github_secondary_limit_without_retry_header(isolated: ConnectorConfig) -> None:
+    http = ProviderHttp(
+        isolated,
+        httpx.MockTransport(
+            lambda request: httpx.Response(
+                403,
+                json={"message": "You have exceeded a secondary rate limit."},
+            )
+        ),
+    )
+    with pytest.raises(ConnectorError) as error:
+        await http.request("GET", "https://api.github.com/user")
+    assert error.value.code == "rate_limited" and error.value.retry_after == 60

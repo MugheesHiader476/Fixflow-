@@ -44,12 +44,30 @@ export interface ConnectorResource {
   metadata: Record<string, unknown>;
 }
 export interface ConnectorResourcePage { resources: ConnectorResource[]; next_cursor: string | null }
+export interface ConnectorQuery {
+  operation: "list" | "count";
+  resource_id?: string;
+  sender?: string;
+  recipient?: string;
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
+  cursor?: string;
+}
+export interface ConnectorQueryResult {
+  resources: ConnectorResource[];
+  count: number;
+  exact: boolean;
+  next_cursor: string | null;
+}
 
 const record = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === "string";
 const optional = (v: unknown) => v === null || text(v);
 const strings = (v: unknown) => Array.isArray(v) && v.every(text);
 const provider = (v: unknown) => text(v) && PROVIDERS.some((p) => p === v);
+const resources = (v: unknown) => Array.isArray(v) && v.every((r) => record(r)
+  && ["id", "name", "kind"].every((k) => text(r[k])) && optional(r.parent_id) && optional(r.version) && record(r.metadata));
 
 export function validSelection(v: unknown): boolean {
   return record(v) && strings(v.resource_ids) && record(v.branches) && Object.values(v.branches).every(text)
@@ -84,8 +102,8 @@ export function validConnectorResponse(path: string, value: unknown): boolean {
     && (v.install_url === null || (text(v.install_url) && /^https:\/\/github\.com\/apps\/[a-zA-Z0-9-]+\/installations\/new$/.test(v.install_url)))
     && Array.isArray(v.accounts) && v.accounts.every(validAccount));
   if (route.endsWith("/connect")) return record(value) && authorizationUrl(value.authorization_url);
-  if (route.endsWith("/resources")) return record(value) && optional(value.next_cursor) && Array.isArray(value.resources)
-    && value.resources.every((v) => record(v) && ["id", "name", "kind"].every((k) => text(v[k]))
-      && optional(v.parent_id) && optional(v.version) && record(v.metadata));
+  if (route.endsWith("/resources")) return record(value) && optional(value.next_cursor) && resources(value.resources);
+  if (route.endsWith("/query")) return record(value) && optional(value.next_cursor) && resources(value.resources)
+    && typeof value.count === "number" && Number.isSafeInteger(value.count) && value.count >= 0 && typeof value.exact === "boolean";
   return validAccount(value);
 }

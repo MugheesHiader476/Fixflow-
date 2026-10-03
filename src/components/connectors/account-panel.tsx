@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { disconnectConnector, syncConnector } from "@/lib/connectors";
+import { checkConnector, disconnectConnector, syncConnector } from "@/lib/connectors";
 import type { ConnectorAccount } from "@/lib/connector-contracts";
 import { ResourceSelection } from "./resource-selection";
 
@@ -39,7 +39,7 @@ export function AccountPanel({ account, onChanged, onReconnect }: {
   async function run(action: () => Promise<ConnectorAccount>) {
     setBusy(true); setError(null);
     try { await action(); setConfirming(false); onChanged(); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "Connector operation failed."); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : "Connector operation failed."); onChanged(); }
     finally { setBusy(false); }
   }
 
@@ -60,6 +60,7 @@ export function AccountPanel({ account, onChanged, onReconnect }: {
         <Button size="sm" disabled={busy || syncing} onClick={() => setSelecting(true)}>Configure resources</Button>
         <Button size="sm" variant="primary" loading={busy} disabled={syncing || !account.configuration.resource_ids.length} onClick={() => void run(() => syncConnector(account.id))}>Sync now</Button>
         <Button size="sm" disabled={busy || syncing || !account.configuration.resource_ids.length} onClick={() => void run(() => syncConnector(account.id, "reconcile"))}>Reconcile</Button>
+        <Button size="sm" disabled={busy} onClick={() => void run(() => checkConnector(account.id))}>Check connection</Button>
       </>}
       {!authorized && <Button size="sm" onClick={onReconnect}>Reconnect</Button>}
       {account.status !== "disconnected" && <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirming(true)}>Disconnect</Button>}

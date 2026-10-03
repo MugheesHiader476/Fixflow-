@@ -14,7 +14,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.config import get_settings
-from backend.connectors.core import ConnectorError, record, records, string, strings
+from backend.connectors.core import Connector, ConnectorError, record, records, string, strings
+from backend.connectors.github import GitHubConnector
 from backend.connectors.registry import adapter, configured, verify_selection
 from backend.db.models import ConnectorAccount, ConnectorResource, ConnectorSyncJob, KnowledgeSource
 from backend.db.session import get_session_factory
@@ -32,6 +33,57 @@ def drain_events(account: ConnectorAccount, cursor: dict[str, object]) -> None:
         identifiers = {item.get("id") for item in pending}
         cursor["pending"] = [*pending, *(item for item in arrivals if item.get("id") not in identifiers)]
         account.meta = {k: v for k, v in account.meta.items() if k != "pending_events"}
+
+
+async def verify_job_selection(connector: Connector, account: ConnectorAccount, cursor: dict[str, object]) -> Selection:
+    requested = Selection.model_validate(cursor.get("requested_selection", cursor["selection"]))
+    try:
+        await verify_selection(connector, requested)
+        lost: list[str] = []
+        valid = requested.resource_ids
+    except ConnectorError as error:
+        if error.code not in {"inaccessible", "not_found"}:
+            raise
+        valid, lost = [], []
+        for identifier in requested.resource_ids:
+            single = requested.model_copy(
+                update={
+                    "resource_ids": [identifier],
+                    "branches": {identifier: requested.branches[identifier]}
+                    if identifier in requested.branches
+                    else {},
+                }
+            )
+            try:
+                await verify_selection(connector, single)
+                valid.append(identifier)
+            except ConnectorError as root_error:
+                if root_error.code not in {"inaccessible", "not_found"}:
+                    raise
+                lost.append(identifier)
+    selection = requested.model_copy(
+        update={
+            "resource_ids": valid,
+            "branches": {key: value for key, value in requested.branches.items() if key in valid},
+        }
+    )
+    previous_lost = strings(cursor.get("unavailable_selections", []))
+    if lost != previous_lost:
+        # Start a full inventory of the remaining authorized roots. Disabled
+        # sources are re-enabled only by an authoritative envelope, never by a lease.
+        async with get_session_factory().begin() as db:
+            live = await db.get(ConnectorAccount, account.id, with_for_update=True)
+            if live and live.status in ACTIVE:
+                await db.execute(
+                    update(KnowledgeSource)
+                    .where(KnowledgeSource.connector_account_id == account.id)
+                    .values(is_active=False, access_expires_at=datetime.now(UTC))
+                )
+        cursor.update(state={}, pending=[], complete=False, inventory_groups=[], checkpoint={}, repair_selection=True)
+    cursor["requested_selection"] = requested.model_dump(mode="json")
+    cursor["selection"] = selection.model_dump(mode="json")
+    cursor["unavailable_selections"] = lost
+    return selection
 
 
 async def process_job(identifier: UUID) -> bool:
@@ -60,10 +112,28 @@ async def process_job(identifier: UUID) -> bool:
             connector = adapter(cast(Provider, account.provider), get_settings().connectors, account)
             selection = Selection.model_validate(cursor["selection"])
             pending = records(cursor.get("pending", []))
-            ref = Resource.model_validate(pending[0]) if pending else None
-            if not cursor.get("verified"):
-                await verify_selection(connector, selection)
+            verified_at = cursor.get("verified_at")
+            if (
+                not cursor.get("verified")
+                or not verified_at
+                or datetime.fromisoformat(string(verified_at))
+                + timedelta(seconds=get_settings().connectors.acl_ttl_seconds / 2)
+                <= datetime.now(UTC)
+            ):
+                selection = await verify_job_selection(connector, account, cursor)
+                pending = records(cursor.get("pending", []))
+                if cursor.pop("repair_selection", False):
+                    mode = "reconcile"
+                    async with get_session_factory().begin() as db:
+                        live_job = await db.get(ConnectorSyncJob, identifier)
+                        if live_job and live_job.status in PENDING:
+                            live_job.mode = "reconcile"
                 await connector.health_check()
+                if isinstance(connector, GitHubConnector) and connector.observed_installations:
+                    async with get_session_factory().begin() as db:
+                        live = await db.get(ConnectorAccount, account.id, with_for_update=True)
+                        if live and live.status in ACTIVE:
+                            live.meta = {**live.meta, "installations": connector.observed_installations}
                 cursor["verified"] = True
                 cursor["verified_at"] = datetime.now(UTC).isoformat()
                 from backend.connectors.subscriptions import ensure_subscription  # noqa: PLC0415
@@ -75,6 +145,7 @@ async def process_job(identifier: UUID) -> bool:
                         raise
                     cursor["notification_warning"] = True
                     audit(guard, account.owner_id, "notification_setup_failed", account.id, code=error.code)
+            ref = Resource.model_validate(pending[0]) if pending else None
             if ref:
                 async with get_session_factory()() as db:
                     cached = await reusable_file(db, account, ref)
@@ -123,6 +194,15 @@ async def process_job(identifier: UUID) -> bool:
                     live_job.available_at = datetime.now(UTC)
                 return True
             if cursor.get("complete"):
+                # Long scans may outlive a lease. Check the selected roots again
+                # before renewing unchanged content or committing a high-water mark.
+                await verify_job_selection(connector, account, cursor)
+                if cursor.pop("repair_selection", False):
+                    async with get_session_factory().begin() as db:
+                        live_job = await db.get(ConnectorSyncJob, identifier)
+                        if live_job and live_job.status in PENDING:
+                            live_job.cursor, live_job.mode, live_job.status = cursor, "reconcile", "pending"
+                    return True
                 await finish(identifier, account.id, cursor, progress, mode, started)
                 return True
             state = record(cursor.get("state", {}))
@@ -284,9 +364,14 @@ async def finish(
             )
         account.sync_cursor = record(cursor.get("checkpoint", {}))
         account.last_sync_at = datetime.now(UTC)
-        account.sync_status = job.status = "complete_with_warning" if progress["failed"] else "complete"
+        selection_warning = bool(cursor.get("unavailable_selections"))
+        account.sync_status = job.status = (
+            "complete_with_warning" if progress["failed"] or selection_warning else "complete"
+        )
         account.status = (
-            "connected_with_warning" if progress["failed"] or cursor.get("notification_warning") else "connected"
+            "connected_with_warning"
+            if progress["failed"] or selection_warning or cursor.get("notification_warning")
+            else "connected"
         )
         account.error_message = (
             "Some resources failed. Retry synchronization to attempt them again." if progress["failed"] else None
@@ -295,6 +380,8 @@ async def finish(
             account.error_message = (
                 "Notifications are unavailable. Periodic polling continues; check provider event setup."
             )
+        if selection_warning:
+            account.error_message = "Some selected resources are no longer accessible. Update your resource selection."
         account.provider_health, account.authentication_status = "available", "valid"
         account.reconcile_at = datetime.now(UTC) + timedelta(seconds=config.polling_seconds)
         metadata = dict(account.meta)

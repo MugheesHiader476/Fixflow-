@@ -1,5 +1,5 @@
 import { apiFetch } from "./api";
-import type { ConnectorAccount, ConnectorCard, ConnectorProvider, ConnectorResourcePage, ConnectorSelection } from "./connector-contracts";
+import type { ConnectorAccount, ConnectorCard, ConnectorProvider, ConnectorQuery, ConnectorQueryResult, ConnectorResourcePage, ConnectorSelection } from "./connector-contracts";
 
 export function listConnectors(signal?: AbortSignal): Promise<ConnectorCard[]> {
   return apiFetch("/api/connectors", { signal });
@@ -19,4 +19,13 @@ export function syncConnector(id: string, mode: "incremental" | "reconcile" = "i
 }
 export function disconnectConnector(id: string, policy: "retain" | "soft_delete" | "purge"): Promise<ConnectorAccount> {
   return apiFetch(`/api/connectors/${id}/disconnect`, { method: "POST", body: JSON.stringify({ policy }) });
+}
+export function connectorStatus(id: string, signal?: AbortSignal): Promise<ConnectorAccount> {
+  return apiFetch(`/api/connectors/${id}/status`, { signal });
+}
+export function checkConnector(id: string): Promise<ConnectorAccount> {
+  return apiFetch(`/api/connectors/${id}/health`, { method: "POST" });
+}
+export function queryConnector(id: string, query: ConnectorQuery, signal?: AbortSignal): Promise<ConnectorQueryResult> {
+  return apiFetch(`/api/connectors/${id}/query`, { method: "POST", body: JSON.stringify(query), signal });
 }

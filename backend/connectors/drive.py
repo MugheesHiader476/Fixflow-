@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 from backend.connectors.base import OAuthConnector
-from backend.connectors.core import ConnectorError, number, record, records, string, strings
+from backend.connectors.core import ConnectorError, cursor_record, number, record, records, string, strings
 from backend.schemas.connectors import (
     Credentials,
     FetchResult,
@@ -55,7 +55,7 @@ def file_resource(file: dict[str, object]) -> Resource:
             "owners": file.get("owners", []),
             "created_at": file.get("createdTime"),
             "updated_at": file.get("modifiedTime"),
-            "provider_permissions": file.get("permissions", []),
+            "provider_permissions": file.get("permissions"),
             "can_download": record(file.get("capabilities", {})).get("canDownload"),
         },
     )
@@ -92,7 +92,9 @@ class GoogleDriveConnector(OAuthConnector):
         return credentials, string(identity["sub"]), string(identity["email"]), {"email": string(identity["email"])}
 
     async def list_resources(self, cursor: str | None = None, *, limit: int | None = None) -> ResourcePage:
-        state = record(json.loads(cursor)) if cursor else {"phase": "drives"}
+        state = cursor_record(cursor) if cursor else {"phase": "drives"}
+        if state.get("phase") not in {"drives", "files"}:
+            raise ConnectorError("invalid_query", "Resource discovery cursor is invalid")
         params: dict[str, str | int] = {"pageSize": min(self.config.page_size, limit or self.config.page_size)}
         if state.get("token"):
             params["pageToken"] = string(state["token"])
@@ -129,23 +131,45 @@ class GoogleDriveConnector(OAuthConnector):
         index = number(state.get("index", 0))
         known = strings(state.get("folders", []))
         queue = strings(state.get("folder_queue", []))
+        drive_tokens = record(state.get("drive_tokens", {}))
         if not queue and index >= len(selection.resource_ids):
-            return SyncPage(complete=True, checkpoint={"page_token": start, "folders": known})
+            return SyncPage(
+                complete=True, checkpoint={"page_token": start, "folders": known, "drive_tokens": drive_tokens}
+            )
         if not queue:
             queue = [selection.resource_ids[index]]
             index += 1
         current = queue[0]
         identifier = drive_id(current)
+        file = None
+        if not state.get("list_token"):
+            if current.startswith("drive:"):
+                shared_drive = identifier
+            else:
+                file = await self.get(
+                    "/files/" + quote(identifier, safe=""), {"fields": FILE_FIELDS, "supportsAllDrives": "true"}
+                )
+                shared_drive = string(file["driveId"]) if file.get("driveId") else ""
+            if shared_drive and string(shared_drive) not in drive_tokens:
+                marker = await self.get(
+                    "/changes/startPageToken", {"supportsAllDrives": "true", "driveId": string(shared_drive)}
+                )
+                drive_tokens = {**drive_tokens, string(shared_drive): string(marker["startPageToken"])}
         if current.startswith("file:"):
-            file = await self.get(
-                "/files/" + quote(identifier, safe=""), {"fields": FILE_FIELDS, "supportsAllDrives": "true"}
-            )
-            next_state = {"start_token": start, "index": index, "folders": known, "folder_queue": queue[1:]}
+            if file is None:
+                raise ConnectorError("invalid_resource", "Drive file metadata is unavailable")
+            next_state = {
+                "start_token": start,
+                "index": index,
+                "folders": known,
+                "folder_queue": queue[1:],
+                "drive_tokens": drive_tokens,
+            }
             ref = file_resource(file)
             return SyncPage(
-                resources=[ref] if self.matches_type(ref, selection) else [],
+                resources=[ref] if file.get("trashed") is not True and self.matches_type(ref, selection) else [],
                 next_state=next_state,
-                checkpoint={"page_token": start, "folders": known},
+                checkpoint={"page_token": start, "folders": known, "drive_tokens": drive_tokens},
                 complete=index >= len(selection.resource_ids) and len(queue) == 1,
             )
         params: dict[str, str | int] = {
@@ -180,11 +204,12 @@ class GoogleDriveConnector(OAuthConnector):
             "list_token": token or "",
             "folder_queue": remaining,
             "folders": known,
+            "drive_tokens": drive_tokens,
         }
         return SyncPage(
             resources=[ref for ref in refs if ref.kind != "folder" and self.matches_type(ref, selection)],
             next_state=next_state,
-            checkpoint={"page_token": start, "folders": known},
+            checkpoint={"page_token": start, "folders": known, "drive_tokens": drive_tokens},
             complete=not token and not remaining and index >= len(selection.resource_ids),
         )
 
@@ -193,7 +218,15 @@ class GoogleDriveConnector(OAuthConnector):
         return not selection.mime_types or resource.metadata.get("mime_type") in selection.mime_types
 
     async def incremental_sync(self, selection: Selection, state: dict[str, object]) -> SyncPage:
-        marker = state.get("page_token")
+        drive_tokens = record(state.get("drive_tokens", {}))
+        # User and shared-drive change IDs have different namespaces. Never use a
+        # user cursor for a shared drive, or advance one feed past another.
+        if any(drive_id(value) not in drive_tokens for value in selection.resource_ids if value.startswith("drive:")):
+            return (await self.initial_sync(selection, {})).model_copy(update={"reconcile": True})
+        feeds = ["", *sorted(drive_tokens)]
+        feed_index = number(state.get("feed_index", 0))
+        feed = feeds[feed_index]
+        marker = drive_tokens.get(feed) if feed else state.get("page_token")
         if not marker:
             return await self.initial_sync(selection, {})
         params: dict[str, str | int] = {
@@ -201,8 +234,10 @@ class GoogleDriveConnector(OAuthConnector):
             "pageSize": self.config.page_size,
             "supportsAllDrives": "true",
             "includeItemsFromAllDrives": "true",
-            "fields": f"nextPageToken,newStartPageToken,changes(fileId,removed,file({FILE_FIELDS}))",
+            "fields": f"nextPageToken,newStartPageToken,changes(changeType,driveId,fileId,removed,file({FILE_FIELDS}))",
         }
+        if feed:
+            params["driveId"] = feed
         try:
             result = await self.get("/changes", params)
         except ConnectorError as error:
@@ -214,6 +249,8 @@ class GoogleDriveConnector(OAuthConnector):
         refs: list[Resource] = []
         removed: list[str] = []
         for change in records(result.get("changes", [])):
+            if change.get("changeType") == "drive":
+                return (await self.initial_sync(selection, {})).model_copy(update={"reconcile": True})
             identifier = "file:" + string(change["fileId"])
             if change.get("removed") is True:
                 if string(change["fileId"]) in folders:
@@ -239,13 +276,20 @@ class GoogleDriveConnector(OAuthConnector):
         token = result.get("nextPageToken") or result.get("newStartPageToken")
         if not token:
             raise ConnectorError("invalid_response", "Drive change feed omitted its continuation token")
-        checkpoint = {"page_token": token, "folders": folders}
+        if feed:
+            drive_tokens = {**drive_tokens, feed: string(token)}
+        checkpoint = {
+            "page_token": state.get("page_token") if feed else token,
+            "folders": folders,
+            "drive_tokens": drive_tokens,
+        }
+        next_index = feed_index if result.get("nextPageToken") else feed_index + 1
         return SyncPage(
             resources=refs,
             deleted_ids=removed,
-            next_state=checkpoint,
+            next_state={**checkpoint, "feed_index": next_index},
             checkpoint=checkpoint,
-            complete=not result.get("nextPageToken"),
+            complete=next_index >= len(feeds),
         )
 
     async def fetch_resource(self, resource: Resource, selection: Selection) -> FetchResult:
@@ -259,7 +303,11 @@ class GoogleDriveConnector(OAuthConnector):
         if capabilities.get("canDownload") is False:
             raise ConnectorError("inaccessible", "Drive file owner disabled downloads")
         ref = file_resource(file)
+        if not self.matches_type(ref, selection):
+            return FetchResult(removed_ids=[resource.id])
         mime = string(file["mimeType"])
+        if mime == FOLDER or (mime.startswith("application/vnd.google-apps.") and mime not in EXPORTS):
+            raise ConnectorError("unsupported", "This Drive resource does not support document export")
         permissions = records(file.get("permissions", []))
         if file.get("driveId"):
             permissions = []

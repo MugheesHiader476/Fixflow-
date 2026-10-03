@@ -25,11 +25,12 @@ export default function ConnectorsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const notice = useSyncExternalStore(subscribeLocation, connectionNotice, () => null);
   const active = data?.some((card) => card.accounts.some((a) => ["pending", "running", "waiting"].includes(a.sync_status))) ?? false;
+  const connected = data?.some((card) => card.accounts.some((a) => ["connected", "syncing", "connected_with_warning"].includes(a.status))) ?? false;
   useEffect(() => {
-    if (!active) return;
-    const timer = setInterval(reload, 5000);
+    if (!connected) return;
+    const timer = setInterval(reload, active ? 5000 : 15000);
     return () => clearInterval(timer);
-  }, [active, reload]);
+  }, [active, connected, reload]);
 
   async function connect(provider: ConnectorProvider) {
     setBusy(provider); setActionError(null);

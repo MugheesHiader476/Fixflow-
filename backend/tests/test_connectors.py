@@ -13,6 +13,8 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +47,11 @@ from backend.services.ingestion import ingest_source
 
 pytestmark = pytest.mark.anyio
 VAULT_KEY = Fernet.generate_key().decode()
+APP_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
+).decode()
 BODY = (
     "PostgreSQL connection pools require spare capacity for background ingestion. "
     "When the pool is exhausted, configure a bounded worker count and monitor waiting connections. "
@@ -61,7 +68,7 @@ def config() -> ConnectorConfig:
         github_client_id="test-github-client",
         github_client_secret=SecretStr("test-github-secret"),
         github_app_id="7",
-        github_private_key=SecretStr("test-private-key"),
+        github_private_key=SecretStr(APP_PRIVATE_KEY),
         slack_client_id="test-slack-client",
         slack_client_secret=SecretStr("test-slack-secret"),
         slack_signing_secret=SecretStr("test-slack-signature"),
@@ -173,7 +180,7 @@ async def connect_gmail(client: httpx.AsyncClient) -> str:
     return str(result.json()["id"])
 
 
-async def run_jobs(identifier: str) -> None:
+async def run_jobs(identifier: str, expected_status: str = "complete") -> None:
     async with get_session_factory()() as db:
         job_id = await db.scalar(
             select(ConnectorSyncJob.id)
@@ -187,7 +194,7 @@ async def run_jobs(identifier: str) -> None:
             job = await db.get(ConnectorSyncJob, job_id)
             assert job
             if job.status not in {"pending", "running", "waiting"}:
-                assert job.status == "complete", job.error_message
+                assert job.status == expected_status, job.error_message
                 return
     raise AssertionError("Sync failed to finish within bounded test steps")
 
@@ -519,10 +526,12 @@ async def test_disconnect_content_policies(
     async with get_session_factory()() as db:
         source = await db.scalar(select(KnowledgeSource))
         resource = await db.scalar(select(ConnectorResource))
-        assert resource
         if policy == "purge":
-            assert source is None and resource.source_id is None and not path.exists()
+            assert source is None and resource is None and not path.exists()
+            job = await db.scalar(select(ConnectorSyncJob))
+            assert job and job.cursor == {}
         else:
+            assert resource
             assert source and not source.is_active and path.exists()
             assert (resource.removed_at is not None) == (policy == "soft_delete")
 
@@ -735,3 +744,81 @@ async def test_disconnect_does_not_refresh_tokens_before_disabling_local_access(
     result = await client.post(f"/api/connectors/{identifier}/disconnect", json={"policy": "retain"})
     assert result.status_code == 200 and result.json()["status"] == "disconnected"
     refresh.assert_not_called()
+
+
+async def test_reconnect_forces_initial_sync_of_retained_content(
+    client: httpx.AsyncClient,
+    connector_environment: None,
+    gmail_http: list[httpx.Request],
+) -> None:
+    identifier = await connect_gmail(client)
+    await client.post(f"/api/connectors/{identifier}/configure", json={"resource_ids": ["INBOX"]})
+    await client.post(f"/api/connectors/{identifier}/sync", json={})
+    await run_jobs(identifier)
+    await client.post(f"/api/connectors/{identifier}/disconnect", json={"policy": "retain"})
+    reconnected = await connect_gmail(client)
+    assert reconnected == identifier
+    async with get_session_factory()() as db:
+        account = await db.get(ConnectorAccount, UUID(identifier))
+        assert account and account.sync_cursor == {}
+        source = await db.scalar(select(KnowledgeSource))
+        assert source and not source.is_active
+    await client.post(f"/api/connectors/{identifier}/sync", json={})
+    await run_jobs(identifier)
+    async with get_session_factory()() as db:
+        source = await db.scalar(select(KnowledgeSource))
+        assert source and source.is_active
+        job = await db.scalar(select(ConnectorSyncJob).order_by(ConnectorSyncJob.created_at.desc()).limit(1))
+        assert job and job.mode == "initial"
+
+
+async def test_cached_permission_evidence_rebuilds_users_and_groups(
+    db: AsyncSession,
+    connector_environment: None,
+) -> None:
+    from backend.services.connector_sources import reusable_file  # noqa: PLC0415
+
+    account = ConnectorAccount(
+        id=uuid4(),
+        owner_id="user_test",
+        provider="google_drive",
+        external_account_id="drive-user",
+        display_name="Drive",
+    )
+    db.add(account)
+    await db.flush()
+    old: list[dict[str, object]] = [
+        {"id": "person", "type": "user", "role": "reader", "emailAddress": "old@example.test"}
+    ]
+    ref = Resource(
+        id="file:guide", name="guide.txt", kind="drive_file", version="1", metadata={"provider_permissions": old}
+    )
+    await register(
+        db,
+        account,
+        EnvelopeFactory(account.id, account.owner_id, "google_drive", "drive-user").text(
+            ref,
+            BODY,
+            "guide.txt",
+            "text/plain",
+            permissions=old,
+        ),
+    )
+    await db.commit()
+    updated = ref.model_copy(
+        update={
+            "metadata": {
+                "provider_permissions": [
+                    {
+                        "id": "group",
+                        "type": "group",
+                        "role": "reader",
+                        "emailAddress": "team@example.test",
+                    }
+                ]
+            }
+        }
+    )
+    cached = await reusable_file(db, account, updated)
+    assert cached and cached.permissions.users == [] and cached.permissions.groups == ["team@example.test"]
+    assert cached.permissions.application_owner == account.owner_id

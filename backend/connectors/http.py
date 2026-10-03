@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import NoReturn
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -69,6 +69,7 @@ class ProviderHttp:
         headers: dict[str, str] | None = None,
         basic: tuple[str, str] | None = None,
         raw: bool = False,
+        _redirects: int = 0,
     ) -> bytes | dict[str, object] | list[dict[str, object]]:
         target = urlsplit(url)
         if (
@@ -93,6 +94,25 @@ class ProviderHttp:
                         method, url, headers=request_headers, params=params, data=data, json=payload, auth=basic
                     ) as response,
                 ):
+                    if response.status_code in {301, 302, 303, 307, 308} and method == "GET":
+                        destination = urljoin(url, response.headers.get("Location", ""))
+                        redirected = urlsplit(destination)
+                        same_provider = redirected.hostname == target.hostname or (
+                            raw
+                            and target.hostname in {"slack.com", "files.slack.com"}
+                            and redirected.hostname in {"slack.com", "files.slack.com"}
+                        )
+                        if _redirects >= 3 or not response.headers.get("Location") or not same_provider:
+                            raise ConnectorError("unsafe_url", "Provider redirect is not authorized")
+                        return await self.request(
+                            "GET",
+                            destination,
+                            token=token,
+                            headers=headers,
+                            basic=basic,
+                            raw=raw,
+                            _redirects=_redirects + 1,
+                        )
                     if response.status_code in {400, 403}:
                         error_body = bytearray()
                         async for block in response.aiter_bytes():
@@ -100,7 +120,22 @@ class ProviderHttp:
                             if len(error_body) > 65536:
                                 break
                         try:
-                            provider_error = record(json.loads(error_body)).get("error")
+                            error_json = record(json.loads(error_body))
+                            provider_error = error_json.get("error")
+                            message = error_json.get("message")
+                            if (
+                                response.status_code == 403
+                                and isinstance(message, str)
+                                and (
+                                    "secondary rate limit" in message.casefold()
+                                    or "api rate limit exceeded" in message.casefold()
+                                )
+                            ):
+                                raise ConnectorError(
+                                    "rate_limited",
+                                    "Provider quota reached; synchronization will resume",
+                                    retry_seconds(response),
+                                )
                             if isinstance(provider_error, dict):
                                 reasons = [item.get("reason") for item in records(provider_error.get("errors", []))]
                                 if any(

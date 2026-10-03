@@ -94,6 +94,6 @@ export function ResourceSelection({ account, onSaved, onClose }: {
       {account.provider === "github" && CATEGORIES.map((category) => <label key={category}><input type="checkbox" checked={selection.categories.includes(category)} onChange={(e) => toggleCategory(category, e.target.checked)} /> {category.replaceAll("_", " ")}</label>)}
       {account.provider === "google_drive" && <label className="w-full text-sm">File MIME types (optional, comma separated)<input className="mt-2 w-full rounded border border-border bg-panel-2 p-2" placeholder="application/pdf, text/plain" value={mimeTypes} onChange={(event) => setMimeTypes(event.target.value)} /></label>}
     </fieldset>
-    <div className="flex justify-end gap-3"><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!selection.resource_ids.length || !!(selection.start_date && selection.end_date && selection.start_date > selection.end_date)} onClick={() => void save()}>Save selection</Button></div>
+    <div className="flex justify-end gap-3"><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!!(selection.start_date && selection.end_date && selection.start_date > selection.end_date)} onClick={() => void save()}>Save selection</Button></div>
   </dialog>;
 }

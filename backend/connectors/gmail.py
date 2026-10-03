@@ -71,6 +71,7 @@ class GmailConnector(OAuthConnector):
             "maxResults": self.config.page_size,
             "labelIds": selection.resource_ids[index],
             "q": self.date_query(selection),
+            "includeSpamTrash": "true",
         }
         if state.get("page_token"):
             params["pageToken"] = string(state["page_token"])
@@ -134,6 +135,9 @@ class GmailConnector(OAuthConnector):
     async def fetch_resource(self, resource: Resource, selection: Selection) -> FetchResult:
         if resource.kind == "email_attachment":
             message_id = string(resource.metadata["message_id"])
+            parent = await self.get("/messages/" + quote(message_id, safe=""), {"format": "metadata"})
+            if not self.selected_message(parent, selection):
+                return FetchResult(removed_ids=[message_id, resource.id])
             attachment_id = resource.metadata.get("attachment_id")
             encoded_attachment = quote(string(attachment_id), safe="") if attachment_id else ""
             data = (
@@ -147,32 +151,41 @@ class GmailConnector(OAuthConnector):
                 update={"metadata": {key: value for key, value in resource.metadata.items() if key != "data"}}
             )
             envelope = await self.binary(
-                safe_resource, data, string(resource.metadata["filename"]), string(resource.metadata["mime_type"])
+                safe_resource,
+                data,
+                string(resource.metadata["filename"]),
+                string(resource.metadata["mime_type"]),
+                permissions=[
+                    {
+                        "type": "user",
+                        "role": "owner",
+                        "id": self.account.external_account_id if self.account else "",
+                        "labels": strings(parent.get("labelIds", [])),
+                    }
+                ],
             )
             return FetchResult(envelopes=[envelope])
         message = await self.get("/messages/" + quote(resource.id, safe=""), {"format": "full"})
         labels = strings(message.get("labelIds", []))
         received = datetime.fromtimestamp(number(message["internalDate"]) / 1000, UTC)
-        if (
-            not set(labels) & set(selection.resource_ids)
-            or (selection.start_date and received.date() < selection.start_date)
-            or (selection.end_date and received.date() > selection.end_date)
-        ):
+        if not self.selected_message(message, selection):
             return FetchResult(removed_ids=[resource.id])
         payload = record(message["payload"])
         headers = {string(h["name"]).casefold(): string(h["value"]) for h in records(payload.get("headers", []))}
         mail = EmailMessage()
         for name in ("from", "to", "cc", "bcc", "subject", "date", "message-id", "in-reply-to", "references"):
             if name in headers:
-                mail[name] = headers[name]
+                mail[name] = " ".join(headers[name].splitlines())
         plain: list[str] = []
         html: list[str] = []
         followups: list[Resource] = []
         pending = [(payload, 0)]
+        parts_seen = 0
         version = string(message["historyId"])
         while pending:
             part, depth = pending.pop(0)
-            if depth > 20 or len(followups) > 100:
+            parts_seen += 1
+            if depth > 20 or parts_seen > 1000 or len(followups) > 100:
                 raise ConnectorError("too_large", "Email MIME structure exceeds processing limits")
             pending.extend((child, depth + 1) for child in records(part.get("parts", [])))
             body = record(part.get("body", {}))
@@ -197,14 +210,26 @@ class GmailConnector(OAuthConnector):
                         },
                     )
                 )
-            elif not filename and body.get("data") and mime in {"text/plain", "text/html"}:
+            elif (
+                not filename and (body.get("data") or body.get("attachmentId")) and mime in {"text/plain", "text/html"}
+            ):
+                # Gmail can store large MIME bodies behind the attachment endpoint,
+                # even when the part is the message body and has no filename.
+                encoded = body.get("data")
+                if not encoded:
+                    encoded = (
+                        await self.get(
+                            f"/messages/{quote(resource.id, safe='')}/attachments/"
+                            + quote(string(body["attachmentId"]), safe="")
+                        )
+                    )["data"]
                 try:
                     part_headers = {
                         string(h["name"]).casefold(): string(h["value"]) for h in records(part.get("headers", []))
                     }
                     part_mail = EmailMessage()
                     part_mail["Content-Type"] = part_headers.get("content-type", mime)
-                    text = unbase64(body["data"]).decode(part_mail.get_content_charset() or "utf-8")
+                    text = unbase64(encoded).decode(part_mail.get_content_charset() or "utf-8")
                 except (UnicodeError, LookupError) as error:
                     raise ConnectorError(
                         "unsupported_encoding", "Email body character encoding could not be decoded"
@@ -231,7 +256,32 @@ class GmailConnector(OAuthConnector):
             update={"version": version, "parent_id": string(message["threadId"]), "metadata": metadata}
         )
         return FetchResult(
-            envelopes=[self.factory.text(ref, mail.as_string(), "message.eml", "message/rfc822")], followups=followups
+            envelopes=[
+                self.factory.text(
+                    ref,
+                    mail.as_string(),
+                    "message.eml",
+                    "message/rfc822",
+                    permissions=[
+                        {
+                            "type": "user",
+                            "role": "owner",
+                            "id": self.account.external_account_id if self.account else "",
+                            "labels": labels,
+                        }
+                    ],
+                )
+            ],
+            followups=followups,
+        )
+
+    @staticmethod
+    def selected_message(message: dict[str, object], selection: Selection) -> bool:
+        received = datetime.fromtimestamp(number(message["internalDate"]) / 1000, UTC).date()
+        return (
+            bool(set(strings(message.get("labelIds", []))) & set(selection.resource_ids))
+            and (selection.start_date is None or received >= selection.start_date)
+            and (selection.end_date is None or received <= selection.end_date)
         )
 
     async def handle_event(self, event: dict[str, object]) -> list[Resource]:
@@ -251,7 +301,12 @@ class GmailConnector(OAuthConnector):
                 if any(c in value for c in '\r\n\x00"() ') or "@" not in value:
                     raise ConnectorError("invalid_query", "Use an exact email address for sender/recipient filters")
                 terms.append(field + ":" + value)
-        params: dict[str, str | int] = {"labelIds": labels[0], "q": " ".join(terms), "maxResults": query.limit}
+        params: dict[str, str | int] = {
+            "labelIds": labels[0],
+            "q": " ".join(terms),
+            "maxResults": query.limit,
+            "includeSpamTrash": "true",
+        }
         if query.cursor:
             params["pageToken"] = query.cursor
         result = await self.get("/messages", params)

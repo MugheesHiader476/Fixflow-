@@ -4,15 +4,16 @@ import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
-from backend.connectors.core import ConnectorError
+from backend.connectors.core import ConnectorError, EnvelopeFactory, records
 from backend.db.models import ConnectorAccount, ConnectorResource, KnowledgeSource
-from backend.schemas.connectors import RawSourceEnvelope, Resource
+from backend.schemas.connectors import Provider, RawSourceEnvelope, Resource
 from backend.services.uploads import discard_upload, save_upload
 
 
@@ -60,9 +61,16 @@ async def reusable_file(db: AsyncSession, account: ConnectorAccount, resource: R
     ):
         return None
     permissions = dict(context["permissions"]) if isinstance(context.get("permissions"), dict) else {}
-    permissions["verified_at"] = datetime.now(UTC).isoformat()
-    if "provider_permissions" in resource.metadata:
-        permissions["provider_permissions"] = resource.metadata["provider_permissions"]
+    evidence = (
+        records(resource.metadata["provider_permissions"])
+        if isinstance(resource.metadata.get("provider_permissions"), list)
+        else records(permissions.get("provider_permissions", []))
+    )
+    permissions = (
+        EnvelopeFactory(account.id, account.owner_id, cast(Provider, account.provider), account.external_account_id)
+        .access(resource, evidence)
+        .model_dump(mode="json")
+    )
     metadata = {**(context["metadata"] if isinstance(context.get("metadata"), dict) else {}), **resource.metadata}
     return RawSourceEnvelope.model_validate(
         {

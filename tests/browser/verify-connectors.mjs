@@ -21,6 +21,20 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage();
 page.on("pageerror", (error) => errors.push(error.message));
 let polls = 0;
+function connectorCards() {
+  if (account.sync_status === "pending" && ++polls > 1) {
+    account.sync_status = "complete";
+    account.progress.queued = 2;
+    account.last_sync_at = new Date().toISOString();
+  }
+  return ["gmail", "github", "google_drive", "slack"].map((provider) => ({
+    provider,
+    configured: provider === "gmail",
+    setup_message: provider === "gmail" ? null : "Server credentials are required",
+    accounts: provider === "gmail" ? [account] : [],
+    install_url: null,
+  }));
+}
 await context.route("**/api/backend/**", async (route) => {
   const request = route.request(), url = new URL(request.url()), path = url.pathname;
   requests.push({ method: request.method(), path });
@@ -41,10 +55,10 @@ await context.route("**/api/backend/**", async (route) => {
     account.status = "disconnected"; account.sync_status = "cancelled";
     return route.fulfill({ json: account });
   }
+  if (path.endsWith("/health")) return route.fulfill({ json: account });
   if (path.endsWith("/connect")) return route.fulfill({ json: { authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?state=test-state" } });
   if (path.endsWith("/connectors")) {
-    if (account.sync_status === "pending" && ++polls > 1) { account.sync_status = "complete"; account.progress.queued = 2; account.last_sync_at = new Date().toISOString(); }
-    return route.fulfill({ json: ["gmail", "github", "google_drive", "slack"].map((provider) => ({ provider, configured: provider === "gmail", setup_message: provider === "gmail" ? null : "Server credentials are required", accounts: provider === "gmail" ? [account] : [], install_url: null })) });
+    return route.fulfill({ json: connectorCards() });
   }
   return route.fulfill({ json: [] });
 });
@@ -72,6 +86,11 @@ try {
     await expect(page.getByRole("dialog")).not.toBeVisible();
     assert.deepEqual(account.configuration.resource_ids, ["INBOX", "SENT"]);
     assert.equal(account.configuration.attachments, true);
+  });
+  await check("Check connection calls the native health endpoint and refreshes status", async () => {
+    await page.getByRole("button", { name: "Check connection" }).click();
+    await expect(page.getByRole("button", { name: "Check connection" })).toBeEnabled();
+    assert.ok(requests.some((request) => request.method === "POST" && request.path.endsWith("/health")));
   });
   await check("Manual synchronization updates via polling with truthful ingestion counts", async () => {
     await page.getByRole("button", { name: "Sync now" }).click();
