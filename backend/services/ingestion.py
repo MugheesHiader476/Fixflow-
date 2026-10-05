@@ -114,7 +114,27 @@ async def ingest_source(source_id: UUID) -> None:
                 }
             )
             previous = await previous_result(session, source_id)
-            context = source.ingestion_metadata.get("source_envelope")
+            stored_context = source.ingestion_metadata.get("source_envelope")
+            context: dict[str, object] = (
+                dict(stored_context)
+                if isinstance(stored_context, dict)
+                else {
+                    "source_id": str(source_id),
+                    "source_type": source.source_type,
+                    "filename": source.name,
+                    "content_hash": source.file_hash,
+                    "provenance": {"original_uri": f"source:{source_id}"},
+                }
+            )
+            permissions = context.get("permissions")
+            if isinstance(permissions, dict) and permissions.get("application_owner") != source.owner_id:
+                raise ValueError("Source envelope ownership mismatch")
+            context["permissions"] = {
+                **(permissions if isinstance(permissions, dict) else {}),
+                "visibility": "private",
+                "application_owner": source.owner_id,
+                "provider_resource": str(context.get("external_id", source_id)),
+            }
             result = await asyncio.to_thread(
                 run_pipeline,
                 path,
@@ -123,7 +143,7 @@ async def ingest_source(source_id: UUID) -> None:
                 previous=previous,
                 force=bool(source.ingestion_metadata.get("force")),
                 strict_okf=source.ingestion_format == "okf",
-                source_context=context if isinstance(context, dict) else None,
+                source_context=context,
             )
             if result.canonical.source.sha256 != source.file_hash:
                 raise ValueError("The uploaded document changed after registration.")
@@ -131,6 +151,9 @@ async def ingest_source(source_id: UUID) -> None:
             source.ingestion_metadata = {
                 **source.ingestion_metadata,
                 "force": False,
+                "pipeline_contract_version": result.contract_version,
+                "coverage": result.coverage,
+                "chunk_statistics": result.statistics,
                 "version": result.canonical.source.version,
                 "mime_type": result.canonical.source.mime_type,
                 "registration": result.canonical.source.model_dump(mode="json"),

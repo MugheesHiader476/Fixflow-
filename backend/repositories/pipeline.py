@@ -5,10 +5,11 @@ from uuid import UUID, uuid5
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.db.models import Document, DocumentChunk, IngestionArtifact
+from backend.db.models import Document, DocumentChunk, IngestionArtifact, KnowledgeSource
 from backend.processing.okf import concept_metadata, parse_concept
 from backend.processing.pipeline.concepts import render_block
-from backend.schemas.pipeline import PipelineResult
+from backend.processing.pipeline.validation import validate_result
+from backend.schemas.pipeline import PipelineResult, digest
 
 
 async def previous_result(session: AsyncSession, source_id: UUID) -> PipelineResult | None:
@@ -17,6 +18,18 @@ async def previous_result(session: AsyncSession, source_id: UUID) -> PipelineRes
 
 
 async def persist_result(session: AsyncSession, source_id: UUID, result: PipelineResult) -> None:
+    # Gate before any DELETE/INSERT; the transaction rolls back every projection on failure.
+    validate_result(result)
+    source = await session.get(KnowledgeSource, source_id)
+    permissions = result.canonical.source.context.get("permissions")
+    if (
+        source is None
+        or result.canonical.source.source_id != str(source_id)
+        or source.file_hash != result.canonical.source.sha256
+        or not isinstance(permissions, dict)
+        or permissions.get("application_owner") != source.owner_id
+    ):
+        raise ValueError("Pipeline registration or ownership mismatch")
     documents = {d.id: d for d in await session.scalars(select(Document).where(Document.source_id == source_id))}
     chunks = {
         c.chunk_id: c for c in await session.scalars(select(DocumentChunk).where(DocumentChunk.source_id == source_id))
@@ -48,6 +61,11 @@ async def persist_result(session: AsyncSession, source_id: UUID, result: Pipelin
                 "source_block_ids": concept.source_block_ids,
                 "canonical_hash": result.canonical.content_hash,
                 "filename": result.canonical.source.filename,
+                "parent_concept_id": concept.parent_concept_id,
+                "child_concept_ids": concept.child_concept_ids,
+                "direct_block_ids": concept.direct_block_ids,
+                "source_context": concept.source_context,
+                "contract_version": result.contract_version,
             }
         )
         values = {
@@ -72,6 +90,21 @@ async def persist_result(session: AsyncSession, source_id: UUID, result: Pipelin
         metadata = chunk.model_dump(mode="json")
         metadata["tokenizer"] = result.canonical.metadata["tokenizer"]
         concept_document = document_ids[chunk.concept_id]
+        metadata.update(
+            {
+                "document_id": str(concept_document),
+                "source_version": result.canonical.source.version,
+                "source_hash": result.canonical.source.sha256,
+                "source_modified_at": result.canonical.source.context.get(
+                    "updated_at_remote", result.canonical.source.context.get("modified_at")
+                ),
+                "external_version": result.canonical.source.context.get("external_version"),
+                "engine_version": result.engine_version,
+                "config_hash": result.config_hash,
+                "contract_version": result.contract_version,
+                "text_hash": digest(chunk.retrieval_content),
+            }
+        )
         concept = next(c for c in result.concepts if c.concept_id == chunk.concept_id)
         parsed_metadata = concept_metadata(parse_concept(concept.markdown, concept.concept_id + ".md"))
         uploaded = result.canonical.metadata.get("uploaded_okf")
@@ -95,7 +128,9 @@ async def persist_result(session: AsyncSession, source_id: UUID, result: Pipelin
                 )
             )
         else:
-            if record.content_hash != chunk.content_hash:
+            if record.content_hash != chunk.content_hash or record.meta.get(
+                "text_hash", digest(chunk.retrieval_content)
+            ) != digest(chunk.retrieval_content):
                 record.embedding = record.embedding_model = record.embedding_dimension = None
             for key, value in values.items():
                 setattr(record, key, value)

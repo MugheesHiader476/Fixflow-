@@ -52,18 +52,24 @@ def extract_concepts(
         # A module prologue is context for the first symbol, rather than a tiny standalone import concept.
         first = next(path for path in groups if path)
         groups[first] = [*groups.pop(()), *groups[first]]
+    if not isinstance(uploaded, dict):
+        for section in document.sections:
+            if len(section.path) > 1:
+                descendants = [b for b in document.blocks if b.section_path[: len(section.path)] == section.path]
+                if any(b.type not in {"heading", "title", "figure", "metadata"} for b in descendants):
+                    groups[tuple(section.path)] = descendants
     concepts: list[Concept] = []
     old = {c.concept_id: c for c in previous.concepts} if previous else {}
     seen: dict[tuple[str, str], Concept] = {}
     for path, blocks in groups.items():
         if not any(b.type not in {"heading", "title", "figure", "metadata"} for b in blocks):
             continue
-        title = path[0] if path else str(document.metadata.get("title", document.source.filename))
+        title = path[-1] if path else str(document.metadata.get("title", document.source.filename))
         if isinstance(uploaded, dict) and uploaded.get("title"):
             title = str(uploaded["title"])
         identifier = f"concepts/{slug(title)}-{digest([document.source.source_id, path])[:12]}"
         body = "\n\n".join(render_block(b) for b in blocks)
-        evidence_hash = digest([b.content_hash for b in blocks])
+        evidence_hash = digest([path, [b.content_hash for b in blocks]])
         key = (slug(title), evidence_hash)
         # A matching name alone never merges two topics. Both structural context and evidence must agree.
         if key in seen and seen[key].section_path == list(path):
@@ -122,6 +128,28 @@ def extract_concepts(
         concepts.append(concept)
     if not concepts:
         raise ValueError("No grounded concepts with substantive evidence")
+    by_path = {tuple(c.section_path): c for c in concepts}
+    for concept in concepts:
+        parent = next(
+            (
+                by_path[tuple(concept.section_path[:n])]
+                for n in range(len(concept.section_path) - 1, -1, -1)
+                if tuple(concept.section_path[:n]) in by_path
+                and set(concept.source_block_ids) <= set(by_path[tuple(concept.section_path[:n])].source_block_ids)
+            ),
+            None,
+        )
+        concept.parent_concept_id = parent.concept_id if parent else None
+        concept.child_concept_ids = [
+            c.concept_id for c in concepts if c is not concept and c.parent_concept_id == concept.concept_id
+        ]
+    # Parent links are now complete; direct evidence excludes each immediate child's subtree.
+    for concept in concepts:
+        concept.child_concept_ids = [c.concept_id for c in concepts if c.parent_concept_id == concept.concept_id]
+        child_blocks = {i for c in concepts if c.parent_concept_id == concept.concept_id for i in c.source_block_ids}
+        concept.direct_block_ids = [i for i in concept.source_block_ids if i not in child_blocks]
+    order = {b.block_id: index for index, b in enumerate(document.blocks)}
+    concepts.sort(key=lambda c: min(order[i] for i in c.source_block_ids))
     return concepts
 
 
@@ -139,7 +167,9 @@ def resolve_concepts(concepts: list[Concept], document: CanonicalDocument) -> tu
             (
                 candidate
                 for candidate in resolved
-                if candidate.section_path[:-1] == concept.section_path[:-1]
+                if not candidate.child_concept_ids
+                and not concept.child_concept_ids
+                and candidate.section_path[:-1] == concept.section_path[:-1]
                 and names & {slug(n) for n in [candidate.title, *candidate.aliases]}
                 and evidence
                 == {
@@ -158,10 +188,11 @@ def resolve_concepts(concepts: list[Concept], document: CanonicalDocument) -> tu
             dict.fromkeys([*target.resolved_concept_ids, concept.concept_id, *concept.resolved_concept_ids])
         )
         target.source_block_ids = list(dict.fromkeys([*target.source_block_ids, *concept.source_block_ids]))
+        target.direct_block_ids = list(dict.fromkeys([*target.direct_block_ids, *concept.direct_block_ids]))
         target.aliases = sorted({target.title, concept.title, *target.aliases, *concept.aliases})
         blocks = [by_block[i] for i in target.source_block_ids]
         target.dependency_hash = dependency_hash(blocks)
-        target.content_hash = digest([b.content_hash for b in blocks])
+        target.content_hash = digest([target.section_path, [b.content_hash for b in blocks]])
         parsed = parse_concept(target.markdown, target.concept_id + ".md")
         fields = parsed.frontmatter
         fields["aliases"] = target.aliases
@@ -174,6 +205,8 @@ def resolve_concepts(concepts: list[Concept], document: CanonicalDocument) -> tu
         unique = {b.content_hash: b for b in blocks}
         body = "\n\n".join(render_block(b) for b in unique.values())
         target.markdown = "---\n" + yaml.safe_dump(fields, sort_keys=False, allow_unicode=True) + "---\n" + body + "\n"
+    for concept in resolved:
+        concept.child_concept_ids = [c.concept_id for c in resolved if c.parent_concept_id == concept.concept_id]
     return resolved, merged
 
 
@@ -183,12 +216,43 @@ def validate_okf(concepts: list[Concept], document: CanonicalDocument) -> list[s
     if len(ids) != len(concepts):
         raise ValueError("Duplicate OKF concept identities")
     blocks = {b.block_id for b in document.blocks}
+    by_id = {c.concept_id: c for c in concepts}
+    direct = [i for c in concepts for i in c.direct_block_ids]
+    if set(direct) != blocks or len(direct) != len(blocks):
+        raise ValueError("Concept direct evidence must partition canonical elements")
     warnings: list[str] = []
     for concept in concepts:
+        if len(concept.source_block_ids) != len(set(concept.source_block_ids)) or not set(
+            concept.direct_block_ids
+        ) <= set(concept.source_block_ids):
+            raise ValueError("Invalid concept direct evidence")
+        if concept.parent_concept_id:
+            parent = by_id.get(concept.parent_concept_id)
+            if (
+                parent is None
+                or concept.concept_id not in parent.child_concept_ids
+                or not set(concept.source_block_ids) <= set(parent.source_block_ids)
+                or len(concept.section_path) <= len(parent.section_path)
+                or concept.section_path[: len(parent.section_path)] != parent.section_path
+            ):
+                raise ValueError("Invalid concept hierarchy")
+        if any(i not in by_id or by_id[i].parent_concept_id != concept.concept_id for i in concept.child_concept_ids):
+            raise ValueError("Invalid concept children")
         parsed = parse_concept(concept.markdown, concept.concept_id + ".md")
         fields = parsed.frontmatter
         if not concept.source_block_ids or not set(concept.source_block_ids) <= blocks:
             raise ValueError("Concept evidence is missing")
+        evidence = [b for b in document.blocks if b.block_id in concept.source_block_ids]
+        if (
+            [b.block_id for b in evidence] != concept.source_block_ids
+            or concept.content_hash != digest([concept.section_path, [b.content_hash for b in evidence]])
+            or concept.dependency_hash != dependency_hash(evidence)
+        ):
+            raise ValueError("Invalid concept evidence order or hash")
+        normalized_body = re.sub(r"\s+", "", parsed.body)
+        for block in document.blocks:
+            if block.block_id in concept.source_block_ids and re.sub(r"\s+", "", block.content) not in normalized_body:
+                raise ValueError("Concept body lost canonical evidence")
         if fields.get("status", "stable") not in {"draft", "stable", "deprecated"}:
             raise ValueError("Invalid OKF lifecycle")
         if fields.get("verified"):

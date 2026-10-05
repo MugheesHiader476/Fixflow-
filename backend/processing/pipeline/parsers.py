@@ -11,6 +11,7 @@ import shutil
 import subprocess  # nosec B404
 import tempfile
 import zipfile
+from bisect import bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from email import policy
@@ -19,6 +20,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import yaml  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from defusedxml import ElementTree as XML  # type: ignore[import-untyped]
 from markdown_it import MarkdownIt
@@ -28,7 +30,7 @@ from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.inspection import CODE_LANGUAGES, Inspection
 from backend.schemas.pipeline import Asset, Block, BlockType, Provenance, Source, digest
 
-VERSION = "2"
+VERSION = "3"
 
 
 @dataclass
@@ -153,7 +155,16 @@ def markdown(text: str, builder: Builder, location: dict[str, object] | None = N
             builder.heading(tokens[index + 1].content, int(token.tag[1:]), loc)
         elif token.type in {"fence", "code_block"}:
             language = token.info.split()[0] if token.info.strip() else "text"
-            builder.add("code", token.content, {"language": language}, location=loc)
+            first = int(str(loc.get("line_start", 1))) + int(token.type == "fence")
+            loc.update(line_start=first, line_end=first + len(token.content.splitlines()) - 1)
+            structured: dict[str, object] = {"language": language}
+            if language == "python":
+                symbols = python_symbols(ast.parse(token.content))
+                for symbol in symbols:
+                    symbol["line_start"] = int(str(symbol["line_start"])) + first - 1
+                    symbol["line_end"] = int(str(symbol["line_end"])) + first - 1
+                structured["symbols"] = symbols
+            builder.add("code", token.content, structured, location=loc)
         elif token.type == "table_open":
             rows: list[list[str]] = []
             end = index + 1
@@ -179,6 +190,24 @@ def markdown(text: str, builder: Builder, location: dict[str, object] | None = N
         index += 1
 
 
+def python_symbols(node: ast.AST, parent: list[str] | None = None) -> list[dict[str, object]]:
+    parent = parent or []
+    result: list[dict[str, object]] = []
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        parent = [*parent, node.name]
+        result.append(
+            {
+                "path": parent,
+                "kind": type(node).__name__,
+                "line_start": min([node.lineno, *[d.lineno for d in node.decorator_list]]),
+                "line_end": node.end_lineno or node.lineno,
+            }
+        )
+    for child in ast.iter_child_nodes(node):
+        result.extend(python_symbols(child, parent))
+    return result
+
+
 def python_code(text: str, builder: Builder) -> None:
     try:
         tree = ast.parse(text)
@@ -202,7 +231,7 @@ def python_code(text: str, builder: Builder) -> None:
         builder.add(
             "code",
             "".join(lines[first:last]),
-            {"language": "python", "symbol": symbol},
+            {"language": "python", "symbol": symbol, "symbols": python_symbols(node)},
             location={"line_start": first + 1, "line_end": last},
         )
         start = last
@@ -216,7 +245,7 @@ def python_code(text: str, builder: Builder) -> None:
 
 
 def structured_tree(value: object, builder: Builder, language: str, path: str = "$") -> None:
-    if isinstance(value, dict):
+    if isinstance(value, dict) and value:
         for key, item in value.items():
             child = f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}"
             builder.heading(child)
@@ -232,6 +261,51 @@ def structured_tree(value: object, builder: Builder, language: str, path: str = 
             json.dumps(value, ensure_ascii=False, indent=2),
             {"language": language, "path": path, "value": value},
         )
+
+
+def yaml_structure(text: str, value: object, builder: Builder) -> None:
+    """Retain configuration comments without mistaking quoted/block-scalar '#' for comments."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    ranges: dict[str, tuple[int, int]] = {}
+    if isinstance(root, yaml.MappingNode):
+        ranges = {
+            key.value: (
+                key.start_mark.line + 1,
+                max(key.start_mark.line + 1, item.end_mark.line + int(item.end_mark.column > 0)),
+            )
+            for key, item in root.value
+        }
+    structured_tree(value, builder, "yaml")
+    for block in builder.result.blocks:
+        key = block.structured_content.get("key")
+        if block.type == "heading":
+            key = block.content.removeprefix("$/").replace("~1", "/").replace("~0", "~")
+        if isinstance(key, str) and key in ranges:
+            block.provenance.line_start, block.provenance.line_end = ranges[key]
+    scalars = [
+        (token.start_mark.index, token.end_mark.index)
+        for token in yaml.scan(text)
+        if isinstance(token, yaml.ScalarToken)
+    ]
+    starts = [left for left, _ in scalars]
+    offset = 0
+    for line_number, line in enumerate(text.splitlines(keepends=True), 1):
+        for marker in re.finditer(r"(?<!\S)#", line):
+            position = offset + marker.start()
+            index = bisect_right(starts, position) - 1
+            if index >= 0 and position < scalars[index][1]:
+                continue
+            key = next((key for key, (first, last) in ranges.items() if first <= line_number <= last), None)
+            builder.path = ["$/" + key.replace("~", "~0").replace("/", "~1")] if key else []
+            builder.add(
+                "quote",
+                line[marker.start() :].rstrip("\r\n"),
+                {"syntax": "yaml_comment"},
+                location={"line_start": line_number, "line_end": line_number},
+            )
+            break
+        offset += len(line)
+    builder.result.blocks.sort(key=lambda block: block.provenance.line_start or 1)
 
 
 def xml_text(node: XmlTextNode) -> str:
@@ -458,17 +532,19 @@ class NativeParser:
         elif modality in {"json", "yaml"}:
             value = json.loads(text, object_pairs_hook=unique_mapping) if modality == "json" else load_yaml(text)
             value = _json_value(value, set(), [100000], 0)
-            structured_tree(value, builder, modality)
+            if modality == "yaml":
+                yaml_structure(text, value, builder)
+            else:
+                structured_tree(value, builder, modality)
         elif modality == "xml":
             root = XML.fromstring(text)
-            if len(root) and root.text:
-                builder.add("paragraph", root.text, {"path": f"/{root.tag}"})
-            for index, item in enumerate(root):
-                path = f"/{root.tag}/{item.tag}[{index + 1}]"
-                builder.heading(path)
-                builder.add("code", XML.tostring(item, encoding="unicode"), {"language": "xml", "path": path})
-            if not len(root):
-                builder.add("code", text, {"language": "xml", "path": f"/{root.tag}"})
+            # Keep the complete root, attributes, mixed text and tails as original evidence.
+            builder.add(
+                "code",
+                text,
+                {"language": "xml", "path": f"/{root.tag}"},
+                location={"line_start": 1, "line_end": len(text.splitlines())},
+            )
         elif modality == "code":
             language = CODE_LANGUAGES[source.extension]
             if language == "python":
@@ -573,8 +649,10 @@ class LayoutParser:
                             location={
                                 "page": page_number,
                                 "bbox": [
-                                    min(b[0] for b in boxes), min(b[1] for b in boxes),
-                                    max(b[2] for b in boxes), max(b[3] for b in boxes),
+                                    min(b[0] for b in boxes),
+                                    min(b[1] for b in boxes),
+                                    max(b[2] for b in boxes),
+                                    max(b[3] for b in boxes),
                                 ],
                             },
                         )

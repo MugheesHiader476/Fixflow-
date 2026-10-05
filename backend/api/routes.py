@@ -189,7 +189,11 @@ async def documents(
                 raise HTTPException(409, "This content already belongs to another source")
             if existing.file_hash == digest and existing.ingestion_format != ingestion_format:
                 raise HTTPException(409, "This content already exists with a different ingestion format")
-            if existing.file_hash == digest and existing.status != "failed" and not force:
+            needs_upgrade = (
+                existing.status in {"ready_for_embedding", "embedding", "indexed"}
+                and existing.ingestion_metadata.get("pipeline_contract_version") != 2
+            )
+            if existing.file_hash == digest and existing.status != "failed" and not force and not needs_upgrade:
                 discard_upload(path)
                 path = None
             else:
@@ -238,7 +242,11 @@ async def documents(
             if record.ingestion_format != ingestion_format:
                 raise HTTPException(409, "This content already exists with a different ingestion format")
             result = record.id
-            if (record.status == "failed" or force) and path:
+            needs_upgrade = (
+                record.status in {"ready_for_embedding", "embedding", "indexed"}
+                and record.ingestion_metadata.get("pipeline_contract_version") != 2
+            )
+            if (record.status == "failed" or force or needs_upgrade) and path:
                 lock_key = int.from_bytes(record.id.bytes[:8], "big", signed=True)
                 if not await db.scalar(select(func.pg_try_advisory_xact_lock(lock_key))):
                     raise HTTPException(409, "Source is currently processing")

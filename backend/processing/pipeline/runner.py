@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import statistics
 import time
 from datetime import UTC, datetime
 from importlib import import_module
@@ -19,12 +20,20 @@ from backend.processing.pipeline.concepts import (
     validate_okf,
 )
 from backend.processing.pipeline.config import PipelineConfig
-from backend.processing.pipeline.context import apply_context
+from backend.processing.pipeline.context import apply_context, normalize_context
 from backend.processing.pipeline.inspection import inspect, read_source
 from backend.processing.pipeline.parsers import LayoutParser, NativeParser, OcrParser, Parser
+from backend.processing.pipeline.units import (
+    atomic_units,
+    character_slice,
+    chunk_order,
+    coverage_report,
+    validate_units,
+)
+from backend.processing.pipeline.validation import validate_result
 from backend.schemas.pipeline import Chunk, PipelineResult, Source, digest
 
-ENGINE_VERSION = "1.2"
+ENGINE_VERSION = "2.0"
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +69,7 @@ def run_pipeline(
     source_context: dict[str, object] | None = None,
 ) -> PipelineResult:
     config = config or PipelineConfig()
+    source_context = normalize_context(source_id, source_context)
     tokenizer_identity = tokenizer.name if tokenizer else f"{config.tokenizer}:{config.tokenizer_encoding}"
     config_hash = digest(
         [
@@ -67,7 +77,12 @@ def run_pipeline(
             config.model_dump(mode="json"),
             strict_okf,
             tokenizer_identity,
-            {k: v for k, v in (source_context or {}).items() if k not in {"fetched_at", "permissions"}},
+            {
+                k: v
+                for k, v in (source_context or {}).items()
+                if k
+                not in {"fetched_at", "permissions", "content_hash", "source_version", "modified_at", "ingested_at"}
+            },
         ]
     )
     try:
@@ -84,11 +99,14 @@ def run_pipeline(
         ):
             # Revalidate persisted output rather than trusting a stale or corrupt cache envelope.
             tokenizer = tokenizer or tokenizer_for(config)
+            validate_units(previous.atomic_units, previous.canonical, previous.concepts)
             validate_okf(previous.concepts, previous.canonical)
             validate_chunks(previous.chunks, previous.parents, previous.concepts, previous.canonical, tokenizer, config)
+            validate_result(previous, tokenizer)
             event("cache_hit", source_id)
             cached = previous.model_copy(deep=True)
-            apply_context(cached, source_context or {})
+            apply_context(cached, source_context)
+            validate_result(cached, tokenizer)
             return cached
         inspection = inspect(path, config, data)
         if previous and previous.canonical.source.source_id != source_id:
@@ -101,6 +119,8 @@ def run_pipeline(
             size=len(inspection.data),
             sha256=inspection.sha256,
             original_uri=f"source:{source_id}",
+            authorization_scope=f"source:{source_id}",
+            context=source_context,
             ingested_at=ingested_at or datetime.now(UTC),
             version=(
                 previous.canonical.source.version + int(previous.canonical.source.sha256 != inspection.sha256)
@@ -163,12 +183,15 @@ def run_pipeline(
             )
         tokenizer = tokenizer or tokenizer_for(config)
         canonical.metadata["tokenizer"] = tokenizer.name
+        canonical.metadata["source_envelope"] = source_context
+        canonical.metadata["chunk_policy"] = config.model_dump(mode="json")
         reusable = previous if previous and previous.config_hash == config_hash and not force else None
         concepts = extract_concepts(canonical, ENGINE_VERSION, reusable)
         concepts, merged_count = resolve_concepts(concepts, canonical)
         event("concepts_resolved", source_id, concepts=len(concepts), merged=merged_count)
         warnings = validate_okf(concepts, canonical)
         event("okf_validated", source_id, concepts=len(concepts), warnings=len(warnings))
+        atomic = atomic_units(canonical, concepts)
         old_concepts = {c.concept_id: c for c in reusable.concepts} if reusable else {}
         chunks: list[Chunk] = []
         reused = 0
@@ -182,15 +205,31 @@ def run_pipeline(
                 event("concept_cache_hit", source_id, concept_hash=concept.content_hash)
             else:
                 chunks.extend(chunk_concept(canonical, concept, tokenizer, config))
+        # Restore global canonical order, including direct parent evidence after a child section.
+        ordered = chunk_order(chunks, atomic)
+        chunks = [chunk for _, chunk in sorted(zip(ordered, chunks, strict=True), key=lambda pair: pair[0])]
+        for chunk in chunks:
+            chunk.canonical_document_id = canonical.document_id
+            chunk.unit_slices = [r for r in chunk.unit_slices if r.role == "content"]
+            prefix = chunk.retrieval_content[: -len(chunk.raw_content)]
+            for block in canonical.blocks:
+                if block.type in {"heading", "title", "metadata"} and block.content in prefix:
+                    location = character_slice(block)
+                    location.role = "context"
+                    chunk.unit_slices.append(location)
         parents = link_chunks(chunks)
         validate_chunks(chunks, parents, concepts, canonical, tokenizer, config)
         event("chunks_validated", source_id, count=len(chunks), reused_concepts=reused)
-        dependencies = {
-            b.block_id: [c.concept_id for c in concepts if b.block_id in c.source_block_ids] for b in canonical.blocks
-        }
-        dependencies.update(
-            {c.concept_id: [ch.chunk_id for ch in chunks if ch.concept_id == c.concept_id] for c in concepts}
-        )
+        dependencies: dict[str, list[str]] = {b.block_id: [] for b in canonical.blocks}
+        dependencies.update({c.concept_id: [] for c in concepts})
+        dependencies.update({u.unit_id: [] for u in atomic})
+        for concept in concepts:
+            for identifier in concept.source_block_ids:
+                dependencies[identifier].append(concept.concept_id)
+        for chunk in chunks:
+            dependencies[chunk.concept_id].append(chunk.chunk_id)
+            for identifier in dict.fromkeys(r.unit_id for r in chunk.unit_slices):
+                dependencies[identifier].append(chunk.chunk_id)
         stage_hashes = {
             "source": source.sha256,
             "canonical": canonical.content_hash,
@@ -209,9 +248,32 @@ def run_pipeline(
             stage_hashes=stage_hashes,
             warnings=[*canonical.parse_quality.warnings, *warnings],
             reused_concepts=reused,
+            atomic_units=atomic,
+            coverage=coverage_report(chunks, atomic),
+            statistics={
+                "canonical_elements": len(canonical.blocks),
+                "concepts": len(concepts),
+                "atomic_units": len(atomic),
+                "chunks": len(chunks),
+                "min_bytes": min(c.byte_length for c in chunks),
+                "max_bytes": max(c.byte_length for c in chunks),
+                "mean_bytes": statistics.mean(c.byte_length for c in chunks),
+                "median_bytes": statistics.median(c.byte_length for c in chunks),
+                "parser": canonical.blocks[0].provenance.parser,
+                "duplicate_canonical_elements": len(atomic) - len({u.content_hash for u in atomic}),
+                "hard_size_fragments": sum(
+                    r.boundary_kind == "hard_size" for c in chunks for r in c.unit_slices if r.role == "content"
+                ),
+                "validation_failures": 0,
+                "uncovered_elements": 0,
+            },
+            contract_version=2,
         )
         apply_context(result, source_context or {})
         validate_okf(result.concepts, result.canonical)
+        validate_units(result.atomic_units, result.canonical, result.concepts)
+        validate_result(result, tokenizer)
+        event("coverage_validated", source_id, coverage=result.coverage, statistics=result.statistics)
         return result
     except PipelineError:
         event("validation_failed", source_id)

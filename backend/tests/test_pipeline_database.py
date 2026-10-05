@@ -46,7 +46,7 @@ async def test_worker_persists_registration_canonical_okf_and_chunks(client: htt
         assert result.canonical.source.sha256 == source.file_hash
         registration = source.ingestion_metadata["registration"]
         assert isinstance(registration, dict) and registration["version"] == 1
-        assert len(result.concepts) == 2
+        assert len(result.concepts) == 3
         assert "okf_version: '0.2'" in result.bundle["index.md"]
         records = list(await db.scalars(select(DocumentChunk).where(DocumentChunk.source_id == identifier)))
         assert len(records) == 3
@@ -102,9 +102,9 @@ async def test_incremental_update_preserves_unaffected_rows_and_vectors(client: 
         assert await db.get(DocumentChunk, obsolete_id) is None
         assert await db.get(DocumentChunk, other_id) is not None
         result = await artifact_result(db, identifier)
-        assert result.reused_concepts == 1
+        assert result.reused_concepts == 2
         assert result.canonical.source.version == 2
-        assert await db.scalar(select(func.count()).select_from(Document)) == 3
+        assert await db.scalar(select(func.count()).select_from(Document)) == 4
 
 
 async def test_failed_update_keeps_previous_valid_artifacts_and_retry_recovers(client: httpx.AsyncClient) -> None:

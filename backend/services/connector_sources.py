@@ -105,7 +105,12 @@ async def register(
     if source and source.path and assets is not None:
         assets.append(Path(source.path))
     context = envelope.context()
-    changed = source is None or source.file_hash != envelope.content_hash or source.status == "failed"
+    changed = (
+        source is None
+        or source.file_hash != envelope.content_hash
+        or source.status == "failed"
+        or source.ingestion_metadata.get("pipeline_contract_version") != 2
+    )
     # Metadata/permission updates enter the same provider-independent pipeline; bytes are reused when possible.
     old_context = source.ingestion_metadata.get("source_envelope") if source else None
     if isinstance(old_context, dict):

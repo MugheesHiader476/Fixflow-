@@ -82,7 +82,9 @@ def test_pdf_and_office_tables_keep_cells_and_locations() -> None:
 
 def test_structure_provenance_and_neighbor_graphs() -> None:
     result = run_pipeline(GOLDEN / "guide.md", "structure", PipelineConfig(max_chunk_tokens=110, min_chunk_tokens=8))
-    assert len(result.concepts) == 2
+    assert len(result.concepts) == 3
+    assert result.concepts[1].parent_concept_id == result.concepts[0].concept_id
+    assert result.concepts[0].child_concept_ids == [result.concepts[1].concept_id]
     assert {tuple(s.path) for s in result.canonical.sections} >= {("Authentication",), ("Authentication", "Timeouts")}
     assert result.chunks[0].raw_content.startswith("Validate tokens")
     assert result.chunks[0].retrieval_content.startswith("Concept: Authentication")
@@ -117,7 +119,8 @@ def test_equal_text_in_different_subsections_keeps_each_context(tmp_path: Path) 
         "## Write\n\nValidate authorization before processing."
     )
     result = run_pipeline(path, "sections")
-    assert len(result.concepts) == 1 and len(result.chunks) == 2
+    assert len(result.concepts) == 3 and len(result.chunks) == 2
+    assert len(result.concepts[0].child_concept_ids) == 2
     assert [c.section_path for c in result.chunks] == [["Requests", "Read"], ["Requests", "Write"]]
     assert result.chunks[0].chunk_id != result.chunks[1].chunk_id
 
@@ -218,10 +221,13 @@ def test_incremental_update_reuses_unchanged_concept_and_chunks(tmp_path: Path) 
     previous = run_pipeline(path, "incremental")
     path.write_text(path.read_text().replace("Retry failed uploads", "Reprocess failed uploads"))
     current = run_pipeline(path, "incremental", previous=previous)
-    assert current.reused_concepts == 1
+    assert current.reused_concepts == 2
     assert current.canonical.source.version == 2
     assert current.concepts[0] == previous.concepts[0]
-    assert current.chunks[0] == previous.chunks[0]
+    assert current.chunks[0].chunk_id == previous.chunks[0].chunk_id
+    assert current.chunks[0].raw_content == previous.chunks[0].raw_content
+    assert current.chunks[0].unit_slices == previous.chunks[0].unit_slices
+    assert current.chunks[0].canonical_document_id == current.canonical.document_id
     assert current.chunks[-1].content_hash != previous.chunks[-1].content_hash
     assert current.stage_hashes["canonical"] != previous.stage_hashes["canonical"]
 
@@ -259,13 +265,13 @@ def test_generated_okf_hard_errors_and_broken_links_are_warnings() -> None:
     result = run_pipeline(GOLDEN / "guide.md", "okf")
     concept = result.concepts[0].model_copy(deep=True)
     concept.markdown += "\nSee [other](/concepts/missing.md).\n"
-    assert validate_okf([concept, result.concepts[1]], result.canonical) == ["Unresolved internal source link"]
+    assert validate_okf([concept, *result.concepts[1:]], result.canonical) == ["Unresolved internal source link"]
     concept.markdown = concept.markdown.replace("status: draft", "status: invented")
     with pytest.raises(ValueError, match="lifecycle"):
-        validate_okf([concept, result.concepts[1]], result.canonical)
+        validate_okf([concept, *result.concepts[1:]], result.canonical)
     concept.markdown = result.concepts[0].markdown.replace("status: draft", "verified: {by: 'human:invented'}")
     with pytest.raises(ValueError, match="verification"):
-        validate_okf([concept, result.concepts[1]], result.canonical)
+        validate_okf([concept, *result.concepts[1:]], result.canonical)
 
 
 def test_chunk_gate_checks_tokens_neighbors_and_provenance() -> None:

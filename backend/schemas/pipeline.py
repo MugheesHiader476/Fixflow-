@@ -64,6 +64,9 @@ class Source(Contract):
     version: int = Field(default=1, ge=1)
     ingested_at: datetime
     original_uri: str
+    # Resolves to the authoritative source row, including its owner and access lease.
+    authorization_scope: str = ""
+    context: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def timestamp_is_explicit(self) -> "Source":
@@ -251,6 +254,74 @@ class Concept(Contract):
     dependency_hash: str
     markdown: str
     source_context: dict[str, object] = Field(default_factory=dict)
+    parent_concept_id: str | None = None
+    child_concept_ids: list[str] = Field(default_factory=list)
+    direct_block_ids: list[str] = Field(default_factory=list)
+
+
+class AtomicUnit(Contract):
+    """One ordered canonical element; fragments carry selectors into this complete evidence."""
+
+    unit_id: str
+    source_id: str
+    canonical_document_id: str
+    concept_id: str
+    block_id: str
+    order_index: int = Field(ge=0)
+    content_type: BlockType
+    section_path: list[str]
+    content: str
+    structure: dict[str, object]
+    provenance: Provenance
+    content_hash: str
+    authorization_scope: str
+
+
+class UnitSlice(Contract):
+    """Exact character span or structural selector into a canonical atomic unit."""
+
+    unit_id: str
+    role: Literal["content", "context"] = "content"
+    character_start: int | None = Field(default=None, ge=0)
+    character_end: int | None = Field(default=None, ge=0)
+    json_pointer: str | None = None
+    object_key: str | None = None
+    array_start: int | None = Field(default=None, ge=0)
+    array_end: int | None = Field(default=None, ge=0)
+    row_start: int | None = Field(default=None, ge=1)
+    row_end: int | None = Field(default=None, ge=1)
+    line_start: int | None = Field(default=None, ge=1)
+    line_end: int | None = Field(default=None, ge=1)
+    line_scope: Literal["fragment", "unit", "unknown"] = "unknown"
+    symbol_paths: list[list[str]] = Field(default_factory=list)
+    boundary_kind: Literal["element", "statement", "sentence", "hard_size", "list_item", "row_group", "subtree"] = (
+        "element"
+    )
+
+    @model_validator(mode="after")
+    def selector_is_unambiguous(self) -> "UnitSlice":
+        character = self.character_start is not None or self.character_end is not None
+        row = self.row_start is not None or self.row_end is not None
+        structured = self.json_pointer is not None
+        if sum((character, row, structured)) != 1:
+            raise ValueError("An atomic slice requires exactly one selector")
+        if character and (
+            self.character_start is None or self.character_end is None or self.character_start >= self.character_end
+        ):
+            raise ValueError("Invalid character selector")
+        if row and (self.row_start is None or self.row_end is None or self.row_start > self.row_end):
+            raise ValueError("Invalid table selector")
+        if (self.array_start is not None or self.array_end is not None) and (
+            not structured or self.array_start is None or self.array_end is None or self.array_start >= self.array_end
+        ):
+            raise ValueError("Invalid array selector")
+        if self.object_key is not None and not structured:
+            raise ValueError("Object key requires a structured selector")
+        if self.json_pointer and not self.json_pointer.startswith("/"):
+            raise ValueError("JSON pointer requires an absolute path")
+        if self.line_start is not None and self.line_end is not None and self.line_start > self.line_end:
+            raise ValueError("Invalid fragment line range")
+        return self
 
 
 class Chunk(Contract):
@@ -269,6 +340,13 @@ class Chunk(Contract):
     token_count: int = Field(gt=0)
     content_hash: str
     source_context: dict[str, object] = Field(default_factory=dict)
+    source_id: str = ""
+    canonical_document_id: str = ""
+    authorization_scope: str = ""
+    order_index: int = Field(default=0, ge=0)
+    unit_slices: list[UnitSlice] = Field(default_factory=list)
+    byte_length: int = Field(default=0, ge=0)
+    character_length: int = Field(default=0, ge=0)
 
 
 class ChunkParent(Contract):
@@ -289,3 +367,7 @@ class PipelineResult(Contract):
     stage_hashes: dict[str, str]
     warnings: list[str] = Field(default_factory=list)
     reused_concepts: int = 0
+    atomic_units: list[AtomicUnit] = Field(default_factory=list)
+    coverage: dict[str, object] = Field(default_factory=dict)
+    statistics: dict[str, object] = Field(default_factory=dict)
+    contract_version: int = 1
