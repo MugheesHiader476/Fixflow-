@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { applicationOrigin, isCrossOriginWrite } from "./application-origin";
 
 const UUID = "[0-9a-fA-F-]{36}";
 const PROVIDER = "(gmail|github|google_drive|slack)";
@@ -27,8 +28,9 @@ export async function proxyBackend(request: Request, path: string) {
   if (!allowed) return NextResponse.json({ error: "Unknown API route" }, { status: 404 });
   const query = connectorQuery(request, path);
   if (query === null) return NextResponse.json({ error: "Invalid connector query" }, { status: 422 });
-  const origin = request.headers.get("Origin");
-  if (request.method === "POST" && ((origin && origin !== new URL(request.url).origin) || request.headers.get("Sec-Fetch-Site") === "cross-site")) {
+  const expectedOrigin = applicationOrigin(request);
+  if (!expectedOrigin) return NextResponse.json({ error: "Public application URL is not configured correctly" }, { status: 503 });
+  if (isCrossOriginWrite(request, expectedOrigin)) {
     return NextResponse.json({ error: "Cross-origin writes are not allowed" }, { status: 403 });
   }
   const apiUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;

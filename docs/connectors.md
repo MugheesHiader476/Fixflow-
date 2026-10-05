@@ -72,6 +72,8 @@ Disconnect commits local credential wiping, sync cancellation and retrieval excl
 
 Set backend values in `backend/.env` for native development, or root `.env` for Compose. See the two tracked `.env.example` files; provider secrets must never be `NEXT_PUBLIC_*` or placed in the browser. Existing Clerk, gateway token, database and private data directory configuration is still required.
 
+The Next server also needs the non-secret `CONNECTORS__PUBLIC_URL` value. Compose passes it to both services; native Next reads it from the root `.env` or `.env.local`. The gateway validates browser writes against this fixed public origin, and OAuth callbacks redirect there, so Docker's internal bind address cannot reject legitimate requests or become a redirect destination. Provider/vault credentials remain backend-only in Compose; forwarded browser host headers cannot override the configured origin.
+
 | Purpose | Variables |
 | --- | --- |
 | Public Next origin / vault | `CONNECTORS__PUBLIC_URL`, `CONNECTORS__VAULT_KEY`, optional `CONNECTORS__VAULT_PREVIOUS_KEYS` JSON array |

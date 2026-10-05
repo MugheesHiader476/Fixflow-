@@ -275,6 +275,28 @@ describe("application pages", () => {
     ));
   });
 
+  it.each(["xlsx", "pptx", "json", "xml", "yaml", "py", "eml", "vtt"])("submits advertised %s documents", async (extension) => {
+    api.listKnowledgeSources.mockResolvedValue([]);
+    api.addKnowledgeSource.mockResolvedValue({ id: "accepted", name: "Audit", kind: "upload", status: "uploaded" });
+    render(<SourcesPage />);
+    fireEvent.click(screen.getByRole("tab", { name: /^Upload a file/i }));
+    const file = new File(["Document transport is validated here; parser tests use valid format fixtures."], `Audit.${extension.toUpperCase()}`);
+    fireEvent.change(screen.getByLabelText("Upload document"), { target: { files: [file] } });
+    expect(screen.getByRole("button", { name: /Add to knowledge base/ }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /Add to knowledge base/ }));
+    await waitFor(() => expect(api.addKnowledgeSource).toHaveBeenCalledWith(expect.objectContaining({ file }), expect.any(AbortSignal)));
+  });
+
+  it("rejects unsupported file extensions before submission", async () => {
+    api.listKnowledgeSources.mockResolvedValue([]);
+    render(<SourcesPage />);
+    fireEvent.click(screen.getByRole("tab", { name: /^Upload a file/i }));
+    fireEvent.change(screen.getByLabelText("Upload document"), { target: { files: [new File(["inert"], "Audit.exe")] } });
+    expect(toast).toHaveBeenCalledWith("Choose a supported document type.", "error");
+    expect(screen.getByRole("button", { name: /Add to knowledge base/ }).hasAttribute("disabled")).toBe(true);
+    expect(api.addKnowledgeSource).not.toHaveBeenCalled();
+  });
+
   it("keeps both uploaded and existing sources when the initial list arrives late", async () => {
     const existing = { id: "old", name: "Existing guide", status: "ready_for_embedding", kind: "docs", chunks: 1 };
     let finishList: (items: typeof existing[]) => void = () => {};

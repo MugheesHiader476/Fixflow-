@@ -109,6 +109,20 @@ def prose_parts(text: str, prefix: str, tokenizer: Tokenizer, config: PipelineCo
         previous_words = words
     if pending:
         result.append(pending)
+    # A word-aligned cut can strand a tiny tail. Move only the preceding suffix;
+    # merging the full chunks would violate the unchanged maximum budget.
+    if len(result) > 1 and result[-1].strip() and tokenizer.count(result[-1]) < config.min_chunk_tokens:
+        previous, tail = result[-2:]
+        cuts = list(range(len(previous) - 1, 0, -1))
+        word_cuts = [cut for cut in cuts if previous[cut - 1].isspace()]
+        for cut in [*word_cuts, *cuts]:
+            candidate = previous[cut:] + tail
+            if tokenizer.count(candidate) >= config.min_chunk_tokens:
+                if not fits(candidate, prefix, tokenizer, config):
+                    continue
+                if tokenizer.count(previous[:cut]) >= config.min_chunk_tokens:
+                    result[-2:] = [previous[:cut], candidate]
+                    break
     return result
 
 
@@ -342,6 +356,8 @@ def validate_chunks(
     if not chunks or len(ids) != len(chunks) or len(chunks) > config.max_chunks:
         raise ValueError("Invalid chunk identities or count")
     covered: set[str] = set()
+    spans: dict[str, list[tuple[int, int]]] = {}
+    block_chunks: dict[str, list[Chunk]] = {}
     for chunk in chunks:
         parent = containers.get(chunk.parent_id)
         concept = concepts_by_id.get(chunk.concept_id)
@@ -369,6 +385,26 @@ def validate_chunks(
             combined = "\n\n".join(b.content for b in unique_evidence)
             if chunk.raw_content not in combined:
                 raise ValueError("Chunk text is not grounded in source blocks")
+            matches: list[tuple[int, int]] = []
+            start = combined.find(chunk.raw_content)
+            while start >= 0:
+                end = start + len(chunk.raw_content)
+                if matches and start <= matches[-1][1]:
+                    matches[-1] = (matches[-1][0], end)
+                else:
+                    matches.append((start, end))
+                start = combined.find(chunk.raw_content, start + 1)
+            offset = 0
+            for block in unique_evidence:
+                intervals = [
+                    (max(start - offset, 0), min(end - offset, len(block.content)))
+                    for start, end in matches
+                    if start < offset + len(block.content) and end > offset
+                ]
+                for reference in evidence:
+                    if reference.content_hash == block.content_hash:
+                        spans.setdefault(reference.block_id, []).extend(intervals)
+                offset += len(block.content) + 2
         measured = tokenizer.count(chunk.retrieval_content)
         if (
             not chunk.raw_content.strip()
@@ -392,9 +428,35 @@ def validate_chunks(
             if languages == {"python"}:
                 ast.parse(chunk.raw_content)
         covered.update(chunk.source_block_ids)
+        for block_id in chunk.source_block_ids:
+            block_chunks.setdefault(block_id, []).append(chunk)
     expected = {b.block_id for b in document.blocks if b.type not in {"heading", "title", "metadata"}}
     if not expected <= covered:
         raise ValueError("Unexplained missing block content in chunks")
+    for block in document.blocks:
+        if block.block_id not in expected:
+            continue
+        if block.type in {"code", "table"}:
+            concept = next(c for c in concepts if block.block_id in c.source_block_ids)
+            for unit in split_block(block, concept, tokenizer, config):
+                if not any(
+                    block.block_id in c.source_block_ids
+                    and (
+                        c.section_path == unit.path
+                        or (unit.path == block.section_path and c.section_path == concept.section_path)
+                    )
+                    and unit.content in c.raw_content
+                    for c in block_chunks[block.block_id]
+                ):
+                    raise ValueError("Unexplained missing structured content in chunks")
+        else:
+            cursor = 0
+            for start, end in sorted(spans.get(block.block_id, [])):
+                if block.content[cursor:start].strip():
+                    raise ValueError("Unexplained missing source span in chunks")
+                cursor = max(cursor, end)
+            if block.content[cursor:].strip():
+                raise ValueError("Unexplained missing source span in chunks")
     for parent in parents:
         if len(parent.child_ids) != len(set(parent.child_ids)) or any(
             i not in ids or ids[i].parent_id != parent.parent_id for i in parent.child_ids

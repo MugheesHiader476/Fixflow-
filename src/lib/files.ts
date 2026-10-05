@@ -1,5 +1,6 @@
 import type { DebugAttachment } from "./types";
 
+export const DOCUMENT_FILE_ACCEPT = ".md,.txt,.rst,.pdf,.docx,.pptx,.csv,.xlsx,.html,.htm,.json,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.cs,.sh,.sql,.rb,.php,.eml,.log,.srt,.vtt,.png,.jpg,.jpeg,.tif,.tiff,.wav,.mp3,.mp4,.webm";
 export const DEBUG_FILE_ACCEPT = ".txt,.md,.rst,.py,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.toml,.sql,.log,.sh,.css,.html,.go,.rs,.java,.c,.cpp,.h";
 export const MAX_DEBUG_FILES = 5;
 const MAX_FILE_BYTES = 50_000;

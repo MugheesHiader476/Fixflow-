@@ -7,6 +7,7 @@ vi.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "user_veri
 const ID = "28d6ce92-c958-4010-b4ba-1784cf82dc10";
 
 beforeEach(() => {
+  vi.stubEnv("CONNECTORS__PUBLIC_URL", "");
   vi.stubEnv("INTERNAL_API_URL", "https://backend.example.test");
   vi.stubEnv("FIXFLOW_API_TOKEN", "test-server-token-with-at-least-32-characters");
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ accepted: true })));
@@ -35,6 +36,23 @@ describe("connector gateway", () => {
   it("maps denied authorization to a fixed message without forwarding", async () => {
     const response = await GET(new Request("http://localhost/api/connectors/gmail/callback?error=private-provider-description"), { params: Promise.resolve({ provider: "gmail" }) });
     expect(response.headers.get("Location")).toBe("http://localhost/connectors?connection_error=authorization");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns OAuth callbacks to the configured public origin behind Docker", async () => {
+    vi.stubEnv("CONNECTORS__PUBLIC_URL", "https://app.example.test/");
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- Reproduce Next's local Docker HTTP bind URL.
+    const response = await GET(new Request("http://0.0.0.0:3000/api/connectors/gmail/callback?state=state&code=private-code", {
+      headers: { Host: "attacker.example", "X-Forwarded-Host": "attacker.example" },
+    }), { params: Promise.resolve({ provider: "gmail" }) });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("https://app.example.test/connectors?connected=gmail");
+  });
+
+  it("does not redirect callbacks when the public URL is invalid", async () => {
+    vi.stubEnv("CONNECTORS__PUBLIC_URL", "https://app.example.test/private");
+    const response = await GET(new Request("http://localhost/api/connectors/gmail/callback?state=state&code=private-code"), { params: Promise.resolve({ provider: "gmail" }) });
+    expect(response.status).toBe(503);
     expect(fetch).not.toHaveBeenCalled();
   });
 

@@ -62,7 +62,11 @@ await context.route("**/api/backend/**", async (route) => {
   }
   return route.fulfill({ json: [] });
 });
-async function check(name, run) { await run(); checks.push(name); console.log("PASS " + name); }
+async function check(name, run) {
+  if (process.env.FIXFLOW_CORE_ONLY === "1" && name.startsWith("Mobile")) return;
+  await run(); checks.push(name); console.log("PASS " + name);
+}
+async function capture(options) { if (process.env.FIXFLOW_FAILURE_ARTIFACTS_ONLY !== "1") await page.screenshot(options); }
 async function noOverflow() { assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Horizontal overflow"); }
 try {
   await check("Provider cards, callback notice, connected identity and unconfigured state", async () => {
@@ -72,7 +76,7 @@ try {
     await expect(page.getByText("Account connected. Select resources to start synchronization.")).toBeVisible();
     await expect(page.getByText("person@example.test", { exact: true })).toBeVisible();
     await noOverflow();
-    await page.screenshot({ path: resolve(output, "connectors-desktop.png"), fullPage: true });
+    await capture({ path: resolve(output, "connectors-desktop.png"), fullPage: true });
   });
   await check("Native resource dialog, pagination, selection, date and attachment configuration", async () => {
     await page.getByRole("button", { name: "Configure resources" }).click();
@@ -107,7 +111,7 @@ try {
       await expect(page.getByRole("dialog")).toBeVisible();
       await noOverflow();
       assert.ok(await page.evaluate(() => !!document.activeElement?.closest("dialog")));
-      await page.screenshot({ path: resolve(output, `connectors-selection-${width}.png`), fullPage: true });
+      await capture({ path: resolve(output, `connectors-selection-${width}.png`), fullPage: true });
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog")).not.toBeVisible();
     }
@@ -117,7 +121,7 @@ try {
     await page.getByLabel("Permanently purge connected sources and chunks").check();
     await expect(page.getByText("Purging cannot be undone.")).toBeVisible();
     await noOverflow();
-    await page.screenshot({ path: resolve(output, "connectors-disconnect-mobile.png"), fullPage: true });
+    await capture({ path: resolve(output, "connectors-disconnect-mobile.png"), fullPage: true });
     await page.getByRole("button", { name: "Confirm disconnect" }).click();
     await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
     assert.equal(account.status, "disconnected");
@@ -128,6 +132,9 @@ try {
     await page.waitForURL("https://accounts.google.com/o/oauth2/v2/auth?state=test-state");
   });
   assert.deepEqual(errors, []);
+} catch (error) {
+  await page.screenshot({ path: resolve(output, "connectors-failure.png"), fullPage: true });
+  throw error;
 } finally {
   await writeFile(resolve(output, "connectors-report.json"), JSON.stringify({ mode: "real UI with mocked gateway and provider boundary", checks, errors, requests }, null, 2));
   await browser.close();

@@ -134,7 +134,14 @@ class DocumentChunk(Timestamped, Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector())
     embedding_model: Mapped[str | None] = mapped_column(String(200))
     embedding_dimension: Mapped[int | None] = mapped_column(Integer)
-    search_text: Mapped[str] = mapped_column(TSVECTOR, Computed("to_tsvector('simple', content)", persisted=True))
+    search_text: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('simple', CASE WHEN right(metadata->>'retrieval_content', length(content)) = content "
+            "THEN metadata->>'retrieval_content' ELSE content END)",
+            persisted=True,
+        ),
+    )
 
 
 class DebugSession(Owned, Timestamped, Base):

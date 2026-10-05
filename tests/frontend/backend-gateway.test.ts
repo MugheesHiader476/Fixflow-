@@ -5,6 +5,7 @@ vi.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "user_veri
 
 describe("trusted backend gateway", () => {
   beforeEach(() => {
+    vi.stubEnv("CONNECTORS__PUBLIC_URL", "");
     vi.stubEnv("INTERNAL_API_URL", "https://backend.example.test");
     vi.stubEnv("FIXFLOW_API_TOKEN", "test-only-server-token-with-32-characters");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json([])));
@@ -31,6 +32,40 @@ describe("trusted backend gateway", () => {
     expect(response.status).toBe(403);
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it.each(["http://localhost:3000", "https://app.example.test"])("accepts %s behind a Docker bind address", async (origin) => {
+    vi.stubEnv("CONNECTORS__PUBLIC_URL", origin);
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- Reproduce Next's local Docker HTTP bind URL.
+    const response = await proxyBackend(new Request("http://0.0.0.0:3000/api/backend/api/connectors/gmail/connect", {
+      method: "POST", headers: { Origin: origin, "Sec-Fetch-Site": "same-origin" },
+    }), "api/connectors/gmail/connect");
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledWith("https://backend.example.test/api/connectors/gmail/connect", expect.any(Object));
+  });
+
+  it.each([
+    new Headers({ Origin: "https://attacker.example", Host: "attacker.example", "X-Forwarded-Host": "attacker.example" }),
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- The internal Docker bind address must never be accepted as a browser origin.
+    new Headers({ Origin: "http://0.0.0.0:3000" }),
+    new Headers({ Origin: "http://localhost:3000", "Sec-Fetch-Site": "cross-site" }),
+  ])("keeps origin protection when a public URL is configured", async (headers) => {
+    vi.stubEnv("CONNECTORS__PUBLIC_URL", "http://localhost:3000");
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- Reproduce Next's local Docker HTTP bind URL.
+    const response = await proxyBackend(new Request("http://0.0.0.0:3000/api/backend/api/connectors/gmail/connect", {
+      method: "POST", headers,
+    }), "api/connectors/gmail/connect");
+    expect(response.status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["invalid URL", "http://app.example.test", "https://user:password@app.example.test", "https://app.example.test/path", "https://app.example.test?query=1", "https://app.example.test#fragment"])(
+    "fails closed for invalid public configuration: %s", async (origin) => {
+      vi.stubEnv("CONNECTORS__PUBLIC_URL", origin);
+      const response = await proxyBackend(new Request("http://localhost/api/backend/api/debug", { method: "POST" }), "api/debug");
+      expect(response.status).toBe(503);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["../health", "api/admin", "api/sources/../../health", "https://attacker.example"]) ("rejects non-allowlisted paths: %s", async (path) => {
     expect((await proxyBackend(new Request("http://localhost/api/backend/unknown"), path)).status).toBe(404);

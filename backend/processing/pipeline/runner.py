@@ -24,7 +24,7 @@ from backend.processing.pipeline.inspection import inspect, read_source
 from backend.processing.pipeline.parsers import LayoutParser, NativeParser, OcrParser, Parser
 from backend.schemas.pipeline import Chunk, PipelineResult, Source, digest
 
-ENGINE_VERSION = "1.1"
+ENGINE_VERSION = "1.2"
 logger = logging.getLogger(__name__)
 
 

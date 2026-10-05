@@ -19,7 +19,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from defusedxml import ElementTree as XML  # type: ignore[import-untyped]
 from markdown_it import MarkdownIt
 
@@ -28,7 +28,7 @@ from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.inspection import CODE_LANGUAGES, Inspection
 from backend.schemas.pipeline import Asset, Block, BlockType, Provenance, Source, digest
 
-VERSION = "1"
+VERSION = "2"
 
 
 @dataclass
@@ -376,11 +376,8 @@ def html(text: str, builder: Builder) -> None:
     dom = BeautifulSoup(text, "html.parser")
     for hidden in dom(["script", "style", "nav", "noscript"]):
         hidden.decompose()
-    for node in dom.find_all(
-        ["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "table", "ul", "ol", "blockquote", "img"]
-    ):
-        if not isinstance(node, Tag) or node.find_parent(["table", "pre", "ul", "ol", "blockquote"]):
-            continue
+
+    def emit(node: Tag) -> None:
         if node.name.startswith("h"):
             builder.heading(node.get_text(" ", strip=True), int(node.name[1:]))
         elif node.name == "table":
@@ -399,8 +396,38 @@ def html(text: str, builder: Builder) -> None:
         else:
             kind: BlockType = {"ul": "list", "ol": "list", "blockquote": "quote"}.get(node.name, "paragraph")  # type: ignore[assignment]
             builder.add(kind, node.get_text("\n", strip=True))
-    if not builder.result.blocks:
-        builder.add("paragraph", dom.get_text("\n", strip=True))
+
+    blocks = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "table", "ul", "ol", "blockquote", "img"}
+    containers = {"div", "section", "article", "main", "header", "footer", "aside", "address", "dl", "dt", "dd"}
+    pending: list[str] = []
+
+    def flush() -> None:
+        builder.add("paragraph", "".join(pending).strip())
+        pending.clear()
+
+    def walk(parent: Tag) -> None:
+        for node in parent.children:
+            if isinstance(node, NavigableString) and not isinstance(node, (Comment, Doctype)):
+                pending.append(str(node))
+            elif isinstance(node, Tag):
+                if node.name in blocks:
+                    flush()
+                    emit(node)
+                    # Paragraphs/headings can contain assets; their text is already emitted once.
+                    if node.name not in {"pre", "table", "ul", "ol", "blockquote", "img"}:
+                        for asset in node.find_all("img"):
+                            emit(asset)
+                elif node.name == "br":
+                    pending.append("\n")
+                else:
+                    if node.name in containers:
+                        flush()
+                    walk(node)
+                    if node.name in containers:
+                        flush()
+
+    walk(dom)
+    flush()
 
 
 class NativeParser:
@@ -434,6 +461,8 @@ class NativeParser:
             structured_tree(value, builder, modality)
         elif modality == "xml":
             root = XML.fromstring(text)
+            if len(root) and root.text:
+                builder.add("paragraph", root.text, {"path": f"/{root.tag}"})
             for index, item in enumerate(root):
                 path = f"/{root.tag}/{item.tag}[{index + 1}]"
                 builder.heading(path)
@@ -531,6 +560,26 @@ class LayoutParser:
                     lines: dict[int, list[dict[str, object]]] = {}
                     for word in group:
                         lines.setdefault(round(word["top"] / 3), []).append(word)
+                    paragraph: list[tuple[str, list[float]]] = []
+
+                    def flush_paragraph(paragraph: list[tuple[str, list[float]]], page_number: int) -> None:
+                        if not paragraph:
+                            return
+                        boxes = [box for _, box in paragraph]
+                        builder.add(
+                            "paragraph",
+                            "\n".join(content for content, _ in paragraph),
+                            {"line_bboxes": boxes},
+                            location={
+                                "page": page_number,
+                                "bbox": [
+                                    min(b[0] for b in boxes), min(b[1] for b in boxes),
+                                    max(b[2] for b in boxes), max(b[3] for b in boxes),
+                                ],
+                            },
+                        )
+                        paragraph.clear()
+
                     for _, line in sorted(lines.items()):
                         ordered = sorted(line, key=lambda w: float(str(w["x0"])))
                         for left, right in pairwise(ordered):
@@ -543,7 +592,20 @@ class LayoutParser:
                             max(float(str(w["x1"])) for w in line),
                             max(float(str(w["bottom"])) for w in line),
                         ]
-                        builder.add("paragraph", content, location={"page": number, "bbox": bbox})
+                        if paragraph:
+                            previous, previous_box = paragraph[-1]
+                            height = max(bbox[3] - bbox[1], previous_box[3] - previous_box[1])
+                            soft_wrap = (
+                                previous.rstrip()[-1:] not in {".", "!", "?", ";"}
+                                and not re.match(r"^(?:[-*•]|\d+[.)])\s", content)
+                                and -1 <= bbox[1] - previous_box[3] <= height * 0.7
+                                and abs(bbox[0] - previous_box[0]) <= height * 2
+                                and abs((bbox[3] - bbox[1]) - (previous_box[3] - previous_box[1])) <= height * 0.15
+                            )
+                            if not soft_wrap:
+                                flush_paragraph(paragraph, number)
+                        paragraph.append((content, bbox))
+                    flush_paragraph(paragraph, number)
                 for table in tables:
                     rows = [[v or "" for v in r] for r in table.extract()]
                     builder.table(rows[0], rows[1:], {"page": number, "bbox": table.bbox})

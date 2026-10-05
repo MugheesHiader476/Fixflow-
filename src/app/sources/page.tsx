@@ -15,6 +15,7 @@ import {
 import type { KnowledgeSource } from "@/lib/types";
 import { isSourcePending, mergeSources, SOURCE_STATUS } from "@/lib/sources";
 import { cn } from "@/lib/utils";
+import { DOCUMENT_FILE_ACCEPT } from "@/lib/files";
 
 type SourceMode = "docs" | "github" | "upload";
 
@@ -155,7 +156,7 @@ export default function SourcesPage() {
       toast("OKF concepts must be Markdown files.", "error");
       return;
     }
-    if (!/\.(md|txt|rst|pdf|docx|csv|html?)$/i.test(file.name)) {
+    if (!DOCUMENT_FILE_ACCEPT.split(",").includes(file.name.slice(file.name.lastIndexOf(".")).toLowerCase())) {
       toast("Choose a supported document type.", "error");
       return;
     }
@@ -260,7 +261,7 @@ export default function SourcesPage() {
                       <input
                         ref={fileRef}
                         type="file"
-                        accept=".md,.txt,.rst,.pdf,.docx,.pptx,.csv,.xlsx,.html,.htm,.json,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.cs,.sh,.sql,.rb,.php,.eml,.log,.srt,.vtt,.png,.jpg,.jpeg,.tif,.tiff,.wav,.mp3,.mp4,.webm"
+                        accept={DOCUMENT_FILE_ACCEPT}
                         aria-label="Upload document"
                         onChange={(event) => handleFile(event.target.files?.[0])}
                         className="hidden"

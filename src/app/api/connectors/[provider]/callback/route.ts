@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { PROVIDERS } from "@/lib/connector-contracts";
 import { proxyBackend } from "@/lib/server/backend-proxy";
+import { applicationOrigin } from "@/lib/server/application-origin";
 
 export async function GET(request: Request, context: { params: Promise<{ provider: string }> }) {
   const { provider } = await context.params;
-  const redirect = new URL("/connectors", request.url);
+  const origin = applicationOrigin(request);
+  if (!origin) return NextResponse.json({ error: "Public application URL is not configured correctly" }, { status: 503 });
+  const redirect = new URL("/connectors", origin);
   const input = new URL(request.url).searchParams;
   if (!PROVIDERS.some((p) => p === provider) || input.has("error") || input.getAll("code").length !== 1 || input.getAll("state").length !== 1) {
     redirect.searchParams.set("connection_error", "authorization");

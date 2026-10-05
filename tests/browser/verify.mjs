@@ -23,12 +23,16 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage();
 page.on("pageerror", (error) => report.browserErrors.push(error.message));
 async function check(name, mode, run) {
+  if (process.env.FIXFLOW_CORE_ONLY === "1" && (mode === "mock" || name.startsWith("Mobile"))) return;
   const started = Date.now();
   try { await run(); report.checks.push({ name, mode, status: "passed", ms: Date.now() - started }); console.log(`PASS [${mode}] ${name}`); }
   catch (error) { report.checks.push({ name, mode, status: "failed", message: error.message }); throw error; }
 }
 async function noOverflow() { assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Unexpected horizontal overflow"); }
-async function capture(name, fullPage = true) { await page.screenshot({ path: resolve(output, name), fullPage, animations: "disabled" }); }
+async function capture(name, fullPage = true) {
+  if (process.env.FIXFLOW_FAILURE_ARTIFACTS_ONLY === "1" && name !== "failure.png") return;
+  await page.screenshot({ path: resolve(output, name), fullPage, animations: "disabled" });
+}
 const health = { status: "ok", service: "fixflow-api", api: "ok", revision: "0002", expected_revision: "0002", pending_sources: 0, failed_sources: 0, database: "connected", pgvector: "available", schema: "ready", sources: 0, documents: 0, chunks: 0, embedded_chunks: 0, embedding_configured: false, ai_generation: "not_configured" };
 try {
   await context.route(`${api}/**`, (route) => route.fulfill({ json: route.request().url().endsWith("/health") ? health : [] }));
