@@ -214,11 +214,10 @@ def test_unchanged_reprocessing_and_changed_source_version(tmp_path: Path) -> No
     [
         ("bad.json", "{"),
         ("bad.exe", "untrusted"),
-        ("huge.json", json.dumps({"scalar": "x" * 2000})),
-        ("huge.xml", "<root>" + "x" * 2000 + "</root>"),
+        ("bad.xml", "<root>unclosed"),
     ],
 )
-def test_malformed_or_unsplittable_input_fails_explicitly(tmp_path: Path, name: str, body: str) -> None:
+def test_malformed_or_unsupported_input_fails_explicitly(tmp_path: Path, name: str, body: str) -> None:
     path = tmp_path / name
     path.write_text(body)
     with pytest.raises(PipelineError):

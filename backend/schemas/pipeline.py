@@ -182,6 +182,7 @@ class CanonicalDocument(Contract):
         all_ids = [self.document_id, *blocks, *sections, *assets]
         if (
             not self.parse_quality.passed
+            or self.metadata.get("layout_uncertain")
             or not blocks
             or len(blocks) != len(self.blocks)
             or len(sections) != len(self.sections)
@@ -277,6 +278,22 @@ class AtomicUnit(Contract):
     authorization_scope: str
 
 
+class Continuation(Contract):
+    """A fragment of one complete canonical unit, never a standalone syntax claim."""
+
+    group_id: str
+    index: int = Field(ge=0)
+    count: int = Field(ge=2)
+    full_unit_hash: str
+    strategy: str
+    structural_path: str = ""
+    end_structural_path: str = ""
+    table_row: int | None = Field(default=None, ge=0)
+    table_column: int | None = Field(default=None, ge=0)
+    table_row_end: int | None = Field(default=None, ge=0)
+    table_column_end: int | None = Field(default=None, ge=0)
+
+
 class UnitSlice(Contract):
     """Exact character span or structural selector into a canonical atomic unit."""
 
@@ -294,9 +311,10 @@ class UnitSlice(Contract):
     line_end: int | None = Field(default=None, ge=1)
     line_scope: Literal["fragment", "unit", "unknown"] = "unknown"
     symbol_paths: list[list[str]] = Field(default_factory=list)
-    boundary_kind: Literal["element", "statement", "sentence", "hard_size", "list_item", "row_group", "subtree"] = (
-        "element"
-    )
+    continuation: Continuation | None = None
+    boundary_kind: Literal[
+        "element", "statement", "sentence", "hard_size", "list_item", "row_group", "subtree", "lexical"
+    ] = "element"
 
     @model_validator(mode="after")
     def selector_is_unambiguous(self) -> "UnitSlice":
@@ -321,6 +339,10 @@ class UnitSlice(Contract):
             raise ValueError("JSON pointer requires an absolute path")
         if self.line_start is not None and self.line_end is not None and self.line_start > self.line_end:
             raise ValueError("Invalid fragment line range")
+        if self.continuation is not None and (
+            not character or self.role != "content" or self.continuation.index >= self.continuation.count
+        ):
+            raise ValueError("Continuation requires a content character selector and valid index")
         return self
 
 

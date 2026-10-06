@@ -42,6 +42,8 @@ def quality(parsed: Parsed, inspection: Inspection, config: PipelineConfig) -> P
     }
     if not content.strip():
         failures.append("no_extractable_text")
+    if parsed.metadata.get("layout_uncertain"):
+        failures.append("layout_uncertain")
     if profile.has_images and not parsed.assets:
         failures.append("unmapped_figures")
     if ratio > config.max_garbled_ratio:

@@ -285,15 +285,22 @@ def test_chunk_gate_checks_tokens_neighbors_and_provenance() -> None:
             )
 
 
-def test_heading_only_and_oversized_atomic_code_are_rejected(tmp_path: Path) -> None:
+def test_heading_only_is_rejected_and_oversized_valid_code_is_reconstructed(tmp_path: Path) -> None:
     path = tmp_path / "empty.md"
     path.write_text("# Heading only")
     with pytest.raises(PipelineError):
         run_pipeline(path, "empty")
     path = tmp_path / "huge.py"
     path.write_text("def long_function():\n" + "    print('keep this function intact')\n" * 100)
-    with pytest.raises(PipelineError):
-        run_pipeline(path, "huge", PipelineConfig(max_chunk_tokens=100))
+    result = run_pipeline(path, "huge", PipelineConfig(max_chunk_tokens=100))
+    code = next(u for u in result.atomic_units if u.content_type == "code")
+    from backend.processing.pipeline.units import selected_content  # noqa: PLC0415
+
+    locations = [s for c in result.chunks for s in c.unit_slices if s.unit_id == code.unit_id]
+    locations.sort(key=lambda s: s.character_start or 0)
+    assert "".join(selected_content(code, s)[0] for s in locations) == code.content
+    assert result.coverage["coverage_percent"] == result.coverage["continuation_reconstruction_percent"] == 100
+    assert all(c.byte_length <= 100 for c in result.chunks)
 
 
 def test_json_structural_splitting_produces_valid_subtrees(tmp_path: Path) -> None:

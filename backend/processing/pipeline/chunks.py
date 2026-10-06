@@ -4,6 +4,7 @@ import ast
 import json
 import re
 import textwrap
+from bisect import bisect_right
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -12,8 +13,27 @@ from typing import Protocol, cast
 
 from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.parsers import render_table
+from backend.processing.pipeline.splitting import (
+    json_anchors,
+    lexical_code,
+    pack_spans,
+    prose_boundaries,
+    python_boundaries,
+    table_anchors,
+    xml_anchors,
+    yaml_anchors,
+)
 from backend.processing.pipeline.units import atomic_units, character_slice, chunk_order, coverage_report, unit_id
-from backend.schemas.pipeline import Block, CanonicalDocument, Chunk, ChunkParent, Concept, UnitSlice, digest
+from backend.schemas.pipeline import (
+    Block,
+    CanonicalDocument,
+    Chunk,
+    ChunkParent,
+    Concept,
+    Continuation,
+    UnitSlice,
+    digest,
+)
 
 
 class Tokenizer(Protocol):
@@ -68,10 +88,114 @@ class Unit:
             self.slices = [character_slice(block) for block in self.blocks]
 
 
-def context(concept: Concept, unit: Unit) -> str:
+def context(
+    concept: Concept,
+    unit: Unit,
+    tokenizer: Tokenizer | None = None,
+    config: PipelineConfig | None = None,
+) -> str:
     # Context is deterministic source metadata, never a model-generated factual summary.
     aliases = "Aliases: " + "; ".join(concept.aliases) + "\n" if concept.resolved_concept_ids else ""
-    return f"Concept: {concept.title}\nSection: {' / '.join(unit.path)}\n{aliases}\n"
+    prefix = f"Concept: {concept.title}\nSection: {' / '.join(unit.path)}\n{aliases}\n"
+    if config is None or tokenizer is None:
+        return prefix  # Validated 2.0 artifacts retain their original context contract.
+    budget = max(16, min(config.max_chunk_tokens - config.min_chunk_tokens * 2, max(128, config.max_chunk_tokens // 4)))
+    if tokenizer.count(prefix) > budget:
+        prefix = "Ctx: " + digest([concept.concept_id, unit.path])[:6] + "\n"
+    if unit.slices and unit.slices[0].continuation is not None:
+        location = unit.slices[0]
+        continuation = cast(Continuation, location.continuation)
+        label = f"Part {continuation.index + 1}/{continuation.count}\n"
+        block = unit.blocks[0]
+        if block.type == "table":
+            headers = cast(list[str], block.structured_content["headers"])
+            label += f"Row {continuation.table_row}; Column {continuation.table_column}; Schema {unit_id(block)}\n"
+            schema = "Columns: " + "; ".join(headers) + "\n"
+            if tokenizer.count(prefix + label + schema) <= budget:
+                label += schema
+        elif continuation.structural_path:
+            label += "Path: " + continuation.structural_path + "\n"
+        if tokenizer.count(prefix + label) <= budget:
+            prefix += label
+    return prefix
+
+
+def chunk_hash(content: str, concept_id: str, path: list[str], kind: str, slices: list[UnitSlice]) -> str:
+    base: list[object] = [content, concept_id, path, kind]
+    continuations = [s.continuation for s in slices if s.role == "content" and s.continuation is not None]
+    if continuations:
+        # Repeated text at different continuation positions is distinct evidence.
+        first = continuations[0]
+        base.append([first.group_id, first.index, first.count])
+    return digest(base)
+
+
+def continuation_units(block: Block, concept: Concept, tokenizer: Tokenizer, config: PipelineConfig) -> list[Unit]:
+    """Content-type router converging on exact canonical character continuations."""
+    text = block.content
+    language = block.structured_content.get("language")
+    anchors = []
+    strategy = "prose-clause-lexical"
+    boundaries = prose_boundaries(text)
+    if language in {"json", "yaml"} and (
+        "value" in block.structured_content or block.structured_content.get("representation") == "source_lexical"
+    ):
+        strategy = "structured-path-lexical"
+        anchors = (
+            yaml_anchors(text) if language == "yaml" and "value" not in block.structured_content else json_anchors(text)
+        )
+        boundaries = [a.offset for a in anchors]
+    elif language == "xml":
+        strategy = "xml-sax-lexical"
+        anchors = xml_anchors(text)
+        boundaries = [a.offset for a in anchors]
+    elif block.type == "code":
+        strategy = "python-ast-lexical" if language == "python" else "code-lexical"
+        boundaries = python_boundaries(text) if language == "python" else lexical_code(text)
+    elif block.type == "table":
+        strategy = "table-cell-lexical"
+        anchors = table_anchors(
+            text,
+            cast(list[str], block.structured_content["headers"]),
+            cast(list[list[str]], block.structured_content["rows"]),
+        )
+        boundaries = [a.offset for a in anchors]
+    full_hash = digest(text)
+    group_id = "continuation-" + digest([unit_id(block), full_hash, strategy])[:40]
+    # Reserve the largest optional continuation label. Final rendering independently
+    # rechecks the budget, including all context. IDs/counts do not influence cuts.
+    prefix = context(concept, Unit(text, block.type, [block], block.section_path), tokenizer, config)
+    reserve = config.max_chunk_tokens // 4
+    spans = pack_spans(
+        text,
+        lambda part: tokenizer.count(prefix + part) <= config.max_chunk_tokens - reserve,
+        boundaries,
+        config.max_chunk_tokens if tokenizer.name == "utf8_bytes" else config.max_chunk_tokens * 16,
+    )
+    if len(spans) == 1:
+        return [Unit(text, block.type, [block], block.section_path)]
+    units = []
+    offsets = [a.offset for a in anchors]
+    for index, (start, end) in enumerate(spans):
+        location = character_slice(block, start, end)
+        anchor = anchors[bisect_right(offsets, start) - 1] if offsets else None
+        last_anchor = anchors[bisect_right(offsets, end - 1) - 1] if offsets else None
+        location.continuation = Continuation(
+            group_id=group_id,
+            index=index,
+            count=len(spans),
+            full_unit_hash=full_hash,
+            strategy=strategy,
+            structural_path=(anchor.path if anchor else str(block.structured_content.get("path", ""))),
+            end_structural_path=(last_anchor.path if last_anchor else str(block.structured_content.get("path", ""))),
+            table_row=anchor.row if anchor else None,
+            table_column=anchor.column if anchor else None,
+            table_row_end=last_anchor.row if last_anchor else None,
+            table_column_end=last_anchor.column if last_anchor else None,
+        )
+        location.boundary_kind = "lexical" if end in boundaries else "hard_size"
+        units.append(Unit(text[start:end], block.type, [block], block.section_path, [location]))
+    return units
 
 
 def fits(content: str, prefix: str, tokenizer: Tokenizer, config: PipelineConfig) -> bool:
@@ -268,7 +392,7 @@ def list_parts(text: str, prefix: str, tokenizer: Tokenizer, config: PipelineCon
 def split_block(block: Block, concept: Concept, tokenizer: Tokenizer, config: PipelineConfig) -> list[Unit]:
     kind = block.type
     unit = Unit(block.content, kind, [block], block.section_path)
-    prefix = context(concept, unit)
+    prefix = context(concept, unit, tokenizer, config)
     if fits(unit.content, prefix, tokenizer, config):
         return [unit]
     parts: list[str]
@@ -299,20 +423,22 @@ def split_block(block: Block, concept: Concept, tokenizer: Tokenizer, config: Pi
             candidate = table_unit([*group, row], start)
             if group and (
                 len(group) >= config.table_rows_per_chunk
-                or not fits(candidate.content, context(concept, candidate), tokenizer, config)
+                or not fits(candidate.content, context(concept, candidate, tokenizer, config), tokenizer, config)
             ):
                 table_units.append(table_unit(group, start))
                 group = []
                 start = index
             single = table_unit([row], index)
-            if not fits(single.content, context(concept, single), tokenizer, config):
-                raise ValueError("Table row and headers exceed token budget")
+            if not fits(single.content, context(concept, single, tokenizer, config), tokenizer, config):
+                return continuation_units(block, concept, tokenizer, config)
             group.append(row)
         if group:
             table_units.append(table_unit(group, start))
         return table_units
     elif kind == "code":
         language = block.structured_content.get("language")
+        if block.structured_content.get("representation") == "source_lexical":
+            return continuation_units(block, concept, tokenizer, config)
         if language in {"json", "yaml"} and "value" in block.structured_content:
             value = block.structured_content["value"]
             if "key" in block.structured_content:
@@ -329,29 +455,40 @@ def split_block(block: Block, concept: Concept, tokenizer: Tokenizer, config: Pi
                 return block.section_path if absolute in block.section_path else [*block.section_path, absolute]
 
             def tree_context(path: str) -> str:
-                return context(concept, Unit("", kind, [block], section_for(path)))
+                return context(concept, Unit("", kind, [block], section_for(path)), tokenizer, config)
 
-            tree_units = list(tree_parts(value, tree_context, tokenizer, config, "", unit_id(block)))
+            try:
+                tree_units = list(tree_parts(value, tree_context, tokenizer, config, "", unit_id(block)))
+            except ValueError:
+                return continuation_units(block, concept, tokenizer, config)
             units = [
                 Unit(content, kind, [block], section_for(path), [location]) for path, content, location in tree_units
             ]
-            if any(not fits(u.content, context(concept, u), tokenizer, config) for u in units):
-                raise ValueError("Structured path context exceeds the token budget")
+            if any(not fits(u.content, context(concept, u, tokenizer, config), tokenizer, config) for u in units):
+                return continuation_units(block, concept, tokenizer, config)
             return units
         elif language == "xml":
-            raise ValueError("XML subtree exceeds size budget; preserve its wrapper and mixed content")
+            return continuation_units(block, concept, tokenizer, config)
         elif language == "python":
             code_units = []
-            for start, end in python_spans(block.content, prefix, tokenizer, config):
+            try:
+                spans = python_spans(block.content, prefix, tokenizer, config)
+            except (ValueError, SyntaxError):
+                return continuation_units(block, concept, tokenizer, config)
+            for start, end in spans:
                 location = character_slice(block, start, end)
                 location.boundary_kind = "statement"
                 code_units.append(Unit(block.content[start:end], kind, [block], block.section_path, [location]))
             return code_units
         else:
-            raise ValueError("Code exceeds token budget; configure a language AST adapter")
+            return continuation_units(block, concept, tokenizer, config)
     else:
         if "trace_ids" in block.structured_content:
-            raise ValueError("Log trace exceeds token budget; keep stack traces intact")
+            return continuation_units(block, concept, tokenizer, config)
+        if kind != "list" and any(
+            not fits(piece, prefix, tokenizer, config) for piece in re.split(r"(?<=[.!?])(?=\s+)", block.content)
+        ):
+            return continuation_units(block, concept, tokenizer, config)
         parts = (list_parts if kind == "list" else prose_parts)(block.content, prefix, tokenizer, config)
     units = []
     start = 0
@@ -370,7 +507,12 @@ def split_block(block: Block, concept: Concept, tokenizer: Tokenizer, config: Pi
 
 
 def same_context(left: Unit, right: Unit) -> bool:
-    return left.path == right.path and left.kind == right.kind and left.kind not in {"table", "code", "figure"}
+    return (
+        left.path == right.path
+        and left.kind == right.kind
+        and left.kind not in {"table", "code", "figure"}
+        and not any(s.continuation for s in [*left.slices, *right.slices])
+    )
 
 
 def chunk_concept(
@@ -403,7 +545,7 @@ def chunk_concept(
         and len({tuple(b.section_path) for b in substantive}) <= 1
         and whole.content
         and document.profile.modality not in {"log", "email", "transcript"}
-        and fits(whole.content, context(concept, whole), tokenizer, config)
+        and fits(whole.content, context(concept, whole, tokenizer, config), tokenizer, config)
     ):
         units = [whole]
     else:
@@ -422,7 +564,9 @@ def chunk_concept(
                 tokenizer.count(merged[-1].content) < config.min_chunk_tokens
                 or tokenizer.count(unit.content) < config.min_chunk_tokens
             )
-            and fits(merged[-1].content + "\n\n" + unit.content, context(concept, unit), tokenizer, config)
+            and fits(
+                merged[-1].content + "\n\n" + unit.content, context(concept, unit, tokenizer, config), tokenizer, config
+            )
         ):
             merged[-1].content += "\n\n" + unit.content
             merged[-1].blocks = list({b.block_id: b for b in [*merged[-1].blocks, *unit.blocks]}.values())
@@ -441,14 +585,27 @@ def chunk_concept(
                     if location.character_start is not None:
                         duplicate = character_slice(evidence, location.character_start, location.character_end)
                         duplicate.boundary_kind = location.boundary_kind
+                        if location.continuation:
+                            duplicate.continuation = location.continuation.model_copy(
+                                update={
+                                    "group_id": "continuation-"
+                                    + digest(
+                                        [
+                                            unit_id(evidence),
+                                            location.continuation.full_unit_hash,
+                                            location.continuation.strategy,
+                                        ]
+                                    )[:40],
+                                }
+                            )
                     else:
                         duplicate = location.model_copy(update={"unit_id": unit_id(evidence)})
                     unit.slices.append(duplicate)
-        retrieval = context(concept, unit) + unit.content
+        retrieval = context(concept, unit, tokenizer, config) + unit.content
         provenance = [b.provenance for b in unit.blocks]
         parent_path = unit.blocks[0].section_path if unit.kind in {"table", "code"} else unit.path
         parent = "p-" + digest([concept.concept_id, parent_path])[:32]
-        content_hash = digest([unit.content, concept.concept_id, unit.path, unit.kind])
+        content_hash = chunk_hash(unit.content, concept.concept_id, unit.path, unit.kind, unit.slices)
         identifier = "c-" + digest([document.source.source_id, content_hash])[:40]
         chunks.append(
             Chunk(
@@ -550,18 +707,24 @@ def validate_chunks(
             raise ValueError("Lost chunk provenance")
         if (
             chunk.retrieval_content
-            != context(concept, Unit(chunk.raw_content, chunk.content_type, evidence, chunk.section_path))
+            != context(
+                concept,
+                Unit(chunk.raw_content, chunk.content_type, evidence, chunk.section_path, chunk.unit_slices),
+                tokenizer if document.version != "2.0" else None,
+                config if document.version != "2.0" else None,
+            )
             + chunk.raw_content
         ):
             raise ValueError("Chunk context is not deterministic")
         measured = tokenizer.count(chunk.retrieval_content)
         if (
-            not chunk.raw_content.strip()
+            (not chunk.raw_content.strip() and not any(s.continuation for s in chunk.unit_slices))
             or (
                 tokenizer.count(chunk.raw_content) < config.min_chunk_tokens
                 and not all(
                     location.json_pointer is not None
                     or location.row_start is not None
+                    or location.continuation is not None
                     or any(
                         location.unit_id == unit_id(b)
                         and location.character_start == 0
@@ -576,7 +739,13 @@ def validate_chunks(
             or measured > config.max_chunk_tokens
         ):
             raise ValueError("Empty, tiny or oversized chunk")
-        if chunk.content_hash != digest([chunk.raw_content, chunk.concept_id, chunk.section_path, chunk.content_type]):
+        if chunk.content_hash != chunk_hash(
+            chunk.raw_content,
+            chunk.concept_id,
+            chunk.section_path,
+            chunk.content_type,
+            chunk.unit_slices,
+        ):
             raise ValueError("Invalid chunk hash")
         for name, reverse in (("previous_id", "next_id"), ("next_id", "previous_id")):
             linked_id = getattr(chunk, name)
@@ -584,11 +753,16 @@ def validate_chunks(
                 other = ids.get(linked_id)
                 if other is None or getattr(other, reverse) != chunk.chunk_id:
                     raise ValueError("Invalid chunk neighbor")
-        if chunk.content_type == "table" and not (chunk.raw_content.startswith("|") and "---" in chunk.raw_content):
+        continuing = any(s.continuation for s in chunk.unit_slices if s.role == "content")
+        if (
+            chunk.content_type == "table"
+            and not continuing
+            and not (chunk.raw_content.startswith("|") and "---" in chunk.raw_content)
+        ):
             raise ValueError("Table chunk lacks headers")
         if chunk.content_type == "code":
             languages = {b.structured_content.get("language") for b in evidence}
-            if languages == {"python"}:
+            if languages == {"python"} and not continuing:
                 ast.parse(textwrap.dedent(chunk.raw_content))
         covered.update(chunk.source_block_ids)
     expected = {b.block_id for b in document.blocks if b.type not in {"heading", "title", "metadata"}}

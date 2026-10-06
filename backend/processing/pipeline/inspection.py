@@ -147,6 +147,9 @@ def inspect(path: Path, config: PipelineConfig, data: bytes | None = None) -> In
                 ) -> None:
                     if text.strip():
                         positions.append(float(tm[4]))
+                        profile.complex_layout |= (
+                            abs(tm[1]) > 0.01 or abs(tm[2]) > 0.01 or abs(cm[1]) > 0.01 or abs(cm[2]) > 0.01
+                        )
 
                 page.extract_text(visitor_text=position)
                 positions = sorted(set(xs))

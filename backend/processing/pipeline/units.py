@@ -1,11 +1,14 @@
 """Complete canonical evidence and exact, independently verifiable fragment selectors."""
 
 import json
+from bisect import bisect_right
 from collections.abc import Iterator
+from functools import lru_cache
 from typing import Literal, cast
 
 from backend.processing.pipeline.context import validate_source_context
 from backend.processing.pipeline.parsers import render_table
+from backend.processing.pipeline.splitting import json_anchors, table_anchors, xml_anchors, yaml_anchors
 from backend.schemas.pipeline import (
     AtomicUnit,
     Block,
@@ -54,8 +57,14 @@ def source_lines(
     if kind == "table" or (kind == "code" and structure.get("language") in {"json", "yaml"} and "value" in structure):
         # Serialization adds/rearranges lines; only the original unit's source range is known.
         return first, provenance.line_end, "unit"
-    last = first + content[:end].count("\n") - int(content[:end].endswith("\n"))
-    return first + content[:start].count("\n"), last, "fragment"
+    offsets = line_offsets(content)
+    last = first + bisect_right(offsets, end) - int(content[end - 1 : end] == "\n")
+    return first + bisect_right(offsets, start), last, "fragment"
+
+
+@lru_cache(maxsize=8)
+def line_offsets(content: str) -> tuple[int, ...]:
+    return tuple(index + 1 for index, character in enumerate(content) if character == "\n")
 
 
 def symbol_paths(structure: dict[str, object], line_start: int | None, line_end: int | None) -> list[list[str]]:
@@ -269,7 +278,7 @@ def coverage_report(chunks: list[Chunk], units: list[AtomicUnit]) -> dict[str, o
                         "missing_characters": count - covered_count,
                     }
                 )
-    return {
+    report: dict[str, object] = {
         "coverage_percent": covered / max(1, total) * 100,
         "canonical_elements": len(units),
         "covered_elements": len(units) - len(missing),
@@ -277,6 +286,90 @@ def coverage_report(chunks: list[Chunk], units: list[AtomicUnit]) -> dict[str, o
         "duplicate_content_positions": duplicate_positions,
         "method": "exact character spans, table row ranges and JSON-pointer leaves; headings verified in context",
     }
+    groups = validate_continuations(chunks, units)
+    if groups:
+        report["continuation_groups"] = groups
+        report["continuation_reconstruction_percent"] = 100
+    return report
+
+
+def validate_continuations(chunks: list[Chunk], units: list[AtomicUnit]) -> int:
+    """Independent evidence validation: exact spans, complete groups, no silent syntax claim."""
+    by_id = {u.unit_id: u for u in units}
+    groups: dict[str, list[UnitSlice]] = {}
+    for chunk in chunks:
+        for location in chunk.unit_slices:
+            if location.continuation is not None:
+                groups.setdefault(location.continuation.group_id, []).append(location)
+    for group_id, locations in groups.items():
+        first = locations[0]
+        declaration = first.continuation
+        if declaration is None:
+            raise ValueError("Missing continuation declaration")
+        unit = by_id[first.unit_id]
+        expected_hash = digest(unit.content)
+        expected_id = "continuation-" + digest([unit.unit_id, expected_hash, declaration.strategy])[:40]
+        if group_id != expected_id or len(locations) != declaration.count:
+            raise ValueError("Continuation group identity/count mismatch")
+        language = unit.structure.get("language")
+        anchors = []
+        if language in {"json", "yaml"} and (
+            "value" in unit.structure or unit.structure.get("representation") == "source_lexical"
+        ):
+            strategy = "structured-path-lexical"
+            anchors = (
+                yaml_anchors(unit.content)
+                if language == "yaml" and "value" not in unit.structure
+                else json_anchors(unit.content)
+            )
+        elif language == "xml":
+            strategy = "xml-sax-lexical"
+            anchors = xml_anchors(unit.content)
+        elif unit.content_type == "table":
+            strategy = "table-cell-lexical"
+            anchors = table_anchors(
+                unit.content,
+                cast(list[str], unit.structure["headers"]),
+                cast(list[list[str]], unit.structure["rows"]),
+            )
+        elif unit.content_type == "code":
+            strategy = "python-ast-lexical" if language == "python" else "code-lexical"
+        else:
+            strategy = "prose-clause-lexical"
+        offsets = [a.offset for a in anchors]
+        cursor = 0
+        for index, location in enumerate(locations):
+            part = location.continuation
+            if (
+                part is None
+                or location.role != "content"
+                or location.unit_id != unit.unit_id
+                or part.strategy != strategy
+                or part.index != index
+                or part.count != len(locations)
+                or part.full_unit_hash != expected_hash
+                or location.character_start != cursor
+                or location.character_end is None
+            ):
+                raise ValueError("Continuation order, offset, strategy or full-unit hash mismatch")
+            anchor = anchors[bisect_right(offsets, cursor) - 1] if offsets else None
+            last_anchor = anchors[bisect_right(offsets, location.character_end - 1) - 1] if offsets else None
+            expected_path = anchor.path if anchor else str(unit.structure.get("path", ""))
+            if (
+                part.structural_path != expected_path
+                or part.table_row != (anchor.row if anchor else None)
+                or part.table_column != (anchor.column if anchor else None)
+                or part.end_structural_path
+                != (last_anchor.path if last_anchor else str(unit.structure.get("path", "")))
+                or part.table_row_end != (last_anchor.row if last_anchor else None)
+                or part.table_column_end != (last_anchor.column if last_anchor else None)
+            ):
+                raise ValueError("Continuation structural provenance mismatch")
+            selected_content(unit, location)
+            cursor = location.character_end
+        if cursor != len(unit.content):
+            raise ValueError("Continuation did not reconstruct the complete canonical unit")
+    return len(groups)
 
 
 def meaningful_count(text: str) -> int:

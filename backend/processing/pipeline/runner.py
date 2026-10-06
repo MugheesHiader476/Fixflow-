@@ -11,7 +11,16 @@ from pathlib import Path
 
 from backend.processing.okf import parse_concept
 from backend.processing.pipeline.canonical import canonicalize, quality
-from backend.processing.pipeline.chunks import Tokenizer, chunk_concept, link_chunks, tokenizer_for, validate_chunks
+from backend.processing.pipeline.chunks import (
+    Tokenizer,
+    chunk_concept,
+    chunk_hash,
+    context,
+    link_chunks,
+    split_block,
+    tokenizer_for,
+    validate_chunks,
+)
 from backend.processing.pipeline.concepts import (
     bundle,
     dependency_hash,
@@ -33,7 +42,7 @@ from backend.processing.pipeline.units import (
 from backend.processing.pipeline.validation import validate_result
 from backend.schemas.pipeline import Chunk, PipelineResult, Source, digest
 
-ENGINE_VERSION = "2.0"
+ENGINE_VERSION = "2.1.1"
 logger = logging.getLogger(__name__)
 
 
@@ -153,6 +162,7 @@ def run_pipeline(
         if not adapters and inspection.profile.modality in {"audio", "video"}:
             raise PipelineError("Audio/video ingestion requires a configured transcription adapter.")
         canonical = None
+        quality_failures: set[str] = set()
         for parser in adapters:
             if parser.name == "ocr" and not config.ocr_enabled:
                 continue
@@ -171,6 +181,7 @@ def run_pipeline(
                     duration_seconds=round(time.monotonic() - started, 4),
                 )
                 if not report.passed:
+                    quality_failures.update(report.failures)
                     event("fallback_triggered", source_id, reasons=report.failures)
                     continue
                 canonical = canonicalize(source, inspection, parsed, report, ENGINE_VERSION)
@@ -180,6 +191,7 @@ def run_pipeline(
         if canonical is None:
             raise PipelineError(
                 "Pipeline parsing failed quality validation; configure a suitable fallback parser or OCR"
+                + (" (layout_uncertain; needs review)" if "layout_uncertain" in quality_failures else "")
             )
         tokenizer = tokenizer or tokenizer_for(config)
         canonical.metadata["tokenizer"] = tokenizer.name
@@ -205,6 +217,37 @@ def run_pipeline(
                 event("concept_cache_hit", source_id, concept_hash=concept.content_hash)
             else:
                 chunks.extend(chunk_concept(canonical, concept, tokenizer, config))
+        # Compact context must never omit large headings: persist their exact
+        # canonical evidence as normal/continuation chunks when it cannot fit.
+        prefixes = [c.retrieval_content[: -len(c.raw_content)] for c in chunks]
+        for block in canonical.blocks:
+            if block.type not in {"heading", "title", "metadata"} or any(block.content in p for p in prefixes):
+                continue
+            concept = next(c for c in concepts if block.block_id in c.direct_block_ids)
+            for unit in split_block(block, concept, tokenizer, config):
+                retrieval = context(concept, unit, tokenizer, config) + unit.content
+                content_hash = chunk_hash(unit.content, concept.concept_id, unit.path, unit.kind, unit.slices)
+                chunks.append(
+                    Chunk(
+                        chunk_id="c-" + digest([source_id, content_hash])[:40],
+                        concept_id=concept.concept_id,
+                        parent_id="p-" + digest([concept.concept_id, unit.path])[:32],
+                        section_path=unit.path,
+                        source_block_ids=[block.block_id],
+                        provenance=[block.provenance],
+                        content_type=unit.kind,
+                        raw_content=unit.content,
+                        retrieval_content=retrieval,
+                        token_count=tokenizer.count(retrieval),
+                        content_hash=content_hash,
+                        source_id=source_id,
+                        canonical_document_id=canonical.document_id,
+                        authorization_scope=source.authorization_scope,
+                        unit_slices=unit.slices,
+                        byte_length=len(retrieval.encode()),
+                        character_length=len(retrieval),
+                    )
+                )
         # Restore global canonical order, including direct parent evidence after a child section.
         ordered = chunk_order(chunks, atomic)
         chunks = [chunk for _, chunk in sorted(zip(ordered, chunks, strict=True), key=lambda pair: pair[0])]
@@ -266,6 +309,7 @@ def run_pipeline(
                 ),
                 "validation_failures": 0,
                 "uncovered_elements": 0,
+                "continuation_fragments": sum(s.continuation is not None for c in chunks for s in c.unit_slices),
             },
             contract_version=2,
         )

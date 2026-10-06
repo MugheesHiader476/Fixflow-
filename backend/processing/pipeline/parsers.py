@@ -4,6 +4,7 @@ import ast
 import csv
 import io
 import json
+import math
 import re
 import shutil
 
@@ -14,6 +15,8 @@ import zipfile
 from bisect import bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from email import policy
 from email.parser import BytesParser
 from itertools import pairwise
@@ -25,12 +28,77 @@ from bs4 import BeautifulSoup, Comment, Doctype, NavigableString, Tag
 from defusedxml import ElementTree as XML  # type: ignore[import-untyped]
 from markdown_it import MarkdownIt
 
-from backend.processing.okf import _json_value, load_yaml, maybe_parse_concept, unique_mapping
+from backend.processing.okf import UniqueSafeLoader, maybe_parse_concept, unique_mapping
 from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.inspection import CODE_LANGUAGES, Inspection
+from backend.processing.pipeline.splitting import code_symbols, yaml_anchors
 from backend.schemas.pipeline import Asset, Block, BlockType, Provenance, Source, digest
 
-VERSION = "3"
+VERSION = "4"
+
+
+class NumericRepresentationRequired(ValueError):
+    """Retain a valid source number lexically rather than coerce/round it."""
+
+
+def source_integer(value: str) -> int:
+    if len(value) > 4000:
+        raise NumericRepresentationRequired("Number requires lexical representation")
+    return int(value)
+
+
+def source_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise NumericRepresentationRequired("Number requires lexical representation")
+    try:
+        if Decimal(value) != Decimal(str(result)):
+            raise NumericRepresentationRequired("Number requires lexical representation")
+    except InvalidOperation as error:
+        raise NumericRepresentationRequired("Number requires lexical representation") from error
+    return result
+
+
+def reject_json_constant(value: str) -> object:
+    raise ValueError("Non-standard JSON numeric constant")
+
+
+class SourceYamlLoader(UniqueSafeLoader):
+    """Keep OKF loading unchanged; source numbers may require exact lexical evidence."""
+
+
+def source_yaml_integer(loader: SourceYamlLoader, node: object) -> int:
+    value = str(getattr(node, "value", ""))
+    if len(value) > 4000:
+        raise NumericRepresentationRequired("Number requires lexical representation")
+    return int(loader.construct_yaml_int(node))
+
+
+def source_yaml_float(loader: SourceYamlLoader, node: object) -> float:
+    result = float(loader.construct_yaml_float(node))
+    if not math.isfinite(result):
+        # Explicit YAML non-finite constants remain excluded from the JSONB contract.
+        if str(getattr(node, "value", "")).lower().lstrip("+-") in {".inf", ".nan"}:
+            raise ValueError("Non-finite YAML constant")
+        raise NumericRepresentationRequired("Number requires lexical representation")
+    try:
+        if Decimal(str(getattr(node, "value", "")).replace("_", "")) != Decimal(str(result)):
+            raise NumericRepresentationRequired("Number requires lexical representation")
+    except InvalidOperation as error:
+        raise NumericRepresentationRequired("Number requires lexical representation") from error
+    return result
+
+
+SourceYamlLoader.add_constructor("tag:yaml.org,2002:int", source_yaml_integer)
+SourceYamlLoader.add_constructor("tag:yaml.org,2002:float", source_yaml_float)
+
+
+def source_yaml(text: str) -> object:
+    loader = SourceYamlLoader(text)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
 
 
 @dataclass
@@ -164,6 +232,12 @@ def markdown(text: str, builder: Builder, location: dict[str, object] | None = N
                     symbol["line_start"] = int(str(symbol["line_start"])) + first - 1
                     symbol["line_end"] = int(str(symbol["line_end"])) + first - 1
                 structured["symbols"] = symbols
+            else:
+                symbols = code_symbols(token.content)
+                for symbol in symbols:
+                    symbol["line_start"] = int(str(symbol["line_start"])) + first - 1
+                    symbol["line_end"] = int(str(symbol["line_end"])) + first - 1
+                structured["symbols"] = symbols
             builder.add("code", token.content, structured, location=loc)
         elif token.type == "table_open":
             rows: list[list[str]] = []
@@ -245,6 +319,39 @@ def python_code(text: str, builder: Builder) -> None:
 
 
 def structured_tree(value: object, builder: Builder, language: str, path: str = "$") -> None:
+    # Source data is not OKF frontmatter. Deep trees become shallow, path-addressed
+    # canonical subtrees rather than inheriting the frontmatter's 32-level limit.
+    pending = [(value, path, 0)]
+    deep = False
+    while pending:
+        node, _, depth = pending.pop()
+        if depth > 24:
+            deep = True
+            break
+        children = node.values() if isinstance(node, dict) else node if isinstance(node, list) else []
+        pending.extend((child, "", depth + 1) for child in children)
+    if deep:
+        stack: list[tuple[object, str, list[str]]] = [(value, path, [])]
+        while stack:
+            node, current, ancestors = stack.pop()
+            if isinstance(node, dict) and node:
+                stack.extend(
+                    (child, current + "/" + str(key).replace("~", "~0").replace("/", "~1"), [*ancestors, "object"])
+                    for key, child in reversed(list(node.items()))
+                )
+            elif isinstance(node, list) and node:
+                stack.extend(
+                    (child, current + "/" + str(i), [*ancestors, "array"])
+                    for i, child in reversed(list(enumerate(node)))
+                )
+            else:
+                builder.heading(current)
+                builder.add(
+                    "code",
+                    json.dumps(node, ensure_ascii=False, indent=2),
+                    {"language": language, "path": current, "value": node, "ancestor_types": ancestors},
+                )
+        return
     if isinstance(value, dict) and value:
         for key, item in value.items():
             child = f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}"
@@ -261,6 +368,54 @@ def structured_tree(value: object, builder: Builder, language: str, path: str = 
             json.dumps(value, ensure_ascii=False, indent=2),
             {"language": language, "path": path, "value": value},
         )
+
+
+def source_value(value: object) -> object:
+    """Iterative JSON normalization with cycle/node bounds, separate from OKF limits."""
+    holder: dict[str | int, object] = {}
+    active: set[int] = set()
+    tasks: list[tuple[object, dict[str | int, object] | list[object], str | int, bool]] = [
+        (value, holder, "root", False)
+    ]
+    nodes = 0
+    while tasks:
+        item, target, key, leaving = tasks.pop()
+        if leaving:
+            active.remove(id(item))
+            continue
+        nodes += 1
+        if nodes > 100000:
+            raise ValueError("Structured source exceeds safe node limit")
+        normalized: object = item
+        if isinstance(item, (dict, list)):
+            if id(item) in active:
+                raise ValueError("Structured source contains a cycle")
+            active.add(id(item))
+            tasks.append((item, target, key, True))
+            if isinstance(item, dict):
+                mapping: dict[str | int, object] = {}
+                normalized = mapping
+                for name, child in reversed(list(item.items())):
+                    if not isinstance(name, str) or "\x00" in name:
+                        raise ValueError("Structured source requires valid string keys")
+                    tasks.append((child, mapping, name, False))
+            else:
+                sequence: list[object] = [None] * len(item)
+                normalized = sequence
+                tasks.extend((child, sequence, i, False) for i, child in reversed(list(enumerate(item))))
+        elif isinstance(item, (date, datetime)):
+            normalized = item.isoformat()
+        elif isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("Structured source contains a non-finite number")
+        elif isinstance(item, str) and "\x00" in item:
+            raise ValueError("Structured source contains null bytes")
+        elif item is not None and not isinstance(item, (str, bool, int, float)):
+            raise ValueError("Unsupported structured scalar")
+        if isinstance(target, list):
+            target[int(key)] = normalized
+        else:
+            target[key] = normalized
+    return holder["root"]
 
 
 def yaml_structure(text: str, value: object, builder: Builder) -> None:
@@ -280,6 +435,9 @@ def yaml_structure(text: str, value: object, builder: Builder) -> None:
         key = block.structured_content.get("key")
         if block.type == "heading":
             key = block.content.removeprefix("$/").replace("~1", "/").replace("~0", "~")
+        if "ancestor_types" in block.structured_content or (isinstance(key, str) and key not in ranges):
+            path = str(block.structured_content.get("path", block.content))
+            key = path.removeprefix("$/").split("/", 1)[0].replace("~1", "/").replace("~0", "~")
         if isinstance(key, str) and key in ranges:
             block.provenance.line_start, block.provenance.line_end = ranges[key]
     scalars = [
@@ -530,8 +688,44 @@ class NativeParser:
             rows = list(csv.reader(io.StringIO(text), strict=True))
             builder.table(rows[0], rows[1:], {"line_start": 1, "line_end": len(text.splitlines())})
         elif modality in {"json", "yaml"}:
-            value = json.loads(text, object_pairs_hook=unique_mapping) if modality == "json" else load_yaml(text)
-            value = _json_value(value, set(), [100000], 0)
+            try:
+                value = (
+                    json.loads(
+                        text,
+                        object_pairs_hook=unique_mapping,
+                        parse_int=source_integer,
+                        parse_float=source_float,
+                        parse_constant=reject_json_constant,
+                    )
+                    if modality == "json"
+                    else source_yaml(text)
+                )
+            except ValueError as error:
+                if not isinstance(error, NumericRepresentationRequired) and not (
+                    modality == "yaml" and str(error).startswith("Exceeds the limit")
+                ):
+                    raise
+                if modality == "json":
+                    source_value(
+                        json.loads(
+                            text,
+                            object_pairs_hook=unique_mapping,
+                            parse_int=str,
+                            parse_float=str,
+                            parse_constant=reject_json_constant,
+                        )
+                    )
+                else:
+                    yaml_anchors(text)
+                builder.add(
+                    "code",
+                    text,
+                    {"language": modality, "path": "$", "representation": "source_lexical"},
+                    location={"line_start": 1, "line_end": len(text.splitlines())},
+                )
+                builder.result.warnings.append("Numeric lexemes retained exactly without machine-number conversion")
+                return builder.result
+            value = source_value(value)
             if modality == "yaml":
                 yaml_structure(text, value, builder)
             else:
@@ -551,10 +745,13 @@ class NativeParser:
                 python_code(text, builder)
             else:
                 builder.add(
-                    "code", text, {"language": language}, location={"line_start": 1, "line_end": len(text.splitlines())}
+                    "code",
+                    text,
+                    {"language": language, "symbols": code_symbols(text)},
+                    location={"line_start": 1, "line_end": len(text.splitlines())},
                 )
                 builder.result.warnings.append(
-                    "Non-Python code preserved atomically; language AST adapter not configured"
+                    "Non-Python code uses lexical declaration evidence; full language syntax validation is unavailable"
                 )
         elif modality == "email":
             message = BytesParser(policy=policy.default).parsebytes(inspection.data)
@@ -629,6 +826,12 @@ class LayoutParser:
                 gaps = [(b - a, (a + b) / 2) for a, b in pairwise(starts)]
                 boundary = max(gaps, default=(0, 0))
                 split = boundary[1] if boundary[0] > page.width * 0.12 else None
+                uncertain = any(not character.get("upright", True) for character in page.chars)
+                if split is not None:
+                    uncertain |= any(float(word["x0"]) < split < float(word["x1"]) for word in words)
+                if uncertain:
+                    builder.result.metadata["layout_uncertain"] = True
+                    builder.result.warnings.append("layout_uncertain: rotated or gutter-spanning text needs review")
                 groups = [[w for w in words if split is None or w["x0"] < split]]
                 if split is not None:
                     groups.append([w for w in words if w["x0"] >= split])
@@ -704,6 +907,8 @@ class LayoutParser:
 
                 builder.result.blocks[first_block:] = sorted(page_blocks, key=reading_key)
         builder.result.reading_order_confidence = 1 - overlapping_pairs / max(1, ordered_pairs)
+        if builder.result.metadata.get("layout_uncertain"):
+            builder.result.reading_order_confidence = None
         if inspection.profile.complex_layout:
             builder.result.warnings.append(
                 "Reading order uses geometric column bands; spanning layouts may need review"
