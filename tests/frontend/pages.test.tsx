@@ -217,6 +217,28 @@ describe("application pages", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Database operation unavailable", "error"));
   });
 
+  it("stops failed source-status polling and lets Refresh recover the pending source", async () => {
+    vi.useFakeTimers();
+    const pending = { id: "poll-limit", name: "pending.txt", kind: "upload", status: "processing",
+      document_count: 0, chunk_count: 0, error_message: null };
+    api.listKnowledgeSources.mockResolvedValueOnce([pending]).mockRejectedValue(new Error("Offline"));
+    try {
+      render(<SourcesPage />);
+      await act(async () => {});
+      await act(async () => { await vi.advanceTimersByTimeAsync(12000); });
+      expect(api.listKnowledgeSources).toHaveBeenCalledTimes(4);
+      expect(screen.getByText("Could not refresh source status. Use Refresh to retry.")).toBeDefined();
+      api.listKnowledgeSources.mockResolvedValueOnce([{ ...pending, status: "ready_for_embedding", chunk_count: 1 }]);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await act(async () => {});
+      expect(screen.getByText("Ready for embedding")).toBeDefined();
+      expect(screen.queryByText("Could not refresh source status. Use Refresh to retry.")).toBeNull();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it("runs and saves a diagnosis from the main page", async () => {
     api.diagnose.mockResolvedValue(ASYNCIO_DIAGNOSIS);
     api.saveSolution.mockResolvedValue({ id: "saved-1" });

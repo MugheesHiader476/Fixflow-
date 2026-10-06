@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "coverage/**",
+    // Disposable runtime builds, raw uploads and browser evidence are not source code.
+    ".local/**",
     "myenev/**",
     "next-env.d.ts",
     "doc/**",

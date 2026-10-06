@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { DOCUMENT_FILE_ACCEPT } from "@/lib/files";
 
 type SourceMode = "docs" | "github" | "upload";
+const MAX_STATUS_REFRESH_FAILURES = 3;
 
 const SOURCE_MODES: {
   id: SourceMode;
@@ -92,22 +93,29 @@ export default function SourcesPage() {
     if (!hasPendingSources) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
     const refresh = async () => {
       const version = uploadsVersion.current;
       try {
         const current = await listKnowledgeSources(controller.signal);
         if (controller.signal.aborted) return;
         if (version === uploadsVersion.current) setSources(current);
+        failures = 0;
         setLoadError(null);
       } catch {
-        if (!controller.signal.aborted) setLoadError("Could not refresh source status. Retrying…");
+        if (!controller.signal.aborted) {
+          failures += 1;
+          setLoadError(failures >= MAX_STATUS_REFRESH_FAILURES
+            ? "Could not refresh source status. Use Refresh to retry."
+            : "Could not refresh source status. Retrying…");
+        }
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(refresh, 2000);
+        if (!controller.signal.aborted && failures < MAX_STATUS_REFRESH_FAILURES) timer = setTimeout(refresh, 2000);
       }
     };
     timer = setTimeout(refresh, 2000);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [hasPendingSources]);
+  }, [hasPendingSources, refreshKey]);
 
   const resetForm = () => {
     setTitle("");
@@ -190,7 +198,7 @@ export default function SourcesPage() {
         </PageHeading>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
-          <section className="rounded-xl border border-border bg-panel p-4 sm:p-5">
+          <section className="min-w-0 rounded-xl border border-border bg-panel p-4 sm:p-5">
             <div className="mb-4">
               <h2 className="text-sm font-semibold">Add documentation</h2>
               <p className="mt-1 text-xs text-muted">Upload or paste a document to make it available for keyword search.</p>
@@ -287,7 +295,7 @@ export default function SourcesPage() {
               )}
               {mode !== "github" && selectedFile && (
                 <div className="rounded-md border border-border p-3 text-xs text-muted">
-                  <p>{selectedFile.name} · {Math.ceil(selectedFile.size / 1024)} KB · ready to upload</p>
+                  <p className="break-all">{selectedFile.name} · {Math.ceil(selectedFile.size / 1024)} KB · ready to upload</p>
                   <Button type="button" variant="ghost" size="sm" onClick={resetForm}>Remove file</Button>
                 </div>
               )}
@@ -316,7 +324,7 @@ export default function SourcesPage() {
             </form>
           </section>
 
-          <section className="rounded-xl border border-border bg-panel p-4 sm:p-5">
+          <section className="min-w-0 rounded-xl border border-border bg-panel p-4 sm:p-5">
             <div className="mb-3 flex items-center gap-2">
               <BookOpen size={15} className="text-lime" />
               <h2 className="text-sm font-semibold">Knowledge sources</h2>

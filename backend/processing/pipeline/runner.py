@@ -42,7 +42,7 @@ from backend.processing.pipeline.units import (
 from backend.processing.pipeline.validation import validate_result
 from backend.schemas.pipeline import Chunk, PipelineResult, Source, digest
 
-ENGINE_VERSION = "2.1.1"
+ENGINE_VERSION = "2.1.2"
 logger = logging.getLogger(__name__)
 
 

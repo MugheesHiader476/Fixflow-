@@ -34,7 +34,7 @@ from backend.processing.pipeline.inspection import CODE_LANGUAGES, Inspection
 from backend.processing.pipeline.splitting import code_symbols, yaml_anchors
 from backend.schemas.pipeline import Asset, Block, BlockType, Provenance, Source, digest
 
-VERSION = "4"
+VERSION = "5"
 
 
 class NumericRepresentationRequired(ValueError):
@@ -756,6 +756,14 @@ class NativeParser:
         elif modality == "email":
             message = BytesParser(policy=policy.default).parsebytes(inspection.data)
             builder.heading(str(message.get("Subject", source.filename)))
+            # Preserve ordered/duplicate source headers as provenance, without
+            # treating routing/MIME metadata as duplicated retrieval body text.
+            builder.result.metadata["email_headers"] = [
+                {"name": name, "value": str(value)} for name, value in message.items()
+            ]
+            builder.result.metadata["nonretrieval_metadata"] = {
+                "email_headers": "Original MIME headers retained for provenance"
+            }
             builder.result.metadata["message_id"] = str(message.get("Message-ID", ""))
             builder.result.metadata["thread_id"] = str(message.get("References", message.get("Message-ID", "")))
             body = message.get_body(preferencelist=("plain", "html"))
