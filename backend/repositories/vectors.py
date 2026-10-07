@@ -1,7 +1,8 @@
-"""Vector storage/search interface for a future, externally supplied embedding pipeline."""
+"""Vector persistence plus authorized, configuration-pinned exact cosine retrieval."""
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
@@ -13,6 +14,21 @@ from backend.config import get_settings
 from backend.db.models import DocumentChunk, KnowledgeSource
 from backend.repositories.source_access import accessible_source
 from backend.services.access import owner_id
+
+if TYPE_CHECKING:
+    from backend.services.retrieval_config import RetrievalPin
+
+
+@dataclass(frozen=True)
+class DenseMatch:
+    chunk_id: str
+    source_id: UUID
+    content: str
+    metadata: dict[str, object]
+    distance: float
+    title: str
+    source_type: str
+    url: str | None
 
 
 class EmbeddingPipelineNotConfigured(RuntimeError):
@@ -151,6 +167,42 @@ class VectorRepository:
             .limit(limit)
         )
         return [VectorMatch(*row) for row in rows]
+
+    async def search_pinned(self, vector: list[float], pin: "RetrievalPin", limit: int = 5) -> list[DenseMatch]:
+        """Filter before distance evaluation, including when other-dimensional vectors exist."""
+        self.validate_vector(vector, pin.dimension)
+        if not 1 <= limit <= 100:
+            raise ValueError("Search limit must be between 1 and 100")
+        identity = {key: value for key, value in pin.identity("").items() if key != "input_hash"}
+        matching = (
+            select(DocumentChunk)
+            .join(KnowledgeSource, DocumentChunk.source_id == KnowledgeSource.id)
+            .where(
+                KnowledgeSource.owner_id == owner_id(self.session),
+                accessible_source(current_time=True),
+                KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+                DocumentChunk.embedding.is_not(None),
+                DocumentChunk.embedding_model == pin.model,
+                DocumentChunk.embedding_dimension == pin.dimension,
+                DocumentChunk.meta["embedding_identity"].contains(identity),
+                DocumentChunk.meta["source_hash"].astext == KnowledgeSource.file_hash,
+                DocumentChunk.meta["contract_version"].astext == "2",
+            )
+            .cte("pinned_vectors")
+            .prefix_with("MATERIALIZED")
+        )
+        distance = matching.c.embedding.cosine_distance(vector)
+        rows = await self.session.execute(
+            select(
+                matching.c.chunk_id, matching.c.source_id, matching.c.content, matching.c.metadata,
+                distance.label("distance"), KnowledgeSource.name, KnowledgeSource.source_type, KnowledgeSource.url,
+            )
+            .join(KnowledgeSource, KnowledgeSource.id == matching.c.source_id)
+            .where(accessible_source(current_time=True), KnowledgeSource.owner_id == owner_id(self.session))
+            .order_by(distance, matching.c.chunk_id)
+            .limit(limit)
+        )
+        return [DenseMatch(*row) for row in rows]
 
     async def delete_source_vectors(self, source_id: UUID) -> None:
         await self.session.execute(

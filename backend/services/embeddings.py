@@ -224,26 +224,34 @@ async def embed_source(source_id: UUID, provider: EmbeddingProvider, trusted_own
         return False
 
 
+async def queued_embedding_sources() -> list[UUID]:
+    """Explicit pending jobs only; configuring Ollama never enrolls the old corpus."""
+    if not get_settings().embedding_auto_process:
+        return []
+    async with get_session_factory()() as db:
+        return list(
+            await db.scalars(
+                select(KnowledgeSource.id)
+                .where(
+                    KnowledgeSource.status.in_(("ready_for_embedding", "embedding")),
+                    KnowledgeSource.embedding_status.in_(("pending", "processing")),
+                    KnowledgeSource.owner_id != LEGACY_OWNER,
+                    accessible_source(current_time=True),
+                )
+                .order_by(KnowledgeSource.created_at, KnowledgeSource.id)
+                .limit(get_settings().embedding_workers)
+            )
+        )
+
+
 async def embedding_worker() -> None:
     while True:
         try:
-            provider = get_embedding_provider()
-            if provider is not None:
-                async with get_session_factory()() as db:
-                    ids = list(
-                        await db.scalars(
-                            select(KnowledgeSource.id)
-                            .where(
-                                KnowledgeSource.status.in_(("ready_for_embedding", "embedding")),
-                                KnowledgeSource.embedding_status != "failed",
-                                KnowledgeSource.owner_id != LEGACY_OWNER,
-                                accessible_source(),
-                            )
-                            .order_by(KnowledgeSource.created_at)
-                            .limit(get_settings().embedding_workers)
-                        )
-                    )
-                await asyncio.gather(*(embed_source(source_id, provider) for source_id in ids))
+            if get_settings().embedding_auto_process:
+                provider = get_embedding_provider()
+                if provider is not None:
+                    ids = await queued_embedding_sources()
+                    await asyncio.gather(*(embed_source(source_id, provider) for source_id in ids))
         except Exception as error:  # noqa: BLE001 - deliberate background-service boundary.
             logger.error("Embedding queue unavailable (%s)", type(error).__name__)
         await asyncio.sleep(2)
