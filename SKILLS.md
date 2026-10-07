@@ -1,6 +1,6 @@
 # Skills Required for FixFlow
 
-Active implementations and repository-defined verification tools are listed; tools offered for local checks are distinguished from CI execution. No LLM diagnosis, reranker, prompt system, agent framework, or admin UI is implemented. Optional HTTP embeddings, trusted gateway account isolation and direct read-only Connected Apps are implemented; embeddings and connectors remain disabled until their respective server configuration is supplied.
+Active implementations and repository-defined verification tools are listed; tools offered for local checks are distinguished from CI execution. No LLM diagnosis, reranker, prompt system, agent framework, or admin UI is implemented. Optional HTTPS/local Ollama embeddings, trusted gateway account isolation and direct read-only Connected Apps are implemented; embeddings and connectors remain disabled until their respective server configuration is supplied.
 
 | Skill | Used For | Important Locations |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Active implementations and repository-defined verification tools are listed; too
 | Python async / FastAPI / Pydantic | API validation, dependency injection, safe errors, settings, lifespan tasks | `backend/main.py`, `backend/api/routes.py`, `backend/config.py`, `backend/schemas/models.py` |
 | PostgreSQL / async SQLAlchemy / asyncpg | UUID/FK integrity, JSONB snapshots/metadata, transactions, deduplication, advisory locking | `backend/db/`, `backend/services/{store,ingestion}.py`, `backend/repositories/` |
 | PostgreSQL full-text search | Actual keyword retrieval using generated tsvector, GIN, OR query and rank | `backend/repositories/retrieval.py`, `backend/db/models.py` |
-| pgvector | Nullable vector storage and tested future cosine-search interface; optional validated HTTP generation; retrieval remains keyword-based | `backend/services/embeddings.py`, `backend/repositories/vectors.py`, `backend/db/models.py`, `backend/tests/test_runtime_pipeline.py` |
+| pgvector | Nullable vector storage and tested future cosine-search interface; validated HTTPS/Ollama generation through prepared_source, exact model/input reuse identity; product retrieval remains keyword-based | `backend/services/embeddings.py`, `backend/repositories/vectors.py`, `backend/db/models.py`, `backend/tests/test_runtime_pipeline.py` |
 | Alembic | Async schema migrations and readiness revision checking | `alembic.ini`, `backend/db/migrations/`, `backend/services/readiness.py` |
 | Legacy document extraction / LangChain loaders and splitters | Reachable manual JSONL import and legacy/test helper; 3,000-character chunks / 400 overlap, excluded from contract-v2 prepared handoff | `backend/processing/{loaders,chunking}.py`, `requirements-ingestion.txt` |
 | Canonical / OKF / atomic knowledge processing | Structural nested concepts, complete ordered units, evidence-based aliases, private owner/source context; no model-inferred relationships | `backend/schemas/pipeline.py`, `backend/processing/pipeline/{parsers,canonical,concepts,units,context}.py` |
@@ -151,3 +151,9 @@ The browser command launches/stops actual Next/FastAPI on 3012/8012, applies mig
 Native Tesseract is absent in this verified host: two live OCR tests skip, deterministic downstream adapters pass, scanned uploads fail explicitly. No transcription adapter is configured. Detected rotated/gutter-spanning PDFs fail with raw retained; arbitrary complex visuals/Office layouts and full non-Python grammars are not certified. Native EML projects preferred body, not every MIME part. Operational upload/archive/page/block/character/chunk/deadline/memory/result limits remain. Legacy/corrupt/incomplete/foreign evidence stays excluded.
 
 The next stage can consume validated authorized `prepared_source` results directly, deliberately choosing `raw_content` or `retrieval_content` and retaining provenance, ACL scope, source version/hash, continuation selectors and processing/model-input identity. Never reconstruct citations from a vector or bypass this reader. Embedding/model selection/vector retrieval/reranking/LLM answers belong to a later authorized task; preserve current keyword behavior. Live Clerk/OAuth/provider delivery/OCR claims require their own real execution evidence.
+
+### Local embedding engineering
+
+Native Ollama adapter: `backend/services/ollama.py`; model formatting: `embedding_profiles.py`; worker: `embeddings.py`. Use validated enriched retrieval content; preserve authorization/citations/version and continuation metadata separately. Before commit refresh the prepared handoff and check wall-clock lease validity. Native transport uses loopback HTTP and truncate=false; remote providers continue to require HTTPS. Exact digest/format/dimension/input identity controls reuse.
+
+Fixed gold corpus, offline dense/keyword comparisons, resource measurements and quality-first selection: `scripts/benchmark_embeddings.py`, `backend/tests/fixtures/embeddings/benchmark.json`, `docs/local-embeddings.md`, `docs/embedding-results/`. Test-only database is mandatory and application vectors remain untouched during comparison. The tested winner is original `embeddinggemma:300m` (768, gemma-v1), pinned to the recorded digest. Later product semantic retrieval/hybrid/reranking/generation remains unimplemented.

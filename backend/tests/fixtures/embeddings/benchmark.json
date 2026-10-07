@@ -1,0 +1,1042 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "d00",
+      "filename": "pool.md",
+      "type": "documentation",
+      "text": "# Database pool exhaustion\n\nWhen PostgreSQL raises QueuePool limit reached, close sessions after each request. Reserve spare connections for worker status updates. Increasing the pool does not repair leaked sessions."
+    },
+    {
+      "id": "x00",
+      "filename": "distractor-00.md",
+      "type": "distractor",
+      "text": "# Database query timeout\n\nA statement timeout concerns one slow SQL execution. Tune the query or statement_timeout; closing leaked application sessions is not the primary remedy."
+    },
+    {
+      "id": "d01",
+      "filename": "cors.md",
+      "type": "documentation",
+      "text": "# Cross origin write rejection\n\nCross-origin writes are not allowed means the Next gateway rejected an Origin different from the configured public application origin. Configure CONNECTORS__PUBLIC_URL to match the browser origin; never trust forwarded host headers."
+    },
+    {
+      "id": "x01",
+      "filename": "distractor-01.md",
+      "type": "distractor",
+      "text": "# Provider OAuth scope rejection\n\nProvider consent errors concern missing read scopes on an OAuth application; changing a browser origin does not grant provider permissions."
+    },
+    {
+      "id": "d02",
+      "filename": "google.md",
+      "type": "documentation",
+      "text": "# Google refresh token expiration\n\nGoogle invalid_grant during refresh means the refresh token was revoked or expired. Mark the connection as requiring reauthentication and ask the account owner to reconnect. Do not repeatedly retry a revoked refresh token."
+    },
+    {
+      "id": "x02",
+      "filename": "distractor-02.md",
+      "type": "distractor",
+      "text": "# Google network timeout\n\nRetry bounded transport timeouts with backoff. A temporary network problem alone does not prove that consent was revoked."
+    },
+    {
+      "id": "d03",
+      "filename": "drive.md",
+      "type": "documentation",
+      "text": "# Drive change token expiry\n\nGoogle Drive changes.list returns 410 for an expired startPageToken. Restart authorized enumeration and reconciliation. User and shared drive change tokens occupy separate cursor namespaces."
+    },
+    {
+      "id": "x03",
+      "filename": "distractor-03.md",
+      "type": "distractor",
+      "text": "# Drive download permission denied\n\nDrive 403 while downloading a file requires an authoritative permission check. It is not a changes-cursor expiry signal."
+    },
+    {
+      "id": "d04",
+      "filename": "github.md",
+      "type": "documentation",
+      "text": "# GitHub truncated repository tree\n\nA recursive GitHub tree response with truncated=true omits paths. Queue nonrecursive subtree enumeration pinned to the same branch commit to recover the complete repository."
+    },
+    {
+      "id": "x04",
+      "filename": "distractor-04.md",
+      "type": "distractor",
+      "text": "# GitHub empty repository\n\nAn empty repository may have no branch head. Handle it as an empty resource instead of attempting subtree expansion."
+    },
+    {
+      "id": "d05",
+      "filename": "slack.md",
+      "type": "documentation",
+      "text": "# Slack method rate reservation\n\nSlack conversations.history and conversations.replies use separate durable method reservations. Honor Retry-After on 429 and schedule later execution. Rate delay must not become a long blocking worker sleep."
+    },
+    {
+      "id": "x05",
+      "filename": "distractor-05.md",
+      "type": "distractor",
+      "text": "# Slack invalid channel\n\nchannel_not_found means the selected channel cannot be resolved with the token. Recheck selection; rate backoff cannot grant channel access."
+    },
+    {
+      "id": "d06",
+      "filename": "owner.md",
+      "type": "documentation",
+      "text": "# Private source ownership\n\nOnly the authenticated account owner can access a source. Apply owner_id and accessible_source SQL predicates before decoding artifacts or returning chunks. Browser-supplied user IDs are never authoritative."
+    },
+    {
+      "id": "x06",
+      "filename": "distractor-06.md",
+      "type": "distractor",
+      "text": "# Public document sharing\n\nPublic sharing is not implemented. A stored provider group permission is evidence and does not automatically grant application accounts access."
+    },
+    {
+      "id": "d07",
+      "filename": "migration.md",
+      "type": "documentation",
+      "text": "# Alembic migration mismatch\n\nIf PostgreSQL lacks an expected column, apply alembic upgrade head against the configured database. Verify a single revision head. Never stamp over a schema error or use create_all to bypass migration history."
+    },
+    {
+      "id": "x07",
+      "filename": "distractor-07.md",
+      "type": "distractor",
+      "text": "# Connection authentication failure\n\nPassword authentication failed requires matching database credentials. Applying schema migrations cannot repair an incorrect password."
+    },
+    {
+      "id": "d08",
+      "filename": "python.py",
+      "type": "code",
+      "text": "def fetch_document(session_factory, identifier):\n    with session_factory() as session:\n        return session.get(Document, identifier)\n# The context manager closes the database session even when the query raises.\n"
+    },
+    {
+      "id": "x08",
+      "filename": "distractor-08.md",
+      "type": "distractor",
+      "text": "# Python persistent session\n\n```\ndef fetch_unclosed(session_factory, identifier):\n    session = session_factory()\n    return session.get(Document, identifier)\n# No context manager or close call; the caller must explicitly release it.\n```"
+    },
+    {
+      "id": "d09",
+      "filename": "javascript.js",
+      "type": "code",
+      "text": "async function fetchWithDeadline(url) {\n  const controller = new AbortController();\n  const timer = setTimeout(() => controller.abort(), 5000);\n  try { return await fetch(url, { signal: controller.signal }); }\n  finally { clearTimeout(timer); }\n}\n"
+    },
+    {
+      "id": "x09",
+      "filename": "distractor-09.md",
+      "type": "distractor",
+      "text": "# JavaScript retry counter\n\n```\nasync function fetchWithoutDeadline(url) { return fetch(url); }\n// This call has no AbortController and cannot impose a five-second deadline.\n```"
+    },
+    {
+      "id": "d10",
+      "filename": "transaction.sql",
+      "type": "code",
+      "text": "BEGIN;\nUPDATE document_chunks SET embedding = NULL WHERE source_id = :source_id;\n-- All source vector writes must share one transaction.\nROLLBACK;\n-- Rollback preserves previous committed vectors after any failed batch.\n"
+    },
+    {
+      "id": "x10",
+      "filename": "distractor-10.md",
+      "type": "distractor",
+      "text": "# Per chunk autocommit\n\n```\nCommitting after each individual chunk can leave a partially embedded source. This pattern is unsuitable for atomic source replacement.\n```"
+    },
+    {
+      "id": "d11",
+      "filename": "idempotency.md",
+      "type": "documentation",
+      "text": "# Idempotent connector identity\n\nConnector resources use owner, provider, external account and resource identity. Identical bytes from different resources must remain separate sources. Content hashing alone must not merge provider resources."
+    },
+    {
+      "id": "x11",
+      "filename": "distractor-11.md",
+      "type": "distractor",
+      "text": "# Manual upload hash identity\n\nManual uploads can deduplicate the same owner and file hash when external_identity is absent. This predicate does not define connector identity."
+    },
+    {
+      "id": "d12",
+      "filename": "config.json",
+      "type": "configuration",
+      "text": "{\"embedding\":{\"batch_size\":4,\"workers\":1,\"truncate\":false,\"endpoint\":\"http://127.0.0.1:11434\"},\"security\":{\"frontend_access\":false,\"remote_https_required\":true}}"
+    },
+    {
+      "id": "x12",
+      "filename": "distractor-12.md",
+      "type": "distractor",
+      "text": "# Remote provider configuration\n\nRemote embedding services must use HTTPS. A browser public URL must never include the embedding API key or local server credential."
+    },
+    {
+      "id": "d13",
+      "filename": "vault.yaml",
+      "type": "configuration",
+      "text": "vault:\n  current_key: operator-managed-current\n  previous_keys:\n    - operator-managed-former\n  policy: decrypt old credentials then rotate under row lock\n# Preserve recoverable keys outside PostgreSQL.\n"
+    },
+    {
+      "id": "x13",
+      "filename": "distractor-13.md",
+      "type": "distractor",
+      "text": "# Ephemeral vault key\n\nGenerating a different encryption key at every application restart makes stored credentials unreadable. Never use an ephemeral vault key."
+    },
+    {
+      "id": "d14",
+      "filename": "limits.md",
+      "type": "table",
+      "text": "# Upload and attachment limits\n\n| Input | Limit |\n| --- | --- |\n| Document upload | 50 MiB |\n| Debug text attachment | 50000 bytes |\n| Debug attachment count | 5 |"
+    },
+    {
+      "id": "x14",
+      "filename": "distractor-14.md",
+      "type": "distractor",
+      "text": "# Embedding batch limits\n\n| Setting | Limit |\n| --- | --- |\n| Batch default | 4 chunks |\n| Worker initial | 1 |\nThese are embedding scheduling settings, not document upload limits."
+    },
+    {
+      "id": "d15",
+      "filename": "states.md",
+      "type": "table",
+      "text": "# Ingestion and embedding states\n\n| State | Meaning |\n| --- | --- |\n| uploaded | Accepted, not parsed yet |\n| ready_for_embedding | Validated chunks persisted, no vectors promised |\n| indexed | Embedding persistence completed |\n| failed | Processing did not complete safely |"
+    },
+    {
+      "id": "x15",
+      "filename": "distractor-15.md",
+      "type": "distractor",
+      "text": "# OAuth authentication states\n\nConnected and reauthentication_required describe provider credentials. They do not certify canonical chunk validation or embedding completion."
+    },
+    {
+      "id": "d16",
+      "filename": "utf8.md",
+      "type": "multilingual",
+      "text": "# Unicode continuity\n\nUnicode café 日本語 🚀 must survive parsing and chunking. Split only between complete Unicode characters. Joining ordered continuation spans must reproduce the original normalized unit exactly."
+    },
+    {
+      "id": "x16",
+      "filename": "distractor-16.md",
+      "type": "distractor",
+      "text": "# ASCII byte truncation\n\nCutting encoded UTF-8 bytes in the middle of a character creates malformed text. This implementation must never use raw byte slicing for continuations."
+    },
+    {
+      "id": "d17",
+      "filename": "urdu.md",
+      "type": "multilingual",
+      "text": "# مقامی نجی معلومات\n\nمقامی embeddings کا مطلب ہے کہ دستاویز کا متن اپنے کمپیوٹر پر Ollama میں جاتا ہے۔ PostgreSQL میں ہر chunk کے ساتھ مالک اور اصل دستاویز کا حوالہ محفوظ رہتا ہے۔ دوسرے اکاؤنٹ کو نجی معلومات نہیں ملنی چاہئیں۔"
+    },
+    {
+      "id": "x17",
+      "filename": "distractor-17.md",
+      "type": "distractor",
+      "text": "# Shared public embeddings\n\nUploading private documents to an unrestricted shared public index violates the account ownership policy. Local inference does not replace database authorization."
+    },
+    {
+      "id": "d18",
+      "filename": "pdf.md",
+      "type": "documentation",
+      "text": "# Uncertain PDF layout\n\nRotated or gutter-spanning PDF text is layout_uncertain when reading order cannot be safely reconstructed. Retain the raw file for review and do not release it through prepared_source."
+    },
+    {
+      "id": "x18",
+      "filename": "distractor-18.md",
+      "type": "distractor",
+      "text": "# Scanned PDF OCR adapter\n\nScanned PDFs require configured OCR. OCR output enters the canonical pipeline with page provenance; it is not proof that an arbitrary layout is correct."
+    },
+    {
+      "id": "d19",
+      "filename": "hash.md",
+      "type": "documentation",
+      "text": "# Embedding reuse identity\n\nReuse a vector only when formatted input hash, exact model digest, dimension and formatting version all match. A model tag alone is insufficient because a tag can reference changed weights."
+    },
+    {
+      "id": "x19",
+      "filename": "distractor-19.md",
+      "type": "distractor",
+      "text": "# Source file deduplication\n\nA source file hash detects identical raw input. It does not by itself certify that model formatting or embedding weights are unchanged."
+    },
+    {
+      "id": "d20",
+      "filename": "clerk.md",
+      "type": "documentation",
+      "text": "# Trusted gateway identity\n\nNext verifies the Clerk session and overwrites X-FixFlow-User-Id with the trusted account ID. FastAPI requires the server-only gateway token. Never pass browser-supplied identity through unchanged."
+    },
+    {
+      "id": "x20",
+      "filename": "distractor-20.md",
+      "type": "distractor",
+      "text": "# CORS origin validation\n\nOrigin checks reject cross-site writes but do not authenticate an account. CORS is not a replacement for the Clerk gateway token."
+    },
+    {
+      "id": "d21",
+      "filename": "email.md",
+      "type": "documentation",
+      "text": "# Email preferred body extraction\n\nNative EML retains duplicate headers as ordered email_headers metadata. Subject and the preferred MIME body remain searchable. Alternative bodies and attachments remain in the retained raw MIME source."
+    },
+    {
+      "id": "x21",
+      "filename": "distractor-21.md",
+      "type": "distractor",
+      "text": "# Gmail external MIME parts\n\nThe Gmail connector fetches external body parts even when attachment download is disabled. This connector behavior is separate from native EML alternative body projection."
+    },
+    {
+      "id": "d22",
+      "filename": "delete.md",
+      "type": "documentation",
+      "text": "# Connector local-first disconnect\n\nDisconnect disables sources and wipes local credentials before remote cleanup. Cancel pending jobs. A remote cleanup failure must never restore local access or require token refresh before disabling."
+    },
+    {
+      "id": "x22",
+      "filename": "distractor-22.md",
+      "type": "distractor",
+      "text": "# Reauthentication reconnect\n\nReconnect restores credentials but must not automatically re-enable retained content. Resource selection and authoritative access checks still apply."
+    },
+    {
+      "id": "d23",
+      "filename": "xml.xml",
+      "type": "configuration",
+      "text": "<settings><database><host>localhost</host><pool>12</pool></database><security><private>true</private></security></settings>"
+    },
+    {
+      "id": "x23",
+      "filename": "distractor-23.md",
+      "type": "distractor",
+      "text": "# JSON connection paths\n\n{\"database\":{\"connection\":{\"host\":\"db.internal\",\"pool\":4}}} JSON uses pointer paths and is not the XML database pool 12 configuration."
+    },
+    {
+      "id": "d24",
+      "filename": "exact.md",
+      "type": "identifier",
+      "text": "# Unique chunk failure identifier\n\nError ZXQ_FIXFLOW_47391 identifies a canonical-to-chunk ordering mismatch. Revalidate ordered unit selectors and previous/next links. The unrelated code ZXQ_FIXFLOW_47392 denotes a missing credential."
+    },
+    {
+      "id": "x24",
+      "filename": "distractor-24.md",
+      "type": "distractor",
+      "text": "# Different failure identifier\n\nError ZXQ_FIXFLOW_47392 means the credential vault entry is missing. It does not diagnose canonical unit ordering."
+    },
+    {
+      "id": "d25",
+      "filename": "http.md",
+      "type": "identifier",
+      "text": "# HTTP provider refusal\n\nHTTP 401 indicates unauthenticated private API access. HTTP 403 indicates forbidden access after authentication. HTTP 429 indicates throttling and requires rate policy."
+    },
+    {
+      "id": "x25",
+      "filename": "distractor-25.md",
+      "type": "distractor",
+      "text": "# Upload accepted response\n\nHTTP 202 means a document upload was accepted for later worker processing. It does not mean parsing or embedding has completed."
+    },
+    {
+      "id": "d26",
+      "filename": "retry.md",
+      "type": "documentation",
+      "text": "# Explicit embedding retry\n\nEmbedding failure rolls back all vectors for the source and keeps validated keyword chunks. Mark embedding_status failed and require an explicit retry after repairing provider configuration."
+    },
+    {
+      "id": "x26",
+      "filename": "distractor-26.md",
+      "type": "distractor",
+      "text": "# Parsing retry\n\nParsing failure retains raw source but may not have validated chunks. It cannot be assumed to have the same keyword-ready evidence as a failed embedding job."
+    },
+    {
+      "id": "d27",
+      "filename": "headers.md",
+      "type": "table",
+      "text": "# Large table cell continuations\n\n| Row | Column | Evidence |\n| --- | --- | --- |\n| 42 | Notes | Oversized cells use ordered continuation parts with row identity and column header context. Reconstruct the original cell by joining its nonoverlapping parts. |"
+    },
+    {
+      "id": "x27",
+      "filename": "distractor-27.md",
+      "type": "distractor",
+      "text": "# Unlabeled table fragments\n\nA cell fragment without column header and row identity is ambiguous. Such an orphan fragment must not be described as a complete table row."
+    },
+    {
+      "id": "d28",
+      "filename": "provenance.md",
+      "type": "documentation",
+      "text": "# Citation-ready chunk lineage\n\nEvery retrieval chunk maps through atomic unit and concept to canonical document and registered source. Source/page/line selectors and continuation offsets remain metadata. Embeddings cannot reconstruct missing citations."
+    },
+    {
+      "id": "x28",
+      "filename": "distractor-28.md",
+      "type": "distractor",
+      "text": "# Vector similarity value\n\nA cosine similarity score is a ranking signal, not a source location or citation. It cannot identify the original page by itself."
+    },
+    {
+      "id": "d29",
+      "filename": "numeric.json",
+      "type": "configuration",
+      "text": "{\"identifier\":123456789012345678901234567890,\"note\":\"Large integers retain their original validated serialization; avoid converting them to imprecise floating point.\"}"
+    },
+    {
+      "id": "x29",
+      "filename": "distractor-29.md",
+      "type": "distractor",
+      "text": "# Normal floating point measurement\n\n{\"temperature\":21.5,\"note\":\"An approximate physical measurement may use floating-point representation. This does not justify rounding exact identifiers.\"}"
+    },
+    {
+      "id": "real0",
+      "filename": "project-0.py",
+      "type": "project-code",
+      "text": "\"\"\"Authorized, verified source/chunk handoff for subsequent offline embedding experiments.\n\nNo provider calls, vectors or embedding generation occur here. Old JSONL/v1 rows require\nre-ingestion from their original source before they qualify for this contract.\n\"\"\"\n\nfrom uuid import UUID, uuid5\n\nfrom sqlalchemy import select\nfrom sqlalchemy.ext.asyncio import AsyncSession\n\nfrom backend.db.models import Document, DocumentChunk, IngestionArtifact, KnowledgeSource\nfrom backend.processing.pipeline.concepts import render_block\nfrom backend.processing.pipeline.validation import validate_result\nfrom backend.repositories.source_access import accessible_source\nfrom backend.schemas.pipeline import Chunk, PipelineResult, digest\n\n\nasync def prepared_source(session: AsyncSession, source_id: UUID, owner_id: str) -> PipelineResult | None:\n    source = await session.scalar(\n        select(KnowledgeSource).where(\n            KnowledgeSource.id == source_id,\n            KnowledgeSource.owner_id == owner_id,\n            KnowledgeSource.status.in_((\"ready_for_embedding\", \"embedding\", \"indexed\")),\n            accessible_source(),\n        )\n    )\n    if source is None:\n        return None\n    artifact = await session.get(IngestionArtifact, source_id)\n    if artifact is None:\n        raise ValueError(\"Source requires reprocessing for the validated chunk contract\")\n    result = PipelineResult.model_validate(artifact.result)\n    validate_result(result)\n    context = result.canonical.source.context\n    permissions = context.get(\"permissions\")\n    if (\n        result.canonical.source.source_id != str(source_id)\n        or result.canonical.source.sha256 != source.file_hash\n        or not isinstance(permissions, dict)\n        or permissions.get(\"application_owner\") != owner_id\n    ):\n        raise ValueError(\"Persisted source registration or authorization mismatch\")\n    records = list(\n        await session.scalars(\n            select(DocumentChunk).where(DocumentChunk.source_id == source_id).order_by(DocumentChunk.chunk_index)\n        )\n    )\n    documents = list(await session.scalars(select(Document).where(Document.source_id == source_id)))\n    expected_documents = {uuid5(source_id, c.concept_id): c for c in result.concepts}\n    if {d.id for d in documents} != set(expected_documents) or len(records) != len(result.chunks):\n        raise ValueError(\"Incomplete persisted pipeline projection\")\n    by_block = {b.block_id: b for b in result.canonical.blocks}\n    for document in documents:\n        concept = expected_documents[document.id]\n        if (\n            document.content_hash != concept.content_hash\n            or document.page_content != \"\\n\\n\".join(render_block(by_block[i]) for i in concept.source_block_ids)\n            or document.title != concept.title\n            or document.section != \" / \".join(concept.section_path)\n            or document.meta.get(\"canonical_hash\") != result.canonical.content_hash\n            or document.meta.get(\"pipeline_concept_id\") != concept.concept_id\n            or document.meta.get(\"source_context\") != context\n        ):\n            raise ValueError(\"Persisted concept projection mismatch\")\n    for record, chunk in zip(records, result.chunks, strict=True):\n        projected = Chunk.model_validate({key: record.meta[key] for key in Chunk.model_fields})\n        if (\n            projected != chunk\n            or record.id != uuid5(source_id, chunk.chunk_id)\n            or record.document_id != uuid5(source_id, chunk.concept_id)\n            or record.chunk_id != chunk.chunk_id\n            or record.chunk_index != chunk.order_index\n            or record.content != chunk.raw_content\n            or record.content_hash != chunk.content_hash\n            or record.meta.get(\"document_id\") != str(record.document_id)\n            or record.meta.get(\"source_hash\") != source.file_hash\n            or record.meta.get(\"source_version\") != result.canonical.source.version\n            or record.meta.get(\"text_hash\") != digest(chunk.retrieval_content)\n            or record.meta.get(\"contract_version\") != result.contract_version\n            or record.meta.get(\"engine_version\") != result.engine_version\n            or record.meta.get(\"config_hash\") != result.config_hash\n        ):\n            raise ValueError(\"Persisted chunk projection mismatch\")\n    return result\n"
+    },
+    {
+      "id": "real1",
+      "filename": "project-1.py",
+      "type": "project-code",
+      "text": "\"\"\"Shared lexical retrieval; no model calls or fabricated similarity scores.\"\"\"\n\nimport re\n\nfrom sqlalchemy import func, select\nfrom sqlalchemy.ext.asyncio import AsyncSession\n\nfrom backend.db.models import DocumentChunk, KnowledgeSource\nfrom backend.repositories.source_access import accessible_source\nfrom backend.schemas.models import SourceDoc\nfrom backend.services.access import owner_id\n\nSEARCH_TERMS = re.compile(r\"[^\\W_]{3,}\", re.UNICODE)\nSTOP_WORDS = {\"the\", \"and\", \"for\", \"with\", \"this\", \"that\", \"how\", \"does\", \"what\", \"from\", \"can\", \"you\"}\n\n\nasync def search_chunks(db: AsyncSession, query_text: str, limit: int = 5) -> list[SourceDoc]:\n    terms = list(dict.fromkeys(term for term in SEARCH_TERMS.findall(query_text.casefold()) if term not in STOP_WORDS))\n    if not terms:\n        return []\n    query = func.to_tsquery(\"simple\", \" | \".join(terms[:100]))\n    rows = await db.execute(\n        select(DocumentChunk, KnowledgeSource)\n        .join(KnowledgeSource, KnowledgeSource.id == DocumentChunk.source_id)\n        .where(\n            DocumentChunk.search_text.op(\"@@\")(query),\n            KnowledgeSource.owner_id == owner_id(db),\n            accessible_source(),\n            KnowledgeSource.status.in_((\"ready_for_embedding\", \"embedding\", \"indexed\")),\n        )\n        .order_by(func.ts_rank(DocumentChunk.search_text, query).desc(), DocumentChunk.id)\n        .limit(limit)\n    )\n    return [\n        SourceDoc(\n            id=chunk.chunk_id,\n            type=\"github\" if source.source_type == \"github\" else \"docs\",\n            title=source.name,\n            publisher=\"Knowledge base\",\n            url=source.url or \"\",\n            relevance=0,\n            excerpt=chunk.content[:6000],\n            used=True,\n        )\n        for chunk, source in rows\n    ]\n"
+    },
+    {
+      "id": "real2",
+      "filename": "project-2.py",
+      "type": "project-code",
+      "text": "\"\"\"Authenticate the trusted Clerk gateway; never accept browser identity directly.\"\"\"\n\nimport re\nimport secrets\nfrom typing import Annotated\n\nfrom fastapi import Header, HTTPException\nfrom sqlalchemy.ext.asyncio import AsyncSession\n\nfrom backend.config import get_settings\n\nLEGACY_OWNER = \"__legacy__\"\nUSER_ID = re.compile(r\"user_[A-Za-z0-9_-]{1,190}\\Z\")\n\n\nasync def authenticated_owner(\n    authorization: Annotated[str | None, Header()] = None,\n    x_fixflow_user_id: Annotated[str | None, Header()] = None,\n) -> str:\n    token = get_settings().fixflow_api_token\n    if token is None:\n        raise HTTPException(503, \"Backend authentication is not configured\")\n    expected = f\"Bearer {token.get_secret_value()}\"\n    if authorization is None or not authorization.isascii() or not secrets.compare_digest(authorization, expected):\n        raise HTTPException(401, \"Authentication required\")\n    if x_fixflow_user_id is None or not USER_ID.fullmatch(x_fixflow_user_id):\n        raise HTTPException(401, \"Verified account identity required\")\n    return x_fixflow_user_id\n\n\ndef owner_id(session: AsyncSession) -> str:\n    # Unauthenticated internal sessions are used only by workers/admin CLI, never HTTP routes.\n    return str(session.info.get(\"owner_id\", LEGACY_OWNER))\n"
+    },
+    {
+      "id": "real3",
+      "filename": "project-3.py",
+      "type": "project-code",
+      "text": "\"\"\"Permission filters belong in database queries, before any private content is read.\"\"\"\n\nfrom sqlalchemy import and_, exists, func, or_, select\nfrom sqlalchemy.sql.elements import ColumnElement\n\nfrom backend.db.models import ConnectorAccount, KnowledgeSource\n\n\ndef accessible_source() -> ColumnElement[bool]:\n    return and_(\n        KnowledgeSource.is_active.is_(True),\n        or_(KnowledgeSource.access_expires_at.is_(None), KnowledgeSource.access_expires_at > func.now()),\n        or_(\n            KnowledgeSource.connector_account_id.is_(None),\n            exists(\n                select(ConnectorAccount.id).where(\n                    ConnectorAccount.id == KnowledgeSource.connector_account_id,\n                    ConnectorAccount.owner_id == KnowledgeSource.owner_id,\n                    ConnectorAccount.status.in_((\"connected\", \"syncing\", \"connected_with_warning\")),\n                    ConnectorAccount.authentication_status == \"valid\",\n                )\n            ),\n        ),\n    )\n"
+    },
+    {
+      "id": "continuation0",
+      "filename": "continuation-0.md",
+      "type": "continuation",
+      "text": "# Continuation procedure 0\n\nThe operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; CONT_AUTH_701 Before vector commit lock and recheck authoritative source ownership and permission lease; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; ."
+    },
+    {
+      "id": "continuation1",
+      "filename": "continuation-1.md",
+      "type": "continuation",
+      "text": "# Continuation procedure 1\n\nThe operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; CONT_XML_702 Large XML text nodes retain their element path and ordered exact character offsets; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; ."
+    },
+    {
+      "id": "continuation2",
+      "filename": "continuation-2.md",
+      "type": "continuation",
+      "text": "# Continuation procedure 2\n\nThe operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; CONT_CODE_703 Code continuations retain parent function symbol and original line range; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; ."
+    },
+    {
+      "id": "continuation3",
+      "filename": "continuation-3.md",
+      "type": "continuation",
+      "text": "# Continuation procedure 3\n\nThe operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; CONT_CELL_704 Every huge table cell part retains table identifier row identity and column heading; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; The operation retains complete evidence and respects the registered private source; ."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q00-0",
+      "type": "documentation",
+      "text": "Why do database requests run out of connections after repeated requests?",
+      "gold_document": "d00",
+      "gold_chunk_ids": [
+        "c-68622ccc5c2fe4c249c274d74d913b789965d82f"
+      ]
+    },
+    {
+      "id": "q00-1",
+      "type": "documentation",
+      "text": "How do I fix QueuePool limit reached?",
+      "gold_document": "d00",
+      "gold_chunk_ids": [
+        "c-68622ccc5c2fe4c249c274d74d913b789965d82f"
+      ]
+    },
+    {
+      "id": "q01-0",
+      "type": "documentation",
+      "text": "Connected Apps rejects writes after moving behind a reverse proxy. Which origin setting matters?",
+      "gold_document": "d01",
+      "gold_chunk_ids": [
+        "c-fc488eb09611111dfa22616b2a1bf1fa39e4c2b8"
+      ]
+    },
+    {
+      "id": "q01-1",
+      "type": "documentation",
+      "text": "What causes Cross-origin writes are not allowed?",
+      "gold_document": "d01",
+      "gold_chunk_ids": [
+        "c-fc488eb09611111dfa22616b2a1bf1fa39e4c2b8"
+      ]
+    },
+    {
+      "id": "q02-0",
+      "type": "documentation",
+      "text": "Google integration stopped working although the network is healthy; credentials were revoked. What next?",
+      "gold_document": "d02",
+      "gold_chunk_ids": [
+        "c-b1e9b1c5e52b0d030bbf6c58d9e5862806a433c6"
+      ]
+    },
+    {
+      "id": "q02-1",
+      "type": "documentation",
+      "text": "What should invalid_grant during token refresh do?",
+      "gold_document": "d02",
+      "gold_chunk_ids": [
+        "c-b1e9b1c5e52b0d030bbf6c58d9e5862806a433c6"
+      ]
+    },
+    {
+      "id": "q03-0",
+      "type": "documentation",
+      "text": "How should a Drive sync recover when its saved changes cursor is no longer accepted?",
+      "gold_document": "d03",
+      "gold_chunk_ids": [
+        "c-d4ef91aa9331ab06900267f02b2a9c2d3368f0a3"
+      ]
+    },
+    {
+      "id": "q03-1",
+      "type": "documentation",
+      "text": "What does Drive changes.list 410 require?",
+      "gold_document": "d03",
+      "gold_chunk_ids": [
+        "c-d4ef91aa9331ab06900267f02b2a9c2d3368f0a3"
+      ]
+    },
+    {
+      "id": "q04-0",
+      "type": "documentation",
+      "text": "A large repository sync sees only some paths although access is valid. How do we recover all files?",
+      "gold_document": "d04",
+      "gold_chunk_ids": [
+        "c-8525b6ede64fa4ccb72ed709686e2ae9cd4e3357"
+      ]
+    },
+    {
+      "id": "q04-1",
+      "type": "documentation",
+      "text": "How is GitHub truncated=true handled?",
+      "gold_document": "d04",
+      "gold_chunk_ids": [
+        "c-8525b6ede64fa4ccb72ed709686e2ae9cd4e3357"
+      ]
+    },
+    {
+      "id": "q05-0",
+      "type": "documentation",
+      "text": "Slack history gets throttled; how should background work resume without occupying a worker?",
+      "gold_document": "d05",
+      "gold_chunk_ids": [
+        "c-1e58ce659139ae1d5be1945e0f3876e376759a35"
+      ]
+    },
+    {
+      "id": "q05-1",
+      "type": "documentation",
+      "text": "How should Slack 429 Retry-After be handled?",
+      "gold_document": "d05",
+      "gold_chunk_ids": [
+        "c-1e58ce659139ae1d5be1945e0f3876e376759a35"
+      ]
+    },
+    {
+      "id": "q06-0",
+      "type": "documentation",
+      "text": "How do we prevent another account from retrieving my uploaded document?",
+      "gold_document": "d06",
+      "gold_chunk_ids": [
+        "c-b484e84b3821d892ae841c71b152cc31ceb300f5"
+      ]
+    },
+    {
+      "id": "q06-1",
+      "type": "documentation",
+      "text": "Where must owner_id filtering happen?",
+      "gold_document": "d06",
+      "gold_chunk_ids": [
+        "c-b484e84b3821d892ae841c71b152cc31ceb300f5"
+      ]
+    },
+    {
+      "id": "q07-0",
+      "type": "documentation",
+      "text": "The backend says a column does not exist after checkout. How do I bring schema up to date safely?",
+      "gold_document": "d07",
+      "gold_chunk_ids": [
+        "c-6cf28d91fb39a60f8c0cc5c5fecc454e52ab14f1"
+      ]
+    },
+    {
+      "id": "q07-1",
+      "type": "documentation",
+      "text": "How should an Alembic schema mismatch be repaired?",
+      "gold_document": "d07",
+      "gold_chunk_ids": [
+        "c-6cf28d91fb39a60f8c0cc5c5fecc454e52ab14f1"
+      ]
+    },
+    {
+      "id": "q08-0",
+      "type": "code",
+      "text": "Which Python example guarantees database session cleanup after an exception?",
+      "gold_document": "d08",
+      "gold_chunk_ids": [
+        "c-27fe98996e44e5fdb42dec3031dfd8fae9e6b318"
+      ]
+    },
+    {
+      "id": "q08-1",
+      "type": "code",
+      "text": "What does fetch_document do with its session?",
+      "gold_document": "d08",
+      "gold_chunk_ids": [
+        "c-27fe98996e44e5fdb42dec3031dfd8fae9e6b318"
+      ]
+    },
+    {
+      "id": "q09-0",
+      "type": "code",
+      "text": "Which JavaScript function cancels a fetch that takes more than five seconds?",
+      "gold_document": "d09",
+      "gold_chunk_ids": [
+        "c-8cd68d75c1ad0a213aa7a8c723a0c14467e63e84"
+      ]
+    },
+    {
+      "id": "q09-1",
+      "type": "code",
+      "text": "How does fetchWithDeadline clean up its timer?",
+      "gold_document": "d09",
+      "gold_chunk_ids": [
+        "c-8cd68d75c1ad0a213aa7a8c723a0c14467e63e84"
+      ]
+    },
+    {
+      "id": "q10-0",
+      "type": "code",
+      "text": "How do we avoid leaving half a document embedded if a later batch fails?",
+      "gold_document": "d10",
+      "gold_chunk_ids": [
+        "c-069251526110ce33ae10105d343558251b2f2afc"
+      ]
+    },
+    {
+      "id": "q10-1",
+      "type": "code",
+      "text": "Why must source vector writes share a transaction?",
+      "gold_document": "d10",
+      "gold_chunk_ids": [
+        "c-069251526110ce33ae10105d343558251b2f2afc"
+      ]
+    },
+    {
+      "id": "q11-0",
+      "type": "documentation",
+      "text": "Two GitHub files have identical content; should they become the same registered source?",
+      "gold_document": "d11",
+      "gold_chunk_ids": [
+        "c-217b02e2d5829b3704fa15af984574de583a811c"
+      ]
+    },
+    {
+      "id": "q11-1",
+      "type": "documentation",
+      "text": "What identifies a connector source independently of its content hash?",
+      "gold_document": "d11",
+      "gold_chunk_ids": [
+        "c-217b02e2d5829b3704fa15af984574de583a811c"
+      ]
+    },
+    {
+      "id": "q12-0",
+      "type": "configuration",
+      "text": "Where is the local embedding endpoint and initial worker configuration defined?",
+      "gold_document": "d12",
+      "gold_chunk_ids": [
+        "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0",
+        "c-f49caafbbbd658f3224ce217cf8c5b570f3d3410"
+      ]
+    },
+    {
+      "id": "q12-1",
+      "type": "configuration",
+      "text": "What value prevents silent embedding input truncation?",
+      "gold_document": "d12",
+      "gold_chunk_ids": [
+        "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0",
+        "c-f49caafbbbd658f3224ce217cf8c5b570f3d3410"
+      ]
+    },
+    {
+      "id": "q13-0",
+      "type": "configuration",
+      "text": "How can old encrypted connector tokens survive key rotation?",
+      "gold_document": "d13",
+      "gold_chunk_ids": [
+        "c-3d70e13d853995569907fc9685f4047612a29ee8",
+        "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+      ]
+    },
+    {
+      "id": "q13-1",
+      "type": "configuration",
+      "text": "Where do previous_keys participate in connector credential rotation?",
+      "gold_document": "d13",
+      "gold_chunk_ids": [
+        "c-3d70e13d853995569907fc9685f4047612a29ee8",
+        "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+      ]
+    },
+    {
+      "id": "q14-0",
+      "type": "table",
+      "text": "What size can a documentation upload have compared with debug attachments?",
+      "gold_document": "d14",
+      "gold_chunk_ids": [
+        "c-da0fe9660105a3892da6478beb293e93eae1f71b"
+      ]
+    },
+    {
+      "id": "q14-1",
+      "type": "table",
+      "text": "What is the maximum Debug attachment count?",
+      "gold_document": "d14",
+      "gold_chunk_ids": [
+        "c-da0fe9660105a3892da6478beb293e93eae1f71b"
+      ]
+    },
+    {
+      "id": "q15-0",
+      "type": "table",
+      "text": "Does a successful upload response mean vectors already exist?",
+      "gold_document": "d15",
+      "gold_chunk_ids": [
+        "c-870de84951911598c6fd06e05b3145f6259dff58"
+      ]
+    },
+    {
+      "id": "q15-1",
+      "type": "table",
+      "text": "What does ready_for_embedding mean before indexed?",
+      "gold_document": "d15",
+      "gold_chunk_ids": [
+        "c-870de84951911598c6fd06e05b3145f6259dff58"
+      ]
+    },
+    {
+      "id": "q16-0",
+      "type": "multilingual",
+      "text": "日本語と絵文字が長い文の分割で壊れないようにするには？",
+      "gold_document": "d16",
+      "gold_chunk_ids": [
+        "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+      ]
+    },
+    {
+      "id": "q16-1",
+      "type": "multilingual",
+      "text": "How are café and emoji preserved across chunk boundaries?",
+      "gold_document": "d16",
+      "gold_chunk_ids": [
+        "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+      ]
+    },
+    {
+      "id": "q17-0",
+      "type": "multilingual",
+      "text": "کیا دوسرے اکاؤنٹ کو میری نجی دستاویز مل سکتی ہے؟",
+      "gold_document": "d17",
+      "gold_chunk_ids": [
+        "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+      ]
+    },
+    {
+      "id": "q17-1",
+      "type": "multilingual",
+      "text": "Where are owner and original source references kept for local embeddings?",
+      "gold_document": "d17",
+      "gold_chunk_ids": [
+        "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+      ]
+    },
+    {
+      "id": "q18-0",
+      "type": "documentation",
+      "text": "A two-column PDF has uncertain reading order; can it enter embedding preparation?",
+      "gold_document": "d18",
+      "gold_chunk_ids": [
+        "c-e59991e97567829c90ab961a27751f3956adcde9"
+      ]
+    },
+    {
+      "id": "q18-1",
+      "type": "documentation",
+      "text": "What happens to layout_uncertain PDF sources?",
+      "gold_document": "d18",
+      "gold_chunk_ids": [
+        "c-e59991e97567829c90ab961a27751f3956adcde9"
+      ]
+    },
+    {
+      "id": "q19-0",
+      "type": "documentation",
+      "text": "Do we have to regenerate vectors after model weights change under the same model name?",
+      "gold_document": "d19",
+      "gold_chunk_ids": [
+        "c-a0fb08138c358a01677b7140c19a8c605c8ff6f7"
+      ]
+    },
+    {
+      "id": "q19-1",
+      "type": "documentation",
+      "text": "Which hashes and versions are required for embedding reuse?",
+      "gold_document": "d19",
+      "gold_chunk_ids": [
+        "c-a0fb08138c358a01677b7140c19a8c605c8ff6f7"
+      ]
+    },
+    {
+      "id": "q20-0",
+      "type": "documentation",
+      "text": "How does FastAPI know that an account identity came from the trusted frontend gateway?",
+      "gold_document": "d20",
+      "gold_chunk_ids": [
+        "c-4b1c15c00a974965a597f5266b2a193295d5c5e1"
+      ]
+    },
+    {
+      "id": "q20-1",
+      "type": "documentation",
+      "text": "Why is X-FixFlow-User-Id overwritten?",
+      "gold_document": "d20",
+      "gold_chunk_ids": [
+        "c-4b1c15c00a974965a597f5266b2a193295d5c5e1"
+      ]
+    },
+    {
+      "id": "q21-0",
+      "type": "documentation",
+      "text": "Are all alternative email bodies separately searchable after EML parsing?",
+      "gold_document": "d21",
+      "gold_chunk_ids": [
+        "c-0f0fea12871553af7950de48cdc4e4d5122adba1"
+      ]
+    },
+    {
+      "id": "q21-1",
+      "type": "documentation",
+      "text": "Where are duplicate EML headers retained?",
+      "gold_document": "d21",
+      "gold_chunk_ids": [
+        "c-0f0fea12871553af7950de48cdc4e4d5122adba1"
+      ]
+    },
+    {
+      "id": "q22-0",
+      "type": "documentation",
+      "text": "A provider revocation endpoint is unavailable. Can disconnect still block access immediately in FixFlow?",
+      "gold_document": "d22",
+      "gold_chunk_ids": [
+        "c-a4f49ee1eaaf452232f064f065a9f6b18fe4314c"
+      ]
+    },
+    {
+      "id": "q22-1",
+      "type": "documentation",
+      "text": "What does local-first disconnect do before remote cleanup?",
+      "gold_document": "d22",
+      "gold_chunk_ids": [
+        "c-a4f49ee1eaaf452232f064f065a9f6b18fe4314c"
+      ]
+    },
+    {
+      "id": "q23-0",
+      "type": "configuration",
+      "text": "Which XML example configures database pool 12 and private access?",
+      "gold_document": "d23",
+      "gold_chunk_ids": [
+        "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+      ]
+    },
+    {
+      "id": "q23-1",
+      "type": "configuration",
+      "text": "Where does /settings/database/host appear?",
+      "gold_document": "d23",
+      "gold_chunk_ids": [
+        "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+      ]
+    },
+    {
+      "id": "q24-0",
+      "type": "identifier",
+      "text": "ZXQ_FIXFLOW_47391",
+      "gold_document": "d24",
+      "gold_chunk_ids": [
+        "c-f556664c905f3264ebdef2926f0395fffdf2c7c3"
+      ]
+    },
+    {
+      "id": "q24-1",
+      "type": "identifier",
+      "text": "Which unique error means chunk order is inconsistent?",
+      "gold_document": "d24",
+      "gold_chunk_ids": [
+        "c-f556664c905f3264ebdef2926f0395fffdf2c7c3"
+      ]
+    },
+    {
+      "id": "q25-0",
+      "type": "identifier",
+      "text": "What is the difference between HTTP 401 and HTTP 403 for private sources?",
+      "gold_document": "d25",
+      "gold_chunk_ids": [
+        "c-0269bc48726ad99783fe84c7d96c84a3cfba1f89"
+      ]
+    },
+    {
+      "id": "q25-1",
+      "type": "identifier",
+      "text": "Which HTTP status means throttling rather than missing authentication?",
+      "gold_document": "d25",
+      "gold_chunk_ids": [
+        "c-0269bc48726ad99783fe84c7d96c84a3cfba1f89"
+      ]
+    },
+    {
+      "id": "q26-0",
+      "type": "documentation",
+      "text": "An embedding server went down; can users still search the previously parsed document by keywords?",
+      "gold_document": "d26",
+      "gold_chunk_ids": [
+        "c-3ab1c74477530cb45819af5a20255e949f46b260"
+      ]
+    },
+    {
+      "id": "q26-1",
+      "type": "documentation",
+      "text": "How does embedding_status failed recover?",
+      "gold_document": "d26",
+      "gold_chunk_ids": [
+        "c-3ab1c74477530cb45819af5a20255e949f46b260"
+      ]
+    },
+    {
+      "id": "q27-0",
+      "type": "table",
+      "text": "How can a very large table cell remain understandable after being split?",
+      "gold_document": "d27",
+      "gold_chunk_ids": [
+        "c-6c40bdead5457d4553a160d1f700e7ff9c1e9f6c"
+      ]
+    },
+    {
+      "id": "q27-1",
+      "type": "table",
+      "text": "What identifies row 42 Notes continuation evidence?",
+      "gold_document": "d27",
+      "gold_chunk_ids": [
+        "c-6c40bdead5457d4553a160d1f700e7ff9c1e9f6c"
+      ]
+    },
+    {
+      "id": "q28-0",
+      "type": "documentation",
+      "text": "Can we recover a missing source citation from an embedding vector later?",
+      "gold_document": "d28",
+      "gold_chunk_ids": [
+        "c-1caa51249acfb15f34b12f2b20541e7b803f286b"
+      ]
+    },
+    {
+      "id": "q28-1",
+      "type": "documentation",
+      "text": "What lineage connects a chunk back to its exact source?",
+      "gold_document": "d28",
+      "gold_chunk_ids": [
+        "c-1caa51249acfb15f34b12f2b20541e7b803f286b"
+      ]
+    },
+    {
+      "id": "q29-0",
+      "type": "configuration",
+      "text": "How do we preserve a huge JSON integer without silently rounding its digits?",
+      "gold_document": "d29",
+      "gold_chunk_ids": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ]
+    },
+    {
+      "id": "q29-1",
+      "type": "configuration",
+      "text": "Which configuration warns against converting large identifiers to floating point?",
+      "gold_document": "d29",
+      "gold_chunk_ids": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ]
+    },
+    {
+      "id": "project-0",
+      "type": "project-code",
+      "text": "Which handoff detects a persisted chunk projection mismatch?",
+      "gold_document": "real0",
+      "gold_contains": "Persisted chunk projection mismatch",
+      "gold_chunk_ids": [
+        "c-b8180c5ae0136081415af651ed7e640de7e1963f"
+      ]
+    },
+    {
+      "id": "project-1",
+      "type": "project-code",
+      "text": "Which current keyword implementation tokenizes search with SEARCH_TERMS?",
+      "gold_document": "real1",
+      "gold_contains": "SEARCH_TERMS",
+      "gold_chunk_ids": [
+        "c-b09a3271852d49f307322f58a6fa82c171b932d7",
+        "c-184c3c49f733f5c7230ce08ff0ff7ce6e0fed611"
+      ]
+    },
+    {
+      "id": "project-2",
+      "type": "project-code",
+      "text": "Which authentication function rejects unverified account identities?",
+      "gold_document": "real2",
+      "gold_contains": "Verified account identity required",
+      "gold_chunk_ids": [
+        "c-89dae08822ff09b5780d7825f352c26374172526"
+      ]
+    },
+    {
+      "id": "project-3",
+      "type": "project-code",
+      "text": "Which SQL source access check excludes expired connector ACL leases?",
+      "gold_document": "real3",
+      "gold_contains": "access_expires_at",
+      "gold_chunk_ids": [
+        "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+      ]
+    },
+    {
+      "id": "continuation-0",
+      "type": "continuation",
+      "text": "What does CONT_AUTH_701 require before committing source vectors?",
+      "gold_document": "continuation0",
+      "gold_contains": "CONT_AUTH_701",
+      "gold_chunk_ids": [
+        "c-4836d3539082d1ea0f09e2947a58ba0047a217ba"
+      ]
+    },
+    {
+      "id": "continuation-1",
+      "type": "continuation",
+      "text": "How is CONT_XML_702 XML text reconstruction represented?",
+      "gold_document": "continuation1",
+      "gold_contains": "CONT_XML_702",
+      "gold_chunk_ids": [
+        "c-f2cbc9560d4303c5ac1e71866f3a600bce612394"
+      ]
+    },
+    {
+      "id": "continuation-2",
+      "type": "continuation",
+      "text": "Which symbol context must CONT_CODE_703 code continuation pieces retain?",
+      "gold_document": "continuation2",
+      "gold_contains": "CONT_CODE_703",
+      "gold_chunk_ids": [
+        "c-08abdd1828da2f7d6cdf0cb99f704dfb80bc850d"
+      ]
+    },
+    {
+      "id": "continuation-3",
+      "type": "continuation",
+      "text": "How does CONT_CELL_704 avoid orphan table cell text?",
+      "gold_document": "continuation3",
+      "gold_contains": "CONT_CELL_704",
+      "gold_chunk_ids": [
+        "c-558a26c3681a53ef1ca0fa83f891f6e75ec63311"
+      ]
+    }
+  ]
+}
