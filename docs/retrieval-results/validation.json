@@ -1,0 +1,51 @@
+{
+  "python": {
+    "passed": 420,
+    "skipped": 2,
+    "skip_reason": "Native Tesseract unavailable; unrelated OCR execution tests",
+    "warnings": 1
+  },
+  "targeted_retrieval": {
+    "passed": 28
+  },
+  "frontend": {
+    "passed": 118
+  },
+  "browser": {
+    "checks": 118,
+    "fixture_outcomes": 101,
+    "runtime_errors": 0,
+    "sources": 103,
+    "documents": 219,
+    "chunks": 3806,
+    "orphans": 0,
+    "embeddings": 0,
+    "mode": "Keyword ingestion/fallback regression; external Clerk simulated",
+    "console_errors": "Expected 422 validation and 502 injected outage responses"
+  },
+  "passed_gates": [
+    "Ruff backend/scripts",
+    "mypy backend/scripts",
+    "Bandit production scan",
+    "pip-audit requirements-dev.lock.txt",
+    "Alembic check (no operations)",
+    "frontend ESLint",
+    "TypeScript",
+    "frontend coverage",
+    "Next production build",
+    "Compose YAML parsing"
+  ],
+  "new_dependencies": [],
+  "new_migrations": [],
+  "selected_product_mode": "dense",
+  "auto_embedding": false,
+  "reproduced_and_fixed": [
+    "Partial embedding corpus hid unembedded keyword evidence",
+    "Lease expired during inference was visible in keyword fallback using transaction-start time"
+  ],
+  "not_verified": [
+    "Live Clerk consent/session issuance",
+    "Docker image execution",
+    "Large-corpus performance and out-of-domain abstention"
+  ]
+}

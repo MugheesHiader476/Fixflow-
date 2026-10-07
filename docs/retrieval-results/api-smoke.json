@@ -1,0 +1,23 @@
+{
+  "transport": "FastAPI ASGI -> live Ollama -> actual PostgreSQL",
+  "queries": [
+    {
+      "query": "q11-0",
+      "gold_rank": 5,
+      "generation": "disabled"
+    },
+    {
+      "query": "q16-0",
+      "gold_rank": 1,
+      "generation": "disabled"
+    },
+    {
+      "query": "project-3",
+      "gold_rank": 1,
+      "generation": "disabled"
+    }
+  ],
+  "foreign_sources_excluded": true,
+  "unauthenticated_rejected": true,
+  "automatic_embedding_disabled": true
+}

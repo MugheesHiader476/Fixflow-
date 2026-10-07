@@ -1,0 +1,722 @@
+{
+  "distractors": {
+    "keyword": {
+      "top1_wrong_distractor": 12,
+      "total_top10_distractors": 161
+    },
+    "dense": {
+      "top1_wrong_distractor": 6,
+      "total_top10_distractors": 176
+    },
+    "hybrid": {
+      "top1_wrong_distractor": 11,
+      "total_top10_distractors": 199
+    }
+  },
+  "by_content_type": {
+    "documentation": {
+      "queries": 32,
+      "keyword_missing_gold_chunks": 1,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0,
+      "keyword_no_hit_queries": 1
+    },
+    "code": {
+      "queries": 6,
+      "keyword_missing_gold_chunks": 0,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0
+    },
+    "configuration": {
+      "queries": 8,
+      "keyword_missing_gold_chunks": 9,
+      "dense_missing_gold_chunks": 4,
+      "hybrid_missing_gold_chunks": 3,
+      "keyword_no_hit_queries": 4
+    },
+    "table": {
+      "queries": 6,
+      "keyword_missing_gold_chunks": 0,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0
+    },
+    "multilingual": {
+      "queries": 4,
+      "keyword_missing_gold_chunks": 2,
+      "keyword_no_hit_queries": 2,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0
+    },
+    "identifier": {
+      "queries": 4,
+      "keyword_missing_gold_chunks": 0,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0
+    },
+    "project-code": {
+      "queries": 4,
+      "keyword_missing_gold_chunks": 1,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0,
+      "keyword_no_hit_queries": 1
+    },
+    "continuation": {
+      "queries": 4,
+      "keyword_missing_gold_chunks": 0,
+      "dense_missing_gold_chunks": 0,
+      "hybrid_missing_gold_chunks": 0
+    }
+  },
+  "analysis_only_style_tags": {
+    "exact_identifiers": {
+      "query_ids": [
+        "project-1",
+        "q00-1",
+        "q01-1",
+        "q02-1",
+        "q03-1",
+        "q04-1",
+        "q05-1",
+        "q06-1",
+        "q08-1",
+        "q09-1",
+        "q13-1",
+        "q15-1",
+        "q18-1",
+        "q20-1",
+        "q23-1",
+        "q24-0",
+        "q25-0",
+        "q26-1"
+      ],
+      "missing_gold_chunks": {
+        "keyword": 1,
+        "dense": 1,
+        "hybrid": 0
+      }
+    },
+    "paraphrases": {
+      "query_ids": [
+        "q00-0",
+        "q01-0",
+        "q02-0",
+        "q03-0",
+        "q04-0",
+        "q05-0",
+        "q06-0",
+        "q07-0",
+        "q08-0",
+        "q09-0",
+        "q10-0",
+        "q11-0",
+        "q12-0",
+        "q13-0",
+        "q14-0",
+        "q15-0",
+        "q16-0",
+        "q17-0",
+        "q18-0",
+        "q19-0",
+        "q20-0",
+        "q21-0",
+        "q22-0",
+        "q23-0",
+        "q26-0",
+        "q27-0",
+        "q28-0",
+        "q29-0"
+      ],
+      "missing_gold_chunks": {
+        "keyword": 7,
+        "dense": 2,
+        "hybrid": 2
+      }
+    }
+  },
+  "keyword_recall_wins": [
+    {
+      "query_id": "q13-1",
+      "type": "configuration",
+      "query": "Where do previous_keys participate in connector credential rotation?",
+      "gold": [
+        "c-3d70e13d853995569907fc9685f4047612a29ee8",
+        "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8",
+          "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+        ],
+        "dense": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8"
+        ],
+        "hybrid": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8",
+          "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 2,
+        "dense": 1,
+        "hybrid": 1
+      }
+    }
+  ],
+  "dense_recall_wins": [
+    {
+      "query_id": "q11-0",
+      "type": "documentation",
+      "query": "Two GitHub files have identical content; should they become the same registered source?",
+      "gold": [
+        "c-217b02e2d5829b3704fa15af984574de583a811c"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-217b02e2d5829b3704fa15af984574de583a811c"
+        ],
+        "hybrid": [
+          "c-217b02e2d5829b3704fa15af984574de583a811c"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 5,
+        "hybrid": 9
+      }
+    },
+    {
+      "query_id": "q12-1",
+      "type": "configuration",
+      "query": "What value prevents silent embedding input truncation?",
+      "gold": [
+        "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0",
+        "c-f49caafbbbd658f3224ce217cf8c5b570f3d3410"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ],
+        "hybrid": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 8
+      }
+    },
+    {
+      "query_id": "q16-0",
+      "type": "multilingual",
+      "query": "日本語と絵文字が長い文の分割で壊れないようにするには？",
+      "gold": [
+        "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+        ],
+        "hybrid": [
+          "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 1
+      }
+    },
+    {
+      "query_id": "q17-1",
+      "type": "multilingual",
+      "query": "Where are owner and original source references kept for local embeddings?",
+      "gold": [
+        "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+        ],
+        "hybrid": [
+          "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 10
+      }
+    },
+    {
+      "query_id": "q23-0",
+      "type": "configuration",
+      "query": "Which XML example configures database pool 12 and private access?",
+      "gold": [
+        "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ],
+        "hybrid": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 7
+      }
+    },
+    {
+      "query_id": "q23-1",
+      "type": "configuration",
+      "query": "Where does /settings/database/host appear?",
+      "gold": [
+        "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ],
+        "hybrid": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 5
+      }
+    },
+    {
+      "query_id": "q29-0",
+      "type": "configuration",
+      "query": "How do we preserve a huge JSON integer without silently rounding its digits?",
+      "gold": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "hybrid": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 5
+      }
+    },
+    {
+      "query_id": "q29-1",
+      "type": "configuration",
+      "query": "Which configuration warns against converting large identifiers to floating point?",
+      "gold": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "dense": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "hybrid": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 1,
+        "dense": 1,
+        "hybrid": 1
+      }
+    },
+    {
+      "query_id": "project-3",
+      "type": "project-code",
+      "query": "Which SQL source access check excludes expired connector ACL leases?",
+      "gold": [
+        "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+        ],
+        "hybrid": [
+          "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 6
+      }
+    }
+  ],
+  "both_no_hit": [],
+  "partial_evidence_misses": [
+    {
+      "query_id": "q11-0",
+      "type": "documentation",
+      "query": "Two GitHub files have identical content; should they become the same registered source?",
+      "gold": [
+        "c-217b02e2d5829b3704fa15af984574de583a811c"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-217b02e2d5829b3704fa15af984574de583a811c"
+        ],
+        "hybrid": [
+          "c-217b02e2d5829b3704fa15af984574de583a811c"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 5,
+        "hybrid": 9
+      }
+    },
+    {
+      "query_id": "q12-0",
+      "type": "configuration",
+      "query": "Where is the local embedding endpoint and initial worker configuration defined?",
+      "gold": [
+        "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0",
+        "c-f49caafbbbd658f3224ce217cf8c5b570f3d3410"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ],
+        "dense": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ],
+        "hybrid": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 8,
+        "dense": 1,
+        "hybrid": 3
+      }
+    },
+    {
+      "query_id": "q12-1",
+      "type": "configuration",
+      "query": "What value prevents silent embedding input truncation?",
+      "gold": [
+        "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0",
+        "c-f49caafbbbd658f3224ce217cf8c5b570f3d3410"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ],
+        "hybrid": [
+          "c-0b5e6bad6d8bb900327e42de573a826c0d9f4cc0"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 8
+      }
+    },
+    {
+      "query_id": "q13-0",
+      "type": "configuration",
+      "query": "How can old encrypted connector tokens survive key rotation?",
+      "gold": [
+        "c-3d70e13d853995569907fc9685f4047612a29ee8",
+        "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8"
+        ],
+        "dense": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8"
+        ],
+        "hybrid": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 1,
+        "dense": 3,
+        "hybrid": 2
+      }
+    },
+    {
+      "query_id": "q13-1",
+      "type": "configuration",
+      "query": "Where do previous_keys participate in connector credential rotation?",
+      "gold": [
+        "c-3d70e13d853995569907fc9685f4047612a29ee8",
+        "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8",
+          "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+        ],
+        "dense": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8"
+        ],
+        "hybrid": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8",
+          "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 2,
+        "dense": 1,
+        "hybrid": 1
+      }
+    },
+    {
+      "query_id": "q16-0",
+      "type": "multilingual",
+      "query": "日本語と絵文字が長い文の分割で壊れないようにするには？",
+      "gold": [
+        "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+        ],
+        "hybrid": [
+          "c-66ca6986db76e475e37f1fc33a5366cf494197f2"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 1
+      }
+    },
+    {
+      "query_id": "q17-1",
+      "type": "multilingual",
+      "query": "Where are owner and original source references kept for local embeddings?",
+      "gold": [
+        "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+        ],
+        "hybrid": [
+          "c-6fd3b8f1f59eecb793722d7b7a1fef276cbc13de"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 10
+      }
+    },
+    {
+      "query_id": "q23-0",
+      "type": "configuration",
+      "query": "Which XML example configures database pool 12 and private access?",
+      "gold": [
+        "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ],
+        "hybrid": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 7
+      }
+    },
+    {
+      "query_id": "q23-1",
+      "type": "configuration",
+      "query": "Where does /settings/database/host appear?",
+      "gold": [
+        "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ],
+        "hybrid": [
+          "c-f05335e61490b8a255a129e43c06d6bb43df329a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 5
+      }
+    },
+    {
+      "query_id": "q29-0",
+      "type": "configuration",
+      "query": "How do we preserve a huge JSON integer without silently rounding its digits?",
+      "gold": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "hybrid": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 5
+      }
+    },
+    {
+      "query_id": "q29-1",
+      "type": "configuration",
+      "query": "Which configuration warns against converting large identifiers to floating point?",
+      "gold": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "dense": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "hybrid": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 1,
+        "dense": 1,
+        "hybrid": 1
+      }
+    },
+    {
+      "query_id": "project-3",
+      "type": "project-code",
+      "query": "Which SQL source access check excludes expired connector ACL leases?",
+      "gold": [
+        "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+      ],
+      "hit_chunks": {
+        "keyword": [],
+        "dense": [
+          "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+        ],
+        "hybrid": [
+          "c-0a2916ae2c430bdb44988da1ea656bd77cc30aea"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": null,
+        "dense": 1,
+        "hybrid": 6
+      }
+    }
+  ],
+  "different_useful_chunks": [
+    {
+      "query_id": "q13-1",
+      "type": "configuration",
+      "query": "Where do previous_keys participate in connector credential rotation?",
+      "gold": [
+        "c-3d70e13d853995569907fc9685f4047612a29ee8",
+        "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8",
+          "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+        ],
+        "dense": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8"
+        ],
+        "hybrid": [
+          "c-3d70e13d853995569907fc9685f4047612a29ee8",
+          "c-fc3e4d9a6a588db86d641ea38c935f766e6caf4b"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 2,
+        "dense": 1,
+        "hybrid": 1
+      }
+    },
+    {
+      "query_id": "q29-1",
+      "type": "configuration",
+      "query": "Which configuration warns against converting large identifiers to floating point?",
+      "gold": [
+        "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+        "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+      ],
+      "hit_chunks": {
+        "keyword": [
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "dense": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ],
+        "hybrid": [
+          "c-2df79325ebac99447fe6640f7c4dea94269cc107",
+          "c-cdb1ef68320dd5fcb88e4eb9b88247bd518a641a"
+        ]
+      },
+      "first_relevant_rank": {
+        "keyword": 1,
+        "dense": 1,
+        "hybrid": 1
+      }
+    }
+  ],
+  "first_relevant_ranking_wins": {
+    "tie": 37,
+    "dense": 26,
+    "keyword": 5
+  }
+}

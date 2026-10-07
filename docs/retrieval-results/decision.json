@@ -1,0 +1,25 @@
+{
+  "selected": "dense_with_keyword_fallback",
+  "model_configuration": {
+    "model": "embeddinggemma:300m",
+    "model_digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+    "dimension": 768,
+    "formatting_version": "gemma-v1",
+    "truncate": false
+  },
+  "benchmark_hash": "868e5a5ff7a44650999cf99233cccec0131f75d4843ae6eb48d0fcb8ddd6e046",
+  "dataset_hash": "78e22c758d53ce19ef04cd50ef6feba2b723213aa32790b43d475446b0bbc236",
+  "reasons": {
+    "dense_recall10_gain_vs_keyword_points": 11.029411764705877,
+    "dense_recovers_keyword_nohit_queries": 8,
+    "hybrid_recall10_gain_vs_dense_points": 0.7352941176470562,
+    "hybrid_recall5_change_vs_dense_points": -5.147058823529404,
+    "hybrid_mrr10_change_vs_dense_points": -8.682889822595708,
+    "hybrid_median_latency_ratio": 1.7204756941350154
+  },
+  "reranker": "not implemented",
+  "generation": "disabled",
+  "keyword_sql_changed": false,
+  "embedding_auto_process": false,
+  "vectors_persisted_in_isolated_benchmark": 162
+}

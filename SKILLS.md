@@ -161,7 +161,7 @@ Fixed gold corpus, offline dense/keyword comparisons, resource measurements and 
 
 ### Semantic retrieval evaluation and release
 
-Use `retrieval_config.py` for the winner pin, `retrieval.py` for query formatting/inference/validation/fallback, and `VectorRepository.search_pinned` for authorized exact cosine retrieval. Consume prepared sources, verify full model/input identities and preserve source/version/citation/continuation data. Never use the legacy unpinned search in product requests. Keep `repositories/retrieval.py:search_chunks` unchanged as baseline/fallback.
+Use `retrieval_config.py` for the winner pin, `retrieval.py` for query formatting/inference/validation/fallback, and `VectorRepository.search_pinned` for authorized exact cosine retrieval. Consume prepared sources, verify full model/input identities and preserve source/version/citation/continuation data. Never use the legacy unpinned search in product requests. Keep `repositories/retrieval.py:search_chunks` unchanged as baseline/fallback, and recheck wall-clock access after inference before any keyword response.
 
 Automatic embedding defaults off and consumes only pending/processing jobs when enabled. Before starting/restarting FastAPI, inspect this guard; do not sweep old ready sources. Partial embedding coverage must use keyword fallback so searchable unembedded sources do not disappear.
 

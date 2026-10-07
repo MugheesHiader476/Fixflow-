@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID
 
+import httpx
 from sqlalchemy import func, select
 
 from backend.config import get_settings
@@ -27,7 +28,7 @@ from backend.db.session import close_database, get_session_factory
 from backend.repositories.vectors import VectorRepository
 from backend.schemas.pipeline import digest
 from backend.services.embeddings import embed_source, get_embedding_provider
-from backend.services.retrieval import dense_retrieve, hybrid_retrieve, keyword_retrieve
+from backend.services.retrieval import dense_retrieve, hybrid_retrieve, keyword_retrieve, query_embedding
 from backend.services.retrieval_config import retrieval_pin
 from scripts.benchmark_embeddings import DATASET, OWNER, Fixture, Query, database_url, metrics, prepare
 
@@ -104,6 +105,45 @@ async def run(method: str, queries: list[Query], repetitions: int) -> dict[str, 
     }
 
 
+async def api_smoke(queries: list[Query]) -> dict[str, object]:
+    """Actual guard/routes/store + live local inference + isolated PostgreSQL."""
+    from backend.main import app  # noqa: PLC0415 - after isolated settings are loaded.
+
+    settings = get_settings()
+    if not settings.fixflow_api_token or settings.retrieval_mode != "dense":
+        raise ValueError("Smoke requires a configured private gateway and dense mode")
+    headers = {
+        "Authorization": "Bearer " + settings.fixflow_api_token.get_secret_value(),
+        "X-FixFlow-User-Id": OWNER,
+    }
+    outcomes = []
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://local-test", headers=headers,
+    ) as client:
+        for query_id in ("q11-0", "q16-0", "project-3"):
+            query = next(q for q in queries if q["id"] == query_id)
+            response = await client.post("/api/debug", json={"error": query["text"]})
+            if response.status_code != 200:
+                raise ValueError("Live retrieval API failed")
+            result = response.json()
+            ids = [source["id"] for source in result["sources"]]
+            rank = next((i + 1 for i, chunk_id in enumerate(ids) if chunk_id in query["gold_chunk_ids"]), None)
+            if rank is None or result["generation"] != "disabled":
+                raise ValueError("Live retrieval API lost gold evidence or enabled generation")
+            outcomes.append({"query": query_id, "gold_rank": rank, "generation": result["generation"]})
+        foreign = await client.post("/api/debug", json={"error": "source access"},
+                                    headers={"X-FixFlow-User-Id": "user_foreign_smoke"})
+        unauthenticated = await client.post("/api/debug", json={"error": "test"},
+                                            headers={"Authorization": "Bearer invalid"})
+        if foreign.status_code != 200 or foreign.json()["sources"] or unauthenticated.status_code != 401:
+            raise ValueError("Live retrieval API authorization failure")
+    return {
+        "transport": "FastAPI ASGI -> live Ollama -> actual PostgreSQL", "queries": outcomes,
+        "foreign_sources_excluded": True, "unauthenticated_rejected": True,
+        "automatic_embedding_disabled": not settings.embedding_auto_process,
+    }
+
+
 async def execute(args: argparse.Namespace) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     fixture = cast(Fixture, json.loads(DATASET.read_text()))
@@ -137,6 +177,8 @@ async def execute(args: argparse.Namespace) -> None:
                 raise ValueError("Benchmark vector count mismatch")
         print(json.dumps({"persisted_vectors": count}), flush=True)
     for method in args.methods.split(","):
+        if method in {"dense", "hybrid"}:
+            await query_embedding(queries[0]["text"])  # Untimed warmup; measure warm retrieval consistently.
         result = await run(method, queries, args.repetitions)
         result.update({
             "benchmark_hash": frozen, "dataset_hash": digest(fixture), "queries": len(queries),
@@ -144,11 +186,16 @@ async def execute(args: argparse.Namespace) -> None:
         })
         (OUT / (method + ".json")).write_text(json.dumps(result, indent=2))
         print(json.dumps({k: v for k, v in result.items() if k not in {"rankings", "samples_seconds"}}), flush=True)
+    if args.api_smoke:
+        smoke = await api_smoke(queries)
+        (OUT / "api-smoke.json").write_text(json.dumps(smoke, indent=2))
+        print(json.dumps(smoke), flush=True)
     await close_database()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--api-smoke", action="store_true", help="Verify actual API routes with live local inference")
     parser.add_argument("--persist", action="store_true", help="Explicitly embed just the fixed benchmark corpus")
     parser.add_argument("--methods", default="keyword,dense")
     parser.add_argument("--repetitions", type=int, default=3)
@@ -158,6 +205,8 @@ def main() -> None:
     url = database_url()
     os.environ["DATABASE_URL"] = url
     os.environ["EMBEDDING_AUTO_PROCESS"] = "false"
+    if args.api_smoke:
+        os.environ["RETRIEVAL_MODE"] = "dense"
     get_settings.cache_clear()
     # No shell, and the explicitly checked disposable DB is passed through settings.
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True, timeout=60)  # nosec B603
