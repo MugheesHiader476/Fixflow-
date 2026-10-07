@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     embedding_model_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     embedding_profile: Literal["plain-v1", "qwen-v1", "gemma-v1", "nomic-v1"] = "plain-v1"
     embedding_auto_process: bool = False
-    retrieval_mode: Literal["keyword", "dense", "hybrid"] = "keyword"
+    retrieval_mode: Literal["keyword", "dense"] = "keyword"
     retrieval_timeout_seconds: float = Field(default=10, gt=0, le=120)
     embedding_workers: int = Field(default=1, ge=1, le=4)
     embedding_timeout_seconds: float = Field(default=30, gt=0, le=120)

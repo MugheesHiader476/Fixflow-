@@ -239,3 +239,120 @@ async def test_actual_dense_benchmark_and_hybrid_paths(
         report = await benchmark_retrieval.run(method, [query], 3)
         assert report["recall_at_10"] == report["ndcg_at_10"] == 1
         assert report["errors"] == []
+
+
+@pytest.mark.anyio
+async def test_product_debug_and_chat_use_dense_without_generation(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await source_fixture(client, monkeypatch)
+    monkeypatch.setattr(get_settings(), "retrieval_mode", "dense")
+    inputs: list[str] = []
+
+    async def embed(self: OllamaEmbeddingProvider, texts: list[str]) -> list[list[float]]:
+        inputs.extend(texts)
+        return await QueryProvider().embed(texts)
+
+    monkeypatch.setattr(OllamaEmbeddingProvider, "embed", embed)
+    response = await client.post("/api/debug", json={"error": "a paraphrase with no exact keyword"})
+    assert response.status_code == 200
+    diagnosis = response.json()
+    assert diagnosis["sources"] and diagnosis["generation"] == "disabled"
+    assert inputs == ["task: search result | query: a paraphrase with no exact keyword"]
+    chat = await client.post("/api/chat", json={"session_id": diagnosis["sessionId"], "question": "another paraphrase"})
+    assert chat.status_code == 200 and chat.json()["sources"]
+    assert inputs[-1] == "task: search result | query: another paraphrase"
+    foreign = await client.post(
+        "/api/debug", json={"error": "same evidence"}, headers={"X-FixFlow-User-Id": "user_foreign"},
+    )
+    assert foreign.status_code == 200 and foreign.json()["sources"] == []
+
+
+@pytest.mark.anyio
+async def test_timeout_falls_back_without_aborting_transaction(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await source_fixture(client, monkeypatch)
+    monkeypatch.setattr(get_settings(), "retrieval_mode", "dense")
+    monkeypatch.setattr(get_settings(), "retrieval_timeout_seconds", 0.01)
+
+    async def slow(self: OllamaEmbeddingProvider, texts: list[str]) -> list[list[float]]:
+        await asyncio.sleep(0.05)
+        return await QueryProvider().embed(texts)
+
+    monkeypatch.setattr(OllamaEmbeddingProvider, "embed", slow)
+    async with get_session_factory()() as db:
+        db.info["owner_id"] = "user_test"
+        expected = await search_chunks(db, "Uniquevectorproof")
+        assert await retrieve_sources(db, "Uniquevectorproof") == expected
+        assert await db.scalar(select(KnowledgeSource.id))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("change", ["wrong_dimension", "wrong_model", "projection"])
+async def test_mixed_vectors_and_corrupt_projections_fail_closed(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    source_id = await source_fixture(client, monkeypatch)
+    async with get_session_factory().begin() as db:
+        for chunk in await db.scalars(select(DocumentChunk).where(DocumentChunk.source_id == source_id)):
+            if change == "wrong_dimension":
+                chunk.embedding = [1.0, 0.0, 0.0]
+                chunk.embedding_dimension = 3
+            elif change == "wrong_model":
+                chunk.embedding_model = "another-model"
+            else:
+                chunk.meta = {**chunk.meta, "previous_id": "wrong-link"}
+    async with get_session_factory()() as db:
+        db.info["owner_id"] = "user_test"
+        assert not (await dense_retrieve(db, "proof", provider=QueryProvider())).matches
+
+
+@pytest.mark.anyio
+async def test_partial_embedding_corpus_keeps_unembedded_keyword_evidence(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await source_fixture(client, monkeypatch)
+    response = await client.post(
+        "/api/documents", data={"content": "# New source\n\nUnembeddeduniqueterm new evidence."},
+    )
+    source_id = UUID(response.json()["id"])
+    await ingest_source(source_id)
+    monkeypatch.setattr(get_settings(), "retrieval_mode", "dense")
+    inputs: list[str] = []
+
+    async def embed(self: OllamaEmbeddingProvider, texts: list[str]) -> list[list[float]]:
+        inputs.extend(texts)
+        return await QueryProvider().embed(texts)
+
+    monkeypatch.setattr(OllamaEmbeddingProvider, "embed", embed)
+    async with get_session_factory()() as db:
+        db.info["owner_id"] = "user_test"
+        expected = await search_chunks(db, "Unembeddeduniqueterm")
+        assert expected
+        assert await retrieve_sources(db, "Unembeddeduniqueterm") == expected
+        assert not inputs
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("unavailable", [True, False])
+async def test_product_fallback_rechecks_expired_access_after_inference(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, unavailable: bool,
+) -> None:
+    source_id = await source_fixture(client, monkeypatch)
+    monkeypatch.setattr(get_settings(), "retrieval_mode", "dense")
+
+    async def expires(self: OllamaEmbeddingProvider, texts: list[str]) -> list[list[float]]:
+        async with get_session_factory().begin() as db:
+            await db.execute(update(KnowledgeSource).where(KnowledgeSource.id == source_id).values(
+                access_expires_at=datetime.now(UTC) + timedelta(milliseconds=20),
+            ))
+        await asyncio.sleep(0.04)
+        if unavailable:
+            raise EmbeddingError("unavailable after lease expiry")
+        return await QueryProvider().embed(texts)
+
+    monkeypatch.setattr(OllamaEmbeddingProvider, "embed", expires)
+    async with get_session_factory()() as db:
+        db.info["owner_id"] = "user_test"
+        assert await retrieve_sources(db, "Uniquevectorproof") == []

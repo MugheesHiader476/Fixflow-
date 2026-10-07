@@ -10,7 +10,9 @@ import json
 import math
 import os
 import statistics
-import subprocess  # nosec B404 - fixed interpreter/migration command only.
+
+# Fixed interpreter/migration command only.
+import subprocess  # nosec B404
 import sys
 import time
 from pathlib import Path
@@ -22,10 +24,10 @@ from sqlalchemy import func, select
 from backend.config import get_settings
 from backend.db.models import DocumentChunk
 from backend.db.session import close_database, get_session_factory
-from backend.repositories.retrieval import search_chunks
+from backend.repositories.vectors import VectorRepository
 from backend.schemas.pipeline import digest
 from backend.services.embeddings import embed_source, get_embedding_provider
-from backend.services.retrieval import dense_retrieve, hybrid_retrieve
+from backend.services.retrieval import dense_retrieve, hybrid_retrieve, keyword_retrieve
 from backend.services.retrieval_config import retrieval_pin
 from scripts.benchmark_embeddings import DATASET, OWNER, Fixture, Query, database_url, metrics, prepare
 
@@ -53,7 +55,7 @@ def extended_metrics(queries: list[Query], rankings: list[list[str]]) -> dict[st
 
 async def run(method: str, queries: list[Query], repetitions: int) -> dict[str, object]:
     ranks: list[list[str]] = []
-    total, inference, search, validation = [], [], [], []
+    total, inference, search, validation, eligibility = [], [], [], [], []
     for repeat in range(repetitions):
         current = []
         for query in queries:
@@ -61,12 +63,15 @@ async def run(method: str, queries: list[Query], repetitions: int) -> dict[str, 
                 db.info["owner_id"] = OWNER
                 start = time.perf_counter()
                 if method == "keyword":
-                    hits = await search_chunks(db, query["text"], 10)
+                    hits = await keyword_retrieve(db, query["text"], 10)
                     current.append([h.id for h in hits])
                     inference.append(0.0)
                     search.append(time.perf_counter() - start)
                     validation.append(0.0)
                 elif method == "dense":
+                    if await VectorRepository(db).has_embedding_gaps(retrieval_pin()):
+                        raise ValueError("Dense benchmark corpus has embedding gaps")
+                    eligibility.append(time.perf_counter() - start)
                     result = await dense_retrieve(db, query["text"], 10)
                     current.append([h.chunk_id for h in result.matches])
                     inference.append(result.embedding_seconds)
@@ -92,6 +97,7 @@ async def run(method: str, queries: list[Query], repetitions: int) -> dict[str, 
         "query_embedding_p95_seconds": percentile95(inference),
         "vector_or_keyword_search_median_seconds": statistics.median(search),
         "search_p95_seconds": percentile95(search),
+        "eligibility_median_seconds": statistics.median(eligibility) if eligibility else 0,
         "validation_median_seconds": statistics.median(validation),
         "validation_p95_seconds": percentile95(validation),
         "samples_seconds": total, "errors": [],
@@ -104,7 +110,9 @@ async def execute(args: argparse.Namespace) -> None:
     corpus, queries = await prepare(fixture)
     if queries != fixture["queries"] or len(queries) != 68 or len(corpus) != 162:
         raise ValueError("Fixed gold labels/corpus changed")
-    frozen = digest({"dataset_hash": digest(fixture), "corpus": corpus, "queries": queries})
+    frozen_data = {"dataset_hash": digest(fixture), "corpus": corpus, "queries": queries}
+    frozen = digest(frozen_data)
+    (OUT / "frozen.json").write_text(json.dumps(frozen_data, ensure_ascii=False, indent=2))
     # Pin check and artifact hashes independent of runtime/provider state.
     winner = json.loads(Path("configs/embedding-winner.json").read_text())
     if frozen != winner["benchmark_hash"]:

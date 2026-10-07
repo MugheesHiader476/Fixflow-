@@ -9,6 +9,7 @@ RUN python -m pip install --no-cache-dir -r backend/requirements.txt -r requirem
 COPY alembic.ini ./
 COPY backend ./backend
 COPY scripts ./scripts
+COPY configs/embedding-winner.json ./configs/embedding-winner.json
 RUN useradd --uid 10001 --create-home app && mkdir -p /app/data && chown app:app /app/data
 USER app
 EXPOSE 8000

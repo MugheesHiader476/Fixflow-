@@ -33,7 +33,8 @@ class DocumentationProvider:
             if evidence
             else "No matching documentation found for this problem.",
             whyThisHappens="AI diagnosis is not connected yet. Your inputs are saved and searched against uploaded "
-            "documentation using keyword retrieval. Repository links are saved as context; they are not fetched.",
+            "documentation using the configured retrieval method. "
+            "Repository links are saved as context; they are not fetched.",
             recommendedFix=[
                 FixStep(
                     title="Review the retrieved documentation" if evidence else "Add relevant documentation",

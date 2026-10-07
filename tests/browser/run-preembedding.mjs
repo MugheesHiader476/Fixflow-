@@ -22,6 +22,7 @@ const ui = "http://127.0.0.1:3012", api = `${ui}/api/backend/api`;
 const environment = {
   ...process.env, DATABASE_URL: database, FIXFLOW_API_TOKEN: "test-only-preembedding-gateway-token-32-characters",
   FIXFLOW_DATA_DIR: resolve(output, "uploads"), OLLAMA_URL: "", EMBEDDING_MODEL_DIGEST: "", EMBEDDING_PROFILE: "plain-v1", EMBEDDING_API_URL: "", EMBEDDING_MODEL: "", EMBEDDING_DIM: "",
+  RETRIEVAL_MODE: "keyword", EMBEDDING_AUTO_PROCESS: "false",
   CONNECTORS__PUBLIC_URL: ui, FRONTEND_ORIGINS: ui, PIPELINE__OCR_ENABLED: "false", PYTHONPATH: root,
 };
 await mkdir(output, { recursive: true });

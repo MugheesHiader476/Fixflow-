@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import ChatEntry, DebugSession
 from backend.db.models import SavedSolution as SavedRecord
-from backend.repositories.retrieval import search_chunks
 from backend.schemas.models import (
     ChatMessage,
     DebugRequest,
@@ -21,6 +20,7 @@ from backend.schemas.models import (
 )
 from backend.services.access import owner_id
 from backend.services.diagnosis import DiagnosisProvider, diagnostic_text
+from backend.services.retrieval import retrieve_sources
 
 
 class SessionNotFoundError(LookupError):
@@ -33,7 +33,7 @@ def now() -> datetime:
 
 async def diagnose(db: AsyncSession, payload: DebugRequest, provider: DiagnosisProvider) -> Diagnosis:
     query = diagnostic_text(payload)
-    sources = await search_chunks(db, query)
+    sources = await retrieve_sources(db, query)
     draft = await provider.diagnose(payload, sources)
     session_id = uuid4()
     diagnosis = Diagnosis(
@@ -76,7 +76,7 @@ async def chat(db: AsyncSession, session_id: UUID, question: str, provider: Diag
     if diagnosis is None:
         raise SessionNotFoundError("Session not found")
     history = await messages(db, session_id)
-    evidence = await search_chunks(db, question, limit=3)
+    evidence = await retrieve_sources(db, question, limit=3)
     answer = await provider.reply(question, diagnosis, history, evidence)
     references = {source.title: SourceReference(title=source.title, type=source.type) for source in evidence}
     reply = ChatMessage(id=str(uuid4()), role="fixflow", text=answer, sources=list(references.values()))

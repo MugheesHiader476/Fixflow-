@@ -1,6 +1,6 @@
 # Local embedding release — 2026-10-07
 
-FixFlow now supports native local Ollama inference after the authorized, validated contract-v2 handoff. PostgreSQL keyword retrieval remains the product retrieval path. No online dense/hybrid retrieval, reranking or answer generation was added. No database migration or runtime dependency was required.
+This records the embedding-only release; the subsequent [semantic retrieval release](semantic-retrieval.md) adds online dense search. FixFlow supports native local Ollama inference after the authorized, validated contract-v2 handoff. PostgreSQL keyword retrieval remains the product retrieval path. No online dense/hybrid retrieval, reranking or answer generation was added. No database migration or runtime dependency was required.
 
 ## Fixed comparison and winner
 
@@ -65,7 +65,7 @@ Candidate comparisons write only isolated `.local/embedding-benchmark` arrays/re
 
 ## Operator configuration
 
-Use the pinned [winner](../configs/embedding-winner.json) and [non-secret environment example](../configs/ollama.env.example). Set those values in native `backend/.env`, start `ollama serve` if needed, then restart FastAPI. Newly validated sources enter the existing persistent worker; one embedding worker/four inputs per batch is the starting policy. Do not mix model revisions/dimensions in a future query search path. Model changes require explicit regeneration/re-evaluation; existing indexed sources are not bulk overwritten automatically.
+Use the pinned [winner](../configs/embedding-winner.json) and [non-secret environment example](../configs/ollama.env.example). Set those values in native `backend/.env`, start `ollama serve` if needed, then restart FastAPI. Newly validated sources are queued. Automatic processing now requires `EMBEDDING_AUTO_PROCESS=true`; by default it is paused. When enabled, only pending/processing jobs run; old not_configured sources are not enrolled by restart. One embedding worker/four inputs per batch remains the starting policy. Do not mix model revisions/dimensions in a future query search path. Model changes require explicit regeneration/re-evaluation; existing indexed sources are not bulk overwritten automatically.
 
 Loopback is local to each process network namespace: a bridge-network backend container cannot reach host Ollama using localhost. This release verifies native Linux execution; container Ollama deployment needs an intentionally shared local network namespace, not a relaxed remote HTTP rule. No public Ollama service was introduced.
 

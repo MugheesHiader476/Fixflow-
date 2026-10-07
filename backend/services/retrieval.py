@@ -121,17 +121,36 @@ def dense_sources(matches: list[DenseMatch]) -> list[SourceDoc]:
     ]
 
 
+async def keyword_retrieve(db: AsyncSession, text: str, limit: int = 5) -> list[SourceDoc]:
+    """Unchanged lexical ranking with fresh access at the response boundary."""
+    sources = await search_chunks(db, text, limit)
+    if not sources:
+        return []
+    allowed = set(await db.scalars(
+        select(DocumentChunk.chunk_id)
+        .join(KnowledgeSource, KnowledgeSource.id == DocumentChunk.source_id)
+        .where(
+            DocumentChunk.chunk_id.in_([source.id for source in sources]),
+            KnowledgeSource.owner_id == owner_id(db), accessible_source(current_time=True),
+            KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+        )
+    ))
+    return [source for source in sources if source.id in allowed]
+
+
 async def retrieve_sources(db: AsyncSession, text: str, limit: int = 5) -> list[SourceDoc]:
     """Safe lexical fallback for absent/incompatible vectors or local inference failure."""
     if get_settings().retrieval_mode == "keyword":
-        return await search_chunks(db, text, limit)
+        return await keyword_retrieve(db, text, limit)
+    if await VectorRepository(db).has_embedding_gaps(retrieval_pin()):
+        return await keyword_retrieve(db, text, limit)
     try:
         result = await dense_retrieve(db, text, limit)
         if result.matches:
             return dense_sources(result.matches)
     except (EmbeddingError, ValueError, TimeoutError):
         logger.warning("Dense retrieval unavailable; using keyword retrieval")
-    return await search_chunks(db, text, limit)
+    return await keyword_retrieve(db, text, limit)
 
 
 def reciprocal_rank_fusion(rankings: list[list[str]], limit: int, constant: int = 60) -> list[str]:

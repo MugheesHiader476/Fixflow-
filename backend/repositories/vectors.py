@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import column, exists, func, select, update, values
+from sqlalchemy import and_, column, exists, func, select, update, values
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from backend.config import get_settings
 from backend.db.models import DocumentChunk, KnowledgeSource
@@ -168,12 +169,32 @@ class VectorRepository:
         )
         return [VectorMatch(*row) for row in rows]
 
+    @staticmethod
+    def pinned_conditions(pin: "RetrievalPin") -> tuple[ColumnElement[bool], ...]:
+        identity = {key: value for key, value in pin.identity("").items() if key != "input_hash"}
+        return (
+            DocumentChunk.embedding.is_not(None),
+            DocumentChunk.embedding_model == pin.model,
+            DocumentChunk.embedding_dimension == pin.dimension,
+            DocumentChunk.meta["embedding_identity"].contains(identity),
+            DocumentChunk.meta["source_hash"].astext == KnowledgeSource.file_hash,
+            DocumentChunk.meta["contract_version"].astext == "2",
+        )
+
+    async def has_embedding_gaps(self, pin: "RetrievalPin") -> bool:
+        """A partial embedding rollout must not hide still-searchable keyword evidence."""
+        eligible = select(DocumentChunk.id).join(KnowledgeSource).where(
+            KnowledgeSource.owner_id == owner_id(self.session), accessible_source(current_time=True),
+            KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+            and_(*self.pinned_conditions(pin)).is_not(True),
+        )
+        return bool(await self.session.scalar(select(eligible.exists())))
+
     async def search_pinned(self, vector: list[float], pin: "RetrievalPin", limit: int = 5) -> list[DenseMatch]:
         """Filter before distance evaluation, including when other-dimensional vectors exist."""
         self.validate_vector(vector, pin.dimension)
         if not 1 <= limit <= 100:
             raise ValueError("Search limit must be between 1 and 100")
-        identity = {key: value for key, value in pin.identity("").items() if key != "input_hash"}
         matching = (
             select(DocumentChunk)
             .join(KnowledgeSource, DocumentChunk.source_id == KnowledgeSource.id)
@@ -181,12 +202,7 @@ class VectorRepository:
                 KnowledgeSource.owner_id == owner_id(self.session),
                 accessible_source(current_time=True),
                 KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
-                DocumentChunk.embedding.is_not(None),
-                DocumentChunk.embedding_model == pin.model,
-                DocumentChunk.embedding_dimension == pin.dimension,
-                DocumentChunk.meta["embedding_identity"].contains(identity),
-                DocumentChunk.meta["source_hash"].astext == KnowledgeSource.file_hash,
-                DocumentChunk.meta["contract_version"].astext == "2",
+                *self.pinned_conditions(pin),
             )
             .cte("pinned_vectors")
             .prefix_with("MATERIALIZED")

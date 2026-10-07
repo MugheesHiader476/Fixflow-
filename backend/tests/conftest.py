@@ -58,6 +58,8 @@ async def database(
     monkeypatch.setenv("FIXFLOW_API_TOKEN", "test-only-gateway-token-at-least-32-characters")
     monkeypatch.setenv("EMBEDDING_API_URL", "")
     monkeypatch.setenv("OLLAMA_URL", "")
+    monkeypatch.setenv("RETRIEVAL_MODE", "keyword")
+    monkeypatch.setenv("EMBEDDING_AUTO_PROCESS", "false")
     monkeypatch.setenv("EMBEDDING_MODEL_DIGEST", "")
     monkeypatch.setenv("EMBEDDING_PROFILE", "plain-v1")
     monkeypatch.setenv("DATABASE_URL", migrated_database)
