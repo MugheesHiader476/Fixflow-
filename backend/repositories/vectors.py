@@ -24,6 +24,7 @@ class EmbeddingPipelineNotConfigured(RuntimeError):
 class EmbeddingInput:
     chunk_id: UUID
     vector: list[float]
+    identity: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ class VectorRepository:
         if len(vector) != dimension or not all(math.isfinite(value) for value in vector) or not any(vector):
             raise ValueError("Embedding must be finite, nonzero, and match EMBEDDING_DIM")
 
-    async def insert_embeddings(self, embeddings: list[EmbeddingInput]) -> int:
+    async def insert_embeddings(self, embeddings: list[EmbeddingInput], *, mark_indexed: bool = True) -> int:
         model, dimension = self.configuration()
         if len({item.chunk_id for item in embeddings}) != len(embeddings):
             raise ValueError("Duplicate chunk IDs in embedding batch")
@@ -80,6 +81,12 @@ class VectorRepository:
                 if len(changed) != len(batch):
                     raise ValueError("An embedding references an unknown chunk")
                 source_ids.update(changed)
+            for item in embeddings:
+                if item.identity is not None:
+                    record = await self.session.get(DocumentChunk, item.chunk_id)
+                    if record is None:
+                        raise ValueError("Missing embedding chunk")
+                    record.meta = {**record.meta, "embedding_identity": item.identity}
             missing = exists(
                 select(DocumentChunk.id).where(
                     DocumentChunk.source_id == KnowledgeSource.id,
@@ -88,7 +95,7 @@ class VectorRepository:
                     | (DocumentChunk.embedding_dimension != dimension),
                 )
             )
-            if source_ids:
+            if source_ids and mark_indexed:
                 await self.session.execute(
                     update(KnowledgeSource)
                     .where(
@@ -155,6 +162,7 @@ class VectorRepository:
                 ),
             )
             .values(
+                meta=DocumentChunk.meta.op("-")("embedding_identity"),
                 embedding=None,
                 embedding_model=None,
                 embedding_dimension=None,

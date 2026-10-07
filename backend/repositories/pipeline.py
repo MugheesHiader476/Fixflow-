@@ -132,6 +132,8 @@ async def persist_result(session: AsyncSession, source_id: UUID, result: Pipelin
                 "text_hash", digest(chunk.retrieval_content)
             ) != digest(chunk.retrieval_content):
                 record.embedding = record.embedding_model = record.embedding_dimension = None
+            elif "embedding_identity" in record.meta:
+                metadata["embedding_identity"] = record.meta["embedding_identity"]
             for key, value in values.items():
                 setattr(record, key, value)
     artifact = await session.get(IngestionArtifact, source_id)

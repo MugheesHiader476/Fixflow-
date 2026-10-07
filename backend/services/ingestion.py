@@ -163,7 +163,7 @@ async def ingest_source(source_id: UUID) -> None:
             await session.flush()
             source.status = "ready_for_embedding"
             source.error_message = None
-            source.embedding_status = "pending" if settings.embedding_api_url else "not_configured"
+            source.embedding_status = "pending" if settings.embedding_enabled else "not_configured"
     except Exception as error:
         # Loader/driver failures must roll back every document and chunk in this job.
         logger.error("Ingestion failed for %s (%s)", source_id, type(error).__name__)

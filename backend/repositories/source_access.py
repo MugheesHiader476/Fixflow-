@@ -6,10 +6,13 @@ from sqlalchemy.sql.elements import ColumnElement
 from backend.db.models import ConnectorAccount, KnowledgeSource
 
 
-def accessible_source() -> ColumnElement[bool]:
+def accessible_source(*, current_time: bool = False) -> ColumnElement[bool]:
     return and_(
         KnowledgeSource.is_active.is_(True),
-        or_(KnowledgeSource.access_expires_at.is_(None), KnowledgeSource.access_expires_at > func.now()),
+        or_(
+            KnowledgeSource.access_expires_at.is_(None),
+            KnowledgeSource.access_expires_at > (func.clock_timestamp() if current_time else func.now()),
+        ),
         or_(
             KnowledgeSource.connector_account_id.is_(None),
             exists(

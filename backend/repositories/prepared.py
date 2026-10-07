@@ -16,13 +16,19 @@ from backend.repositories.source_access import accessible_source
 from backend.schemas.pipeline import Chunk, PipelineResult, digest
 
 
-async def prepared_source(session: AsyncSession, source_id: UUID, owner_id: str) -> PipelineResult | None:
+async def prepared_source(
+    session: AsyncSession,
+    source_id: UUID,
+    owner_id: str,
+    *,
+    fresh_access: bool = False,
+) -> PipelineResult | None:
     source = await session.scalar(
         select(KnowledgeSource).where(
             KnowledgeSource.id == source_id,
             KnowledgeSource.owner_id == owner_id,
             KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
-            accessible_source(),
+            accessible_source(current_time=fresh_access),
         )
     )
     if source is None:

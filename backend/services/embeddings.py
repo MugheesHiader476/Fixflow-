@@ -3,18 +3,24 @@
 import asyncio
 import json
 import logging
+import math
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.config import get_settings
-from backend.db.models import DocumentChunk, KnowledgeSource
+from backend.db.models import ConnectorAccount, DocumentChunk, KnowledgeSource
 from backend.db.session import get_session_factory
+from backend.repositories.prepared import prepared_source
+from backend.repositories.source_access import accessible_source
 from backend.repositories.vectors import EmbeddingInput, VectorRepository
+from backend.schemas.pipeline import digest
 from backend.services.access import LEGACY_OWNER
+from backend.services.embedding_profiles import ModelProfile, embedding_identity, profile_for
 
 logger = logging.getLogger(__name__)
 
@@ -75,65 +81,132 @@ class HttpEmbeddingProvider:
 
 
 def get_embedding_provider() -> EmbeddingProvider | None:
-    return HttpEmbeddingProvider() if get_settings().embedding_api_url else None
+    settings = get_settings()
+    if settings.ollama_url:
+        from backend.services.ollama import OllamaEmbeddingProvider  # noqa: PLC0415
+
+        return OllamaEmbeddingProvider(
+            settings.ollama_url,
+            settings.embedding_model or "",
+            settings.embedding_dim or 0,
+            settings.embedding_model_digest or "",
+            settings.embedding_timeout_seconds,
+        )
+    return HttpEmbeddingProvider() if settings.embedding_api_url else None
 
 
-async def embed_source(source_id: UUID, provider: EmbeddingProvider) -> None:
+async def embed_source(source_id: UUID, provider: EmbeddingProvider, trusted_owner_id: str | None = None) -> bool:
     settings = get_settings()
     lock_key = int.from_bytes(source_id.bytes[:8], "big", signed=True)
+    source_hash: str | None = None
+    owner: str | None = None
     try:
         async with get_session_factory().begin() as db:
             if not await db.scalar(select(func.pg_try_advisory_xact_lock(lock_key))):
-                return
-            source = await db.get(KnowledgeSource, source_id)
-            if (
-                source is None
-                or not source.is_active
-                or source.status not in {"ready_for_embedding", "embedding"}
-                or source.embedding_status == "failed"
-            ):
-                return
-            total = await db.scalar(
-                select(func.count()).select_from(DocumentChunk).where(DocumentChunk.source_id == source_id)
-            )
-            if not total:
-                raise EmbeddingError("No chunks available for embedding")
-            # Commit a visible processing state separately; vector writes stay atomic.
-            async with get_session_factory().begin() as status_db:
-                await status_db.execute(
-                    update(KnowledgeSource)
-                    .where(KnowledgeSource.id == source_id)
-                    .values(status="embedding", embedding_status="processing", embedding_error=None)
+                return False
+            source = await db.scalar(
+                select(KnowledgeSource).where(
+                    KnowledgeSource.id == source_id,
+                    accessible_source(),
+                    KnowledgeSource.owner_id != LEGACY_OWNER,
+                    KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+                    KnowledgeSource.embedding_status != "failed",
                 )
-            source.status = "embedding"
-            source.embedding_status = "processing"
+            )
+            if source is None or (trusted_owner_id is not None and source.owner_id != trusted_owner_id):
+                return False
+            owner, source_hash = source.owner_id, source.file_hash
+            connector_id = source.connector_account_id
+            prepared = await prepared_source(db, source_id, owner, fresh_access=True)
+            if prepared is None or not prepared.chunks:
+                raise EmbeddingError("No authorized validated chunks available")
+            snapshot = digest(prepared.model_dump_json())
             model, dimension = VectorRepository.configuration()
-            statement = (
-                select(DocumentChunk)
-                .where(
-                    DocumentChunk.source_id == source_id,
-                    (DocumentChunk.embedding.is_(None))
-                    | (DocumentChunk.embedding_model != model)
-                    | (DocumentChunk.embedding_dimension != dimension),
-                )
-                .order_by(DocumentChunk.id)
+            profile = (
+                profile_for(model)
+                if settings.ollama_url
+                else ModelProfile(model, dimension, settings.embedding_profile)
             )
-            stream = await db.stream_scalars(statement)
-            async for chunks in stream.partitions(settings.embedding_batch_size):
-                vectors = await provider.embed([chunk.content for chunk in chunks])
-                if len(vectors) != len(chunks):
-                    raise EmbeddingError("Embedding service returned an incomplete batch")
-                await VectorRepository(db).insert_embeddings(
-                    [EmbeddingInput(chunk.id, vector) for chunk, vector in zip(chunks, vectors, strict=True)]
+            records = {
+                c.id: c for c in await db.scalars(select(DocumentChunk).where(DocumentChunk.source_id == source_id))
+            }
+            pending: list[tuple[UUID, str, dict[str, object]]] = []
+            for chunk in prepared.chunks:
+                record_id = uuid5(source_id, chunk.chunk_id)
+                text = profile.document(
+                    chunk.retrieval_content,
+                    next(c.title for c in prepared.concepts if c.concept_id == chunk.concept_id),
                 )
+                identity = embedding_identity(model, settings.embedding_model_digest, dimension, profile.version, text)
+                record = records[record_id]
+                if not (
+                    settings.embedding_model_digest
+                    and record.embedding is not None
+                    and record.embedding_model == model
+                    and record.embedding_dimension == dimension
+                    and record.meta.get("embedding_identity") == identity
+                ):
+                    pending.append((record_id, text, identity))
+            # Visible progress is conditional: it cannot resurrect a concurrently removed/updated source.
+            async with get_session_factory().begin() as status_db:
+                changed = await status_db.scalar(
+                    update(KnowledgeSource)
+                    .where(
+                        KnowledgeSource.id == source_id,
+                        KnowledgeSource.owner_id == owner,
+                        KnowledgeSource.file_hash == source_hash,
+                        accessible_source(),
+                        KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+                    )
+                    .values(status="embedding", embedding_status="processing", embedding_error=None)
+                    .returning(KnowledgeSource.id)
+                )
+                if changed is None:
+                    raise EmbeddingError("Source changed before embedding")
+            writes: list[EmbeddingInput] = []
+            for start in range(0, len(pending), settings.embedding_batch_size):
+                batch = pending[start : start + settings.embedding_batch_size]
+                vectors = await provider.embed([item[1] for item in batch])
+                if len(vectors) != len(batch):
+                    raise EmbeddingError("Embedding service returned an incomplete batch")
+                for item, vector in zip(batch, vectors, strict=True):
+                    VectorRepository.validate_vector(vector, dimension)
+                    norm = math.hypot(*vector)
+                    writes.append(EmbeddingInput(item[0], [value / norm for value in vector], item[2]))
+            # Provider calls hold no row locks. Lock and refresh authoritative state only at commit.
+            db.expire_all()
+            # Connector lifecycle writers lock accounts before sources; use the same order.
+            if connector_id:
+                await db.scalar(select(ConnectorAccount).where(ConnectorAccount.id == connector_id).with_for_update())
+            source = await db.scalar(
+                select(KnowledgeSource)
+                .where(
+                    KnowledgeSource.id == source_id,
+                    KnowledgeSource.owner_id == owner,
+                )
+                .with_for_update()
+            )
+            if source is None or source.connector_account_id != connector_id:
+                raise EmbeddingError("Source removed during embedding")
+            current = await prepared_source(db, source_id, owner, fresh_access=True)
+            if current is None or source.file_hash != source_hash or digest(current.model_dump_json()) != snapshot:
+                raise EmbeddingError("Source version or authorization changed during embedding")
+            await VectorRepository(db).insert_embeddings(writes, mark_indexed=False)
             source.status = "indexed"
             source.embedding_status = "complete"
             source.embedding_error = None
-    except (EmbeddingError, ValueError) as error:
+        return True
+    except (EmbeddingError, ValueError, SQLAlchemyError) as error:
         async with get_session_factory().begin() as db:
             await db.execute(
                 update(KnowledgeSource)
-                .where(KnowledgeSource.id == source_id)
+                .where(
+                    KnowledgeSource.id == source_id,
+                    KnowledgeSource.owner_id == owner,
+                    KnowledgeSource.file_hash == source_hash,
+                    accessible_source(),
+                    KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+                )
                 .values(
                     status="ready_for_embedding",
                     embedding_status="failed",
@@ -141,13 +214,14 @@ async def embed_source(source_id: UUID, provider: EmbeddingProvider) -> None:
                 )
             )
         logger.warning("Embedding failed for %s (%s)", source_id, type(error).__name__)
+        return False
 
 
 async def embedding_worker() -> None:
     while True:
-        provider = get_embedding_provider()
-        if provider is not None:
-            try:
+        try:
+            provider = get_embedding_provider()
+            if provider is not None:
                 async with get_session_factory()() as db:
                     ids = list(
                         await db.scalars(
@@ -156,13 +230,13 @@ async def embedding_worker() -> None:
                                 KnowledgeSource.status.in_(("ready_for_embedding", "embedding")),
                                 KnowledgeSource.embedding_status != "failed",
                                 KnowledgeSource.owner_id != LEGACY_OWNER,
-                                KnowledgeSource.is_active.is_(True),
+                                accessible_source(),
                             )
                             .order_by(KnowledgeSource.created_at)
-                            .limit(get_settings().ingestion_workers)
+                            .limit(get_settings().embedding_workers)
                         )
                     )
                 await asyncio.gather(*(embed_source(source_id, provider) for source_id in ids))
-            except Exception as error:  # noqa: BLE001 - deliberate background-service boundary.
-                logger.error("Embedding queue unavailable (%s)", type(error).__name__)
+        except Exception as error:  # noqa: BLE001 - deliberate background-service boundary.
+            logger.error("Embedding queue unavailable (%s)", type(error).__name__)
         await asyncio.sleep(2)

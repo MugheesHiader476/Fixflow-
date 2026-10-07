@@ -38,7 +38,7 @@ async def database_readiness(owner: str | None = None) -> dict[str, object]:
         "pending_sources": None,
         "failed_sources": None,
         "embedding_configured": bool(
-            settings.embedding_api_url and settings.embedding_model and settings.embedding_dim
+            settings.embedding_enabled and settings.embedding_model and settings.embedding_dim
         ),
         "ai_generation": "not_configured",
         "authentication_configured": bool(settings.fixflow_api_token),
