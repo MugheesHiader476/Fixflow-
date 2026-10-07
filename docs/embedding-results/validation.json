@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-07",
+  "backend": {
+    "passed": 392,
+    "skipped": 2,
+    "failed": 0,
+    "skip_reason": "native OCR unavailable",
+    "warning": "pre-existing LangChain loader deprecation"
+  },
+  "frontend": {
+    "passed": 118,
+    "failed": 0
+  },
+  "browser": {
+    "checks": 118,
+    "fixtures": 101,
+    "passed_fixtures": 101,
+    "external_clerk": "simulated",
+    "embedding_transports": "disabled for ingestion regression"
+  },
+  "gates": {
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "bandit": "PASS",
+    "locked_dependency_audit": "PASS",
+    "frontend_lint": "PASS",
+    "typescript": "PASS",
+    "frontend_build": "PASS",
+    "alembic_check": "PASS"
+  },
+  "live_embedding": {
+    "provider": "Ollama",
+    "model": "embeddinggemma:300m",
+    "persisted_chunks": 14,
+    "dimension": 768,
+    "truncate_false_oversize_probe": "safely rejected",
+    "application_vectors_overwritten_by_benchmark": false
+  }
+}

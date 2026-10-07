@@ -54,15 +54,23 @@ def profile_for(tag: str) -> ModelProfile:
 
 
 def embedding_identity(
-    model: str, model_digest: str | None, dimension: int, version: str, text: str
+    model: str,
+    model_digest: str | None,
+    dimension: int,
+    version: str,
+    text: str,
+    *,
+    truncate: bool | None = False,
 ) -> dict[str, object]:
-    configuration = f"{model}\n{model_digest}\n{dimension}\n{version}\ntruncate=false\nl2-normalized-v1"
+    configuration = (
+        f"{model}\n{model_digest}\n{dimension}\n{version}\ntruncate={str(truncate).lower()}\nl2-normalized-v1"
+    )
     return {
         "model": model,
         "model_digest": model_digest,
         "dimension": dimension,
         "formatting_version": version,
-        "truncate": False,
+        "truncate": truncate,
         "normalization": "l2-normalized-v1",
         "input_hash": digest(text),
         "config_hash": digest(configuration),

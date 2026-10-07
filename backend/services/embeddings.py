@@ -137,7 +137,14 @@ async def embed_source(source_id: UUID, provider: EmbeddingProvider, trusted_own
                     chunk.retrieval_content,
                     next(c.title for c in prepared.concepts if c.concept_id == chunk.concept_id),
                 )
-                identity = embedding_identity(model, settings.embedding_model_digest, dimension, profile.version, text)
+                identity = embedding_identity(
+                    model,
+                    settings.embedding_model_digest,
+                    dimension,
+                    profile.version,
+                    text,
+                    truncate=False if settings.ollama_url else None,
+                )
                 record = records[record_id]
                 if not (
                     settings.embedding_model_digest

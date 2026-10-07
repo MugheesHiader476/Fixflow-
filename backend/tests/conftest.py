@@ -62,8 +62,8 @@ async def database(
     monkeypatch.setenv("EMBEDDING_PROFILE", "plain-v1")
     monkeypatch.setenv("DATABASE_URL", migrated_database)
     monkeypatch.setenv("FIXFLOW_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("EMBEDDING_DIM", raising=False)
-    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.setenv("EMBEDDING_DIM", "")
+    monkeypatch.setenv("EMBEDDING_MODEL", "")
     get_settings.cache_clear()
     await close_database()
     async with get_engine().begin() as connection:

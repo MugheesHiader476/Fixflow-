@@ -472,6 +472,8 @@ async def execute(args: argparse.Namespace) -> None:
         print(json.dumps(winner, indent=2))
     elif args.persist:
         winner = cast(Winner, json.loads((OUT / "winner.json").read_text()))
+        if winner["benchmark_hash"] != frozen_hash:
+            raise ValueError("Selected winner does not match this benchmark")
         settings = get_settings()
         settings.ollama_url = "http://127.0.0.1:11434"
         settings.embedding_model = winner["model"]

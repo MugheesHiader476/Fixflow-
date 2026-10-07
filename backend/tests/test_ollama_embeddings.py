@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import func, select, update
 
 from backend.config import Settings, get_settings
-from backend.db.models import DocumentChunk, IngestionArtifact, KnowledgeSource
+from backend.db.models import ConnectorAccount, DocumentChunk, IngestionArtifact, KnowledgeSource
 from backend.db.session import get_session_factory
 from backend.repositories.prepared import prepared_source
 from backend.repositories.vectors import EmbeddingInput, VectorRepository
@@ -313,3 +313,49 @@ def test_ollama_configuration_requires_pinned_profile_dimension_and_digest(monke
     ):
         with pytest.raises(ValueError):
             Settings.model_validate({**valid, **change})
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("revocation", ["disconnect", "credentials"])
+async def test_connector_revocation_during_inference_cannot_commit_vectors(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    revocation: str,
+) -> None:
+    source_id = await source_fixture(client)
+    configure(monkeypatch)
+    async with get_session_factory().begin() as db:
+        account = ConnectorAccount(
+            owner_id="user_test",
+            provider="github",
+            external_account_id="test-installation",
+            display_name="Test account",
+            status="connected",
+            authentication_status="valid",
+        )
+        db.add(account)
+        await db.flush()
+        account_id = account.id
+        await db.execute(
+            update(KnowledgeSource).where(KnowledgeSource.id == source_id).values(connector_account_id=account_id)
+        )
+
+    class RevokingProvider(RecordingProvider):
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            if not self.texts:
+                async with get_session_factory().begin() as db:
+                    values = (
+                        {"status": "disconnected"}
+                        if revocation == "disconnect"
+                        else {"authentication_status": "invalid"}
+                    )
+                    await db.execute(update(ConnectorAccount).where(ConnectorAccount.id == account_id).values(**values))
+            return await super().embed(texts)
+
+    assert not await embed_source(source_id, RevokingProvider(), "user_test")
+    async with get_session_factory()() as db:
+        assert await prepared_source(db, source_id, "user_test") is None
+        assert (
+            await db.scalar(select(func.count()).select_from(DocumentChunk).where(DocumentChunk.embedding.is_not(None)))
+            == 0
+        )

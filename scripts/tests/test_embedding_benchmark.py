@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from backend.services.embedding_profiles import PROFILES
+from backend.services.embedding_profiles import PROFILES, embedding_identity
 from scripts.benchmark_embeddings import DATASET, BenchmarkResult, Fixture, Query, choose, metrics
 
 
@@ -59,3 +59,11 @@ def test_winner_quality_precedes_speed_and_close_quality_prefers_speed() -> None
     results[1]["errors"] = ["unavailable"]
     with pytest.raises(ValueError):
         choose(results)
+
+
+def test_local_identity_does_not_invent_remote_truncation_policy() -> None:
+    local = embedding_identity("model", "a" * 64, 768, "plain-v1", "input")
+    remote = embedding_identity("model", "a" * 64, 768, "plain-v1", "input", truncate=None)
+    assert local["truncate"] is False
+    assert remote["truncate"] is None
+    assert local["config_hash"] != remote["config_hash"]
