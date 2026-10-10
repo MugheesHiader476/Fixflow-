@@ -250,6 +250,41 @@ async def test_invalid_grounding_or_status_gets_one_fresh_attempt_without_weaken
     assert drafts == 2
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("corrected", [True, False])
+async def test_reasoning_contaminated_json_is_never_accepted_or_echoed(
+    monkeypatch: pytest.MonkeyPatch, corrected: bool,
+) -> None:
+    provider = OllamaAnswerProvider(settings())
+    drafts = 0
+    valid = json.dumps(reference_payload())
+    contaminated = valid + "\n</think>\n" + valid
+
+    async def request(method: str, path: str, payload: dict[str, object] | None = None) -> object:
+        nonlocal drafts
+        if path == "/api/tags":
+            return {"models": [{"name": MODEL, "digest": DIGEST}]}
+        drafts += 1
+        if drafts == 2:
+            assert payload is not None
+            assert "Output check failed" in json.dumps(payload["messages"])
+            assert "</think>" not in json.dumps(payload["messages"])
+        return {"model": MODEL, "done": True, "done_reason": "stop", "message": {
+            "role": "assistant", "content": valid if corrected and drafts == 2 else contaminated,
+        }}
+
+    monkeypatch.setattr(provider, "request", request)
+    if corrected:
+        answer = await provider.answer("What is the refund window?", evidence())
+        assert answer.status == "answered"
+        assert "</think>" not in answer.text
+        assert answer.citations[0].quote == QUOTE
+    else:
+        with pytest.raises(GenerationError, match="could not be verified"):
+            await provider.answer("What is the refund window?", evidence())
+    assert drafts == 2
+
+
 @pytest.mark.parametrize("case", ["id", "quote", "claims", "no_citation", "url", "marker", "abstention"])
 def test_invalid_grounding_is_rejected(case: str) -> None:
     value = answer_payload()

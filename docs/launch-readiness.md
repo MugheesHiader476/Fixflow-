@@ -21,21 +21,25 @@ This release adds optional local answer synthesis and document-grounded reasonin
 
 ## Local model setup
 
-Use a native backend with Ollama listening only on `127.0.0.1:11434`. The measured answer candidate is `qwen3:4b`, Q4_K_M, approximately 2.5 GB. It is independent of the selected 768-dimensional EmbeddingGemma model; answer-model selection does not replace application vectors.
+Use a native backend with Ollama listening only on loopback. The current answer candidate is `qwen3:4b-instruct-2507-q4_K_M`, approximately 2.5 GB. It is independent of the selected 768-dimensional EmbeddingGemma model; answer-model selection does not replace application vectors.
 
 ```bash
 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 \
-OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=f16 ollama serve
+OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=f16 OLLAMA_GO_TEMPLATE=1 ollama serve
 # In another terminal:
-ollama pull qwen3:4b
+ollama pull qwen3:4b-instruct-2507-q4_K_M
 ollama pull embeddinggemma:300m
 ```
 
 Verify both full digests using `/api/tags`. Copy the non-secret values in `configs/answers.env.example` and `configs/ollama.env.example` into your backend environment. For automatic source-to-answer operation, set `RETRIEVAL_MODE=dense` and `EMBEDDING_AUTO_PROCESS=true`. Keep the existing DB and gateway credentials; never replace environment files wholesale. Restart FastAPI after changes. Existing old sources are not automatically enrolled into embedding; reprocess/re-upload them explicitly if needed.
 
-The answer model is pinned to `359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7`. The embedding pin remains in `configs/embedding-winner.json`. A changed/missing answer digest produces a safe availability error rather than silently switching models. The answer candidate is smoke-tested, not the winner of a comprehensive generation benchmark.
+The answer model is pinned to `0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0`. The embedding pin remains in `configs/embedding-winner.json`. A changed/missing answer digest produces a safe availability error rather than silently switching models. The answer candidate is smoke-tested, not the winner of a comprehensive generation benchmark.
 
-The implementation follows Ollama's [chat API](https://docs.ollama.com/api/chat), [JSON-schema structured outputs](https://docs.ollama.com/capabilities/structured-outputs), and [model inventory API](https://docs.ollama.com/api/tags). Model distribution details are in the [Qwen3 4B listing](https://ollama.com/library/qwen3:4b).
+The implementation follows Ollama's [chat API](https://docs.ollama.com/api/chat), [JSON-schema structured outputs](https://docs.ollama.com/capabilities/structured-outputs), and [model inventory API](https://docs.ollama.com/api/tags). Model distribution details are in the [Qwen3 instruction listing](https://ollama.com/library/qwen3:4b-instruct-2507-q4_K_M).
+
+The installed Ollama 0.34.2 runtime selected a thinking-capable GGUF template for the instruction variant unless `OLLAMA_GO_TEMPLATE=1` was explicit. The local launcher forces the model's Ollama template, and the answer prompt states the grounding rules concisely. The previous thinking model and longer prompt produced malformed or incomplete output on the repository-code question; strict validation rejected it. Do not strip reasoning markers or accept partial JSON to conceal these failures. A fresh correction remains bounded to one attempt within the existing deadline. Restart existing answer runtimes with the explicit template setting. The earlier release-level browser results below describe the previous candidate and do not certify the replacement across all customer questions.
+
+The current native launcher uses separate runtimes: EmbeddingGemma on CPU with f16 and the instruction answer candidate on the GPU with q8_0. It verifies the pinned model before and after a small structured-output warm-up, then starts the application. Thirteen live checks passed after a cold restart against a separate disposable `_test` database: the actual `src/lib/request-timeout.ts` file was parsed, embedded and answered with the correct 120,000/60,000 millisecond values and exact quotes; conversations/saved quotes persisted; a two-row CSV calculation returned a difference of 300 and a 33.33% increase without invented currency; missing evidence abstained; foreign-account reads were excluded. The ignored `.local/runtime/code-smoke.json` contains this narrow evidence. This is not a comprehensive model/cache quality benchmark or live Clerk verification. The older Docker/cache measurements below remain historical deployment evidence.
 
 ```bash
 myenev/bin/python -m scripts.check_launch
@@ -60,7 +64,7 @@ Open `http://localhost:3000`, matching the configured native public origin. The 
 
 ```bash
 docker compose -f compose.yaml -f compose.ollama.yaml up -d
-docker compose -f compose.yaml -f compose.ollama.yaml exec ollama ollama pull qwen3:4b
+docker compose -f compose.yaml -f compose.ollama.yaml exec ollama ollama pull qwen3:4b-instruct-2507-q4_K_M
 docker compose -f compose.yaml -f compose.ollama.yaml exec ollama ollama pull embeddinggemma:300m
 docker compose -f compose.yaml -f compose.ollama.yaml exec backend python -m scripts.check_launch
 ```
@@ -77,11 +81,11 @@ Keep both native Ollama runtimes running on host loopback with the installed pin
 
 ```bash
 # Embedding runtime on CPU (first terminal):
-CUDA_VISIBLE_DEVICES=-1 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 \
+CUDA_VISIBLE_DEVICES=-1 OLLAMA_VULKAN=0 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 \
 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=f16 ollama serve
 # Answer runtime (second terminal):
 OLLAMA_HOST=127.0.0.1:11435 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 \
-OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q4_0 ollama serve
+OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q4_0 OLLAMA_GO_TEMPLATE=1 ollama serve
 ```
 
 Copy the host overlay settings into root `.env` while retaining credentials and model pins. Recreate the relay whenever the backend's container/network namespace is recreated (normal Compose startup does this). This host design was verified with Docker Desktop; do not assume an ordinary Linux Engine's host-gateway reaches a loopback-only host service. The container Ollama overlay remains an alternative for provisioned deployment hardware.

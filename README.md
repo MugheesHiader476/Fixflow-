@@ -73,6 +73,17 @@ npm run dev
 
 Frontend: http://localhost:3000. Health: http://localhost:8000/health. API documentation: http://localhost:8000/docs. Health checks database connectivity, pgvector, required tables, and the Alembic revision. Public health omits corpus counts; authenticated `/api/readiness` reports counts for the current account and configuration indicators. Missing migrations or unavailable dependencies return HTTP 503 without exposing credentials or internal errors. Settings displays this readiness information.
 
+Once dependencies, environment files, database initialization/migrations and configured model downloads are complete, start the native stack in one terminal:
+
+```bash
+npm run build             # production build; repeat after changing frontend code
+npm run start:local       # or npm run dev:local while editing
+```
+
+The local launcher checks matching gateway credentials and Clerk configuration, starts the initialized private PostgreSQL cluster when it is the configured database, verifies database/schema readiness, starts missing loopback Ollama services and checks their model digests, then starts FastAPI and Next. It reuses a healthy authenticated backend and existing model services. Stop any existing frontend on the configured port first. Logs are in ignored `.local/runtime/`; Ctrl+C stops only processes created by this command and leaves PostgreSQL running. The launcher does not install dependencies/models, initialize or reset a database, or apply migrations. Existing workers resume their persisted jobs normally.
+
+For this workstation's separate native runtimes, use `OLLAMA_URL=http://127.0.0.1:11434` and `GENERATION_OLLAMA_URL=http://127.0.0.1:11435` in `backend/.env`, preserving the documented model pins. The launcher uses CPU/f16 for embeddings and a q8_0 answer cache on the small GPU when the origins differ. It warms the pinned answer model with a small structured-output check before serving requests, and explicitly selects its Ollama template. See [local model setup and quality limits](docs/launch-readiness.md) before deploying this configuration elsewhere.
+
 ## Account entry
 
 Signed-out visits to the frontend workspace open `/sign-up` first. Existing users can switch to `/sign-in`; Clerk handles account field validation and verification. After sign-up or sign-in, users return to the workspace. Frontend pages and all Next.js gateway routes require a Clerk session. The gateway forwards a server-only credential and verified account identity; FastAPI verifies that credential and scopes persisted records and retrieval to the account. Only exact provider event POST routes bypass Clerk, under separate signature/identity verification. Missing authentication configuration fails closed. Keep FastAPI private; browsers must use the gateway. See the runtime audit for legacy-data assignment and deployment limitations.

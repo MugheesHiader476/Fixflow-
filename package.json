@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "node scripts/start-production.mjs",
+    "start:local": "node scripts/start-local.mjs",
+    "dev:local": "node scripts/start-local.mjs --dev",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
