@@ -37,6 +37,7 @@ def source_response(
         detail=source.error_message or f"{document_count} documents · {chunk_count} chunks",
         is_active=source.is_active,
         retrieval_available=accessible and source.status in {"ready_for_embedding", "embedding", "indexed"},
+        managed_by_connector=source.connector_account_id is not None,
     )
 
 

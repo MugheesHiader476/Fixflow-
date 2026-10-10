@@ -23,6 +23,7 @@ from backend.connectors.core import ConnectorError
 from backend.db.session import close_database
 from backend.services.connector_sync import connector_worker
 from backend.services.embeddings import embedding_worker
+from backend.services.generation import GenerationError, GenerationInputError
 from backend.services.ingestion import ingestion_worker
 from backend.services.readiness import database_readiness
 
@@ -135,6 +136,11 @@ async def health() -> JSONResponse:
 app.include_router(router, prefix="/api")
 app.include_router(connector_router, prefix="/api")
 app.include_router(events_router)
+
+
+@app.exception_handler(GenerationError)
+async def generation_error(_: Request, error: GenerationError) -> JSONResponse:
+    return error_response("ANSWER_UNAVAILABLE", str(error), 422 if isinstance(error, GenerationInputError) else 503)
 
 
 @app.exception_handler(ConnectorError)

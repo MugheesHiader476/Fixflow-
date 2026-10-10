@@ -1,11 +1,12 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { applicationOrigin, isCrossOriginWrite } from "./application-origin";
+import { requestTimeoutMs } from "../request-timeout";
 
 const UUID = "[0-9a-fA-F-]{36}";
 const PROVIDER = "(gmail|github|google_drive|slack)";
 const GET_PATH = new RegExp(`^(health|api/(readiness|sessions|sources|saved|connectors)|api/sessions/${UUID}(/messages)?|api/sources/${UUID}(/status)?|api/connectors/${UUID}/(resources|status)|api/connectors/${PROVIDER}/callback)$`);
-const POST_PATH = new RegExp(`^api/(debug|chat|saved|documents|sources/${UUID}/retry-embedding|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
+const POST_PATH = new RegExp(`^api/(ask|debug|chat|saved|documents|sources/${UUID}/(retry-embedding|availability)|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
 
 function connectorQuery(request: Request, path: string): string | null {
   if (!path.startsWith("api/connectors/")) return "";
@@ -47,7 +48,7 @@ export async function proxyBackend(request: Request, path: string) {
       method: request.method,
       headers,
       ...(request.method === "POST" ? { body: request.body, duplex: "half" } : {}),
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(60_000)]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs(path, request.method))]),
       redirect: "error",
       cache: "no-store",
     } as RequestInit & { duplex?: "half" });

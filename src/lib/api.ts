@@ -1,6 +1,7 @@
 import { validResponse } from "./response-validation";
+import { requestTimeoutMs } from "./request-timeout";
 import type {
-  ChatMessage, DebugRequest, DebugSession, Diagnosis, KnowledgeSource, SavedSolution, SourceType,
+  ChatMessage, DebugRequest, DebugSession, Diagnosis, KnowledgeSource, SavedSolution, SourceReference, SourceType,
 } from "./types";
 
 export type { DebugRequest } from "./types";
@@ -24,6 +25,8 @@ export interface BackendHealth {
   failed_sources: number | null;
   embedding_configured: boolean;
   ai_generation: string;
+  answer_service?: "ready" | "unavailable" | "not_configured";
+  retrieval_mode?: "keyword" | "dense";
 }
 
 export function checkBackendHealth(signal?: AbortSignal): Promise<BackendHealth> {
@@ -37,7 +40,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit, acceptedStat
   }
   let response: Response;
   try {
-    const timeout = AbortSignal.timeout(60_000);
+    const timeout = AbortSignal.timeout(requestTimeoutMs(path, init?.method));
     const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     response = await fetch(`${API_URL.replace(/\/$/, "")}${path}`, { ...init, headers, signal });
   } catch (error) {
@@ -67,10 +70,10 @@ function apiErrorMessage(body: unknown, status: number): string {
 }
 
 export function diagnose(req: DebugRequest, signal?: AbortSignal): Promise<Diagnosis> {
-  return apiFetch("/api/debug", {
+  return apiFetch(req.question ? "/api/ask" : "/api/debug", {
     method: "POST", signal,
     body: JSON.stringify({
-      error: req.error, code: req.code, context: req.context,
+      question: req.question, error: req.error, code: req.code, context: req.context,
       repo_url: req.repoUrl, techs: req.techs, files: req.files,
     }),
   });
@@ -125,7 +128,7 @@ export function saveSolution(input: {
   rootCause: string;
   technology: string[];
   fixSummary: string;
-  sources: { title: string; type: SourceType }[];
+  sources: SourceReference[];
 }): Promise<SavedSolution> {
   return apiFetch("/api/saved", { method: "POST", body: JSON.stringify(input) });
 }
@@ -136,4 +139,10 @@ export const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
 
 export function retryEmbedding(id: string): Promise<KnowledgeSource> {
   return apiFetch(`/api/sources/${encodeURIComponent(id)}/retry-embedding`, { method: "POST" });
+}
+
+export function setSourceAvailability(id: string, active: boolean): Promise<KnowledgeSource> {
+  return apiFetch(`/api/sources/${encodeURIComponent(id)}/availability`, {
+    method: "POST", body: JSON.stringify({ active }),
+  });
 }

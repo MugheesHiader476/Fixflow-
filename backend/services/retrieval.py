@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import get_settings
 from backend.db.models import DocumentChunk, KnowledgeSource
 from backend.repositories.prepared import prepared_source
-from backend.repositories.retrieval import search_chunks
+from backend.repositories.retrieval import search_chunks, source_excerpt
 from backend.repositories.source_access import accessible_source
 from backend.repositories.vectors import DenseMatch, VectorRepository
 from backend.schemas.models import SourceDoc
@@ -112,10 +112,8 @@ async def dense_retrieve(
 
 def dense_sources(matches: list[DenseMatch]) -> list[SourceDoc]:
     return [
-        SourceDoc(
-            id=match.chunk_id, type="github" if match.source_type == "github" else "docs",
-            title=match.title, publisher="Knowledge base", url=match.url or "", relevance=0,
-            excerpt=match.content[:6000], used=True,
+        source_excerpt(
+            match.chunk_id, match.source_id, match.content, match.metadata, match.title, match.source_type, match.url,
         )
         for match in matches
     ]
@@ -140,6 +138,7 @@ async def keyword_retrieve(db: AsyncSession, text: str, limit: int = 5) -> list[
 
 async def retrieve_sources(db: AsyncSession, text: str, limit: int = 5) -> list[SourceDoc]:
     """Safe lexical fallback for absent/incompatible vectors or local inference failure."""
+    db.info["retrieval_method"] = "keyword"
     if get_settings().retrieval_mode == "keyword":
         return await keyword_retrieve(db, text, limit)
     if await VectorRepository(db).has_embedding_gaps(retrieval_pin()):
@@ -147,10 +146,98 @@ async def retrieve_sources(db: AsyncSession, text: str, limit: int = 5) -> list[
     try:
         result = await dense_retrieve(db, text, limit)
         if result.matches:
+            db.info["retrieval_method"] = "dense"
             return dense_sources(result.matches)
     except (EmbeddingError, ValueError, TimeoutError):
         logger.warning("Dense retrieval unavailable; using keyword retrieval")
     return await keyword_retrieve(db, text, limit)
+
+
+async def generation_evidence(
+    db: AsyncSession, sources: list[SourceDoc], *, expand_context: bool = False,
+) -> list[SourceDoc]:
+    """Generation consumes only authorized, independently validated current v2 projections."""
+    prepared: dict[str, PipelineResult | None] = {}
+    valid: list[SourceDoc] = []
+    neighbors: dict[str, str] = {}
+    for source in sources:
+        if not source.source_id:
+            continue
+        if source.source_id not in prepared:
+            try:
+                prepared[source.source_id] = await prepared_source(
+                    db, UUID(source.source_id), owner_id(db), fresh_access=True,
+                )
+            except (ValueError, KeyError):
+                prepared[source.source_id] = None
+        result = prepared[source.source_id]
+        if result is None or result.canonical.source.sha256 != source.source_hash:
+            continue
+        chunk = next((item for item in result.chunks if item.chunk_id == source.id), None)
+        if chunk is not None and chunk.raw_content[:6000] == source.excerpt:
+            valid.append(source)
+            if expand_context:
+                for neighbor in (chunk.previous_id, chunk.next_id):
+                    if neighbor:
+                        neighbors[neighbor] = source.source_id
+    if not expand_context or not valid:
+        return valid
+    # Adjacent context can contain the condition, exception or row needed for a conclusion.
+    # Read only registered, validated sources; each excerpt keeps its own exact citation identity.
+    selected = {source.id for source in valid}
+    candidate_ids = [chunk_id for chunk_id in neighbors if chunk_id not in selected][:24]
+    if candidate_ids:
+        rows = await db.execute(
+            select(DocumentChunk, KnowledgeSource)
+            .join(KnowledgeSource, KnowledgeSource.id == DocumentChunk.source_id)
+            .where(
+                DocumentChunk.chunk_id.in_(candidate_ids),
+                KnowledgeSource.owner_id == owner_id(db), accessible_source(current_time=True),
+                KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+                DocumentChunk.meta["source_hash"].astext == KnowledgeSource.file_hash,
+            )
+            .order_by(DocumentChunk.chunk_index)
+            .execution_options(populate_existing=True)
+        )
+        for record, registered in rows:
+            result = prepared.get(str(registered.id))
+            if result is None or neighbors.get(record.chunk_id) != str(registered.id):
+                continue
+            expected = next((chunk for chunk in result.chunks if chunk.chunk_id == record.chunk_id), None)
+            if expected is not None and record.content == expected.raw_content:
+                valid.append(source_excerpt(
+                    record.chunk_id, registered.id, record.content, record.meta,
+                    registered.name, registered.source_type, registered.url,
+                ))
+            if len(valid) >= 24:
+                break
+    return valid
+
+
+async def evidence_is_current(db: AsyncSession, sources: list[SourceDoc]) -> bool:
+    """Recheck wall-clock access and exact projections after potentially slow synthesis."""
+    if not sources:
+        return True
+    if len(await generation_evidence(db, sources)) != len(sources):
+        return False
+    rows = await db.execute(
+        select(DocumentChunk, KnowledgeSource)
+        .join(KnowledgeSource, KnowledgeSource.id == DocumentChunk.source_id)
+        .where(
+            DocumentChunk.chunk_id.in_([source.id for source in sources]),
+            KnowledgeSource.owner_id == owner_id(db), accessible_source(current_time=True),
+            KnowledgeSource.status.in_(("ready_for_embedding", "embedding", "indexed")),
+            DocumentChunk.meta["source_hash"].astext == KnowledgeSource.file_hash,
+        )
+        .execution_options(populate_existing=True)
+    )
+    current = {
+        chunk.chunk_id: source_excerpt(
+            chunk.chunk_id, source.id, chunk.content, chunk.meta, source.name, source.source_type, source.url,
+        )
+        for chunk, source in rows
+    }
+    return all(current.get(source.id) == source for source in sources)
 
 
 def reciprocal_rank_fusion(rankings: list[list[str]], limit: int, constant: int = 60) -> list[str]:

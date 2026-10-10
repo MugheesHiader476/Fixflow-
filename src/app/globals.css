@@ -196,8 +196,8 @@ button:not(:disabled), summary { cursor: pointer; }
 .ff-debug-input { padding-top: 0; box-shadow: 0 8px 30px #20364104; }
 .ff-debug-input textarea { background: var(--background); min-height: 160px; }
 .ff-debug-input fieldset > div:last-child { flex-wrap: wrap; border-radius: 0 0 12px 12px; }
-.ff-debug-input fieldset > div:last-child > div:first-child { flex-basis: 220px; }
-.ff-debug-input fieldset > div:last-child > div:first-child > button { max-width: 100%; }
+.ff-debug-input .ff-input-technologies { flex-basis: 220px; }
+.ff-debug-input .ff-input-technologies > button { max-width: 100%; }
 .ff-input-note { padding: 10px 2px; color: var(--muted); font-size: 11px; line-height: 1.7; }
 .ff-workspace-guide { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
 .ff-guide-image { position: relative; height: 145px; }
@@ -315,7 +315,7 @@ button:not(:disabled), summary { cursor: pointer; }
   .ff-intro div > p { font-size: 13px; margin-top: 18px; }
   .ff-workspace-section { padding: 30px 1% 28px; }
   .ff-section-heading :is(h1, h2) { font-size: 29px; }
-  .ff-debug-input fieldset > div:last-child > div:first-child { flex-basis: auto; }
+  .ff-debug-input .ff-input-technologies { flex-basis: auto; }
   .ff-workspace-guide { grid-template-columns: 1fr 1.2fr; }
   .ff-guide-content { padding: 20px 16px; }
   .ff-guide-content h3 { font-size: 21px; }

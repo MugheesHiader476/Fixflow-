@@ -1,12 +1,20 @@
-"""Replace the dependency below with an AI adapter when a provider is selected."""
+"""Select local grounded answers when configured; preserve honest source browsing otherwise."""
 
 from typing import Literal, Protocol
 
-from backend.schemas.models import ChatMessage, DebugRequest, Diagnosis, DiagnosisDraft, FixStep, SourceDoc
+from backend.schemas.models import (
+    ChatMessage,
+    DebugRequest,
+    Diagnosis,
+    DiagnosisDraft,
+    FixStep,
+    GroundedAnswer,
+    SourceDoc,
+)
 
 
 def diagnostic_text(payload: DebugRequest) -> str:
-    values = [payload.error, payload.context, payload.code, *(file.content for file in payload.files)]
+    values = [payload.question, payload.error, payload.context, payload.code, *(file.content for file in payload.files)]
     return "\n".join(value.strip() for value in values if value and value.strip())
 
 
@@ -17,7 +25,7 @@ class DiagnosisProvider(Protocol):
 
     async def reply(
         self, question: str, diagnosis: Diagnosis, history: list[ChatMessage], evidence: list[SourceDoc]
-    ) -> str: ...
+    ) -> str | GroundedAnswer: ...
 
 
 class DocumentationProvider:
@@ -44,6 +52,11 @@ class DocumentationProvider:
                 )
             ],
             alternatives=[],
+            answer=GroundedAnswer(
+                status="insufficient_evidence",
+                text="AI answers are not configured for this workspace. You can review the retrieved excerpts below."
+                if evidence else "No matching evidence found. Add a relevant source or ask a more specific question.",
+            ) if payload.question else None,
         )
 
     async def reply(
@@ -58,4 +71,9 @@ class DocumentationProvider:
 
 
 def get_diagnosis_provider() -> DiagnosisProvider:
+    from backend.config import get_settings  # noqa: PLC0415
+    from backend.services.generation import OllamaAnswerProvider  # noqa: PLC0415
+
+    if get_settings().generation_enabled:
+        return OllamaAnswerProvider()
     return DocumentationProvider()

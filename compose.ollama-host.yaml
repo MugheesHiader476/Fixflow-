@@ -1,0 +1,12 @@
+# Docker Desktop only: use an existing loopback-bound native Ollama with host GPU access.
+# The relay has no published port and shares only the backend's network namespace.
+services:
+  ollama-relay:
+    image: ${OLLAMA_RELAY_IMAGE:?Set a reviewed Nginx image tag or digest}
+    network_mode: service:backend
+    volumes:
+      - ./configs/ollama-host-relay.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped

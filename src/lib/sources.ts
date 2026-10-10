@@ -6,10 +6,10 @@ export const SOURCE_STATUS: Record<KnowledgeSource["status"], {
 }> = {
   uploaded: { label: "Uploaded", tone: "muted" },
   processing: { label: "Processing", tone: "warning" },
-  chunked: { label: "Chunked", tone: "warning" },
-  ready_for_embedding: { label: "Ready for embedding", tone: "success" },
-  embedding: { label: "Embedding", tone: "warning" },
-  indexed: { label: "Indexed", tone: "success" },
+  chunked: { label: "Preparing", tone: "warning" },
+  ready_for_embedding: { label: "Ready to ask", tone: "success" },
+  embedding: { label: "Improving search", tone: "warning" },
+  indexed: { label: "Ready to ask", tone: "success" },
   failed: { label: "Failed", tone: "danger" },
 };
 

@@ -15,13 +15,13 @@ export default function HistoryPage() {
   const sessions = data ?? [];
 
   return (
-    <AppShell sessionTitle="Debug History">
+    <AppShell sessionTitle="Conversation History">
       <div className="ff-page">
-        <PageHeading eyebrow="YOUR INVESTIGATIONS" title="Pick up the thread." action={<Button size="sm" onClick={reload} loading={loading}>Refresh history</Button>}>
-          Every error, every conversation, every bit of context. Reopen a session and keep moving.
+        <PageHeading eyebrow="YOUR CONVERSATIONS" title="Pick up the thread." action={<Button size="sm" onClick={reload} loading={loading}>Refresh history</Button>}>
+          Reopen your questions, answers, and follow-ups with their saved evidence.
         </PageHeading>
         {error && <p className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>}
-        {loading && <p role="status" className="text-sm text-muted">Loading debug history…</p>}
+        {loading && <p role="status" className="text-sm text-muted">Loading conversation history…</p>}
         <section className="space-y-2">
           {sessions.map((session) => (
             <Link key={session.id} href={`/?session=${encodeURIComponent(session.id)}`} className="flex items-center gap-3 rounded-lg border border-border bg-panel p-4 transition-colors hover:border-accent/50">
@@ -35,7 +35,7 @@ export default function HistoryPage() {
               <ArrowUpRight size={15} className="text-muted" />
             </Link>
           ))}
-          {!loading && !sessions.length && !error && <p className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted">No debug sessions yet.</p>}
+          {!loading && !sessions.length && !error && <p className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted">No conversations yet.</p>}
         </section>
       </div>
     </AppShell>

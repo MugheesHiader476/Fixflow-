@@ -9,14 +9,14 @@ export function WorkspaceHero() {
       <div className="ff-hero-shade" />
       <div className="ff-hero-content">
         <p className="ff-eyebrow"><span aria-hidden="true" />A little context. A lot of clarity.</p>
-        <h1 id="workspace-title">Less searching.<br />More building.</h1>
-        <p>Your code. Your documentation. One clear workspace.<br className="hidden sm:block" /> Find the context you need to take the next step.</p>
+        <h1 id="workspace-title">Your knowledge.<br />Clearer answers.</h1>
+        <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Ask a question and see the evidence behind the answer.</p>
         <div className="ff-hero-actions">
           <a className="ff-pill ff-pill-white" href="#workspace">Start a session <ArrowUpRight size={18} /></a>
           <Link className="ff-hero-link" href="/sources">Explore your knowledge <ArrowUpRight size={16} /></Link>
         </div>
       </div>
-      <div className="ff-hero-bottom"><span>BUILT FOR THE WAY DEVELOPERS THINK</span><a href="#workspace" aria-label="Scroll to workspace"><ArrowDown size={18} /></a></div>
+      <div className="ff-hero-bottom"><span>FROM YOUR SOURCES TO YOUR NEXT STEP</span><a href="#workspace" aria-label="Scroll to workspace"><ArrowDown size={18} /></a></div>
     </section>
   );
 }
@@ -28,8 +28,8 @@ export function WorkspaceGuide() {
       <div className="ff-guide-content">
         <BookOpen size={21} strokeWidth={1.5} />
         <h3>Good context.<br />Better next steps.</h3>
-        <p>Add your guides, runbooks, and reference docs. FixFlow searches them for evidence relevant to your problem.</p>
-        <Link href="/sources" className="ff-text-link">Add documentation <ArrowUpRight size={17} /></Link>
+        <p>Add documents, policies, spreadsheets, or code. Connect an authorized app to bring in its selected content.</p>
+        <Link href="/sources" className="ff-text-link">Add a source <ArrowUpRight size={17} /></Link>
       </div>
     </aside>
   );

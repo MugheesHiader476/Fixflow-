@@ -10,13 +10,27 @@ function confidence(value: unknown): boolean { return value === null || (count(v
 function list(value: unknown, check: (item: unknown) => boolean): boolean { return Array.isArray(value) && value.every(check); }
 function fields(value: Record<string, unknown>, names: string[]): boolean { return names.every((name) => text(value[name])); }
 function reference(value: unknown): boolean {
-  return record(value) && text(value.title) && ["docs", "github", "community", "code"].includes(String(value.type));
+  return record(value) && text(value.title) && ["docs", "github", "community", "code"].includes(String(value.type))
+    && ["id", "source_id", "url", "excerpt", "location", "quote"].every((name) => value[name] === undefined || value[name] === null || text(value[name]))
+    && (value.number === undefined || value.number === null || (count(value.number) && Number(value.number) > 0));
+}
+
+function validAnswer(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (!record(value) || !text(value.text) || !["answered", "insufficient_evidence"].includes(String(value.status))) return false;
+  if (!(value.model === null || text(value.model))) return false;
+  if (!list(value.citations, (citation) => reference(citation) && record(citation) && text(citation.id)
+    && text(citation.quote) && count(citation.number) && Number(citation.number) > 0)) return false;
+  const citations = value.citations as Record<string, unknown>[];
+  if (!citations.every((citation, index) => citation.number === index + 1 && citation.quote !== ""
+    && (citation.excerpt === undefined || citation.excerpt === null || String(citation.excerpt).includes(String(citation.quote))))) return false;
+  return value.status === "answered" ? citations.length > 0 : citations.length === 0;
 }
 
 function validRequest(value: unknown): boolean {
   if (value === undefined || value === null) return true;
   return record(value) && strings(value.techs)
-    && ["error", "code", "context", "repo_url"].every((name) => value[name] === undefined || value[name] === null || text(value[name]))
+    && ["question", "error", "code", "context", "repo_url"].every((name) => value[name] === undefined || value[name] === null || text(value[name]))
     && (value.files === undefined || list(value.files, (item) => record(item) && fields(item, ["name", "content"])));
 }
 
@@ -25,12 +39,14 @@ function validHealth(value: unknown): boolean {
     && fields(value, ["service", "api", "database", "pgvector", "schema", "ai_generation"])
     && ["revision", "expected_revision"].every((name) => value[name] === null || text(value[name]))
     && ["sources", "documents", "chunks", "embedded_chunks", "pending_sources", "failed_sources"].every((name) => value[name] === null || count(value[name]))
-    && typeof value.embedding_configured === "boolean";
+    && typeof value.embedding_configured === "boolean"
+    && (value.answer_service === undefined || ["ready", "unavailable", "not_configured"].includes(String(value.answer_service)));
 }
 
 export function validSource(value: unknown): boolean {
   if (!record(value) || !fields(value, ["id", "source_id", "name", "created_at", "updated", "detail"])) return false;
   return (value.is_active === undefined || typeof value.is_active === "boolean")
+    && (value.managed_by_connector === undefined || typeof value.managed_by_connector === "boolean")
     && (value.retrieval_available === undefined || typeof value.retrieval_available === "boolean")
     && ["docs", "github", "community", "upload"].includes(String(value.kind))
     && ["docs", "github", "community", "upload"].includes(String(value.source_type))
@@ -52,14 +68,17 @@ function validDiagnosis(value: unknown): boolean {
     && list(value.sources, (item) => reference(item) && record(item) && fields(item, ["id", "publisher", "url", "excerpt"]) && count(item.relevance) && Number(item.relevance) <= 100 && typeof item.used === "boolean")
     && text(rag.query) && strings(rag.expansions)
     && ["retrieved", "reranked", "sourcesUsed"].every((name) => count(rag[name]))
+    && (rag.retrievalMethod === undefined || ["keyword", "dense"].includes(String(rag.retrievalMethod)))
     && list(rag.topChunks, (item) => record(item) && text(item.doc) && typeof item.score === "number" && Number.isFinite(item.score))
     && (value.codeFix === null || (record(value.codeFix) && fields(value.codeFix, ["file", "lines", "before", "after"]) && ["python", "typescript", "javascript", "bash", "sql"].includes(String(value.codeFix.language))))
     && validRequest(value.request)
+    && validAnswer(value.answer)
     && (value.generation === undefined || ["disabled", "model", "legacy"].includes(String(value.generation)));
 }
 
 function validMessage(value: unknown): boolean {
   return record(value) && fields(value, ["id", "text"]) && ["user", "fixflow"].includes(String(value.role))
+    && validAnswer(value.answer)
     && (value.sources === undefined || list(value.sources, reference));
 }
 function validSaved(value: unknown): boolean {
@@ -74,7 +93,7 @@ function validSession(value: unknown): boolean {
 
 export function validResponse(path: string, value: unknown, method = "GET"): boolean {
   if (path.startsWith("/api/connectors")) return validConnectorResponse(path, value);
-  if (path === "/health") return validHealth(value);
+  if (path === "/health" || path === "/api/readiness") return validHealth(value);
   if (path === "/api/sources") return list(value, validSource);
   if (path.startsWith("/api/sources/")) return validSource(value);
   if (path === "/api/documents") return validSource(value);

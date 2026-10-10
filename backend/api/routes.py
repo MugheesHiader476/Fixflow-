@@ -22,9 +22,11 @@ from backend.schemas.models import (
     DebugRequest,
     Diagnosis,
     KnowledgeSource,
+    QuestionRequest,
     SavedSolution,
     SaveRequest,
     SessionSummary,
+    SourceAvailabilityRequest,
 )
 from backend.services import store
 from backend.services.access import owner_id
@@ -46,7 +48,12 @@ async def readiness(db: Database) -> JSONResponse:
 @router.post("/debug", response_model=Diagnosis)
 async def debug(payload: DebugRequest, db: Database, provider: Provider) -> Diagnosis:
     if not diagnostic_text(payload):
-        raise HTTPException(422, "Provide an error, code, or context")
+        raise HTTPException(422, "Provide a question, error, code, or context")
+    return await store.diagnose(db, payload, provider)
+
+
+@router.post("/ask", response_model=Diagnosis)
+async def ask(payload: QuestionRequest, db: Database, provider: Provider) -> Diagnosis:
     return await store.diagnose(db, payload, provider)
 
 
@@ -95,6 +102,25 @@ async def source(source_id: UUID, db: Database) -> KnowledgeSource:
     if not result:
         raise HTTPException(404, "Source not found")
     return result[0]
+
+
+@router.post("/sources/{source_id}/availability", response_model=KnowledgeSource)
+async def source_availability(source_id: UUID, payload: SourceAvailabilityRequest, db: Database) -> KnowledgeSource:
+    lock_key = int.from_bytes(source_id.bytes[:8], "big", signed=True)
+    if not await db.scalar(select(func.pg_try_advisory_xact_lock(lock_key))):
+        raise HTTPException(409, "Source is currently processing")
+    record = await db.scalar(
+        select(SourceRecord)
+        .where(SourceRecord.id == source_id, SourceRecord.owner_id == owner_id(db))
+        .with_for_update()
+    )
+    if record is None:
+        raise HTTPException(404, "Source not found")
+    if record.connector_account_id is not None:
+        raise HTTPException(409, "Manage connected source access through Connected Apps")
+    record.is_active = payload.active
+    await db.commit()
+    return await source(source_id, db)
 
 
 @router.get("/saved", response_model=list[SavedSolution])

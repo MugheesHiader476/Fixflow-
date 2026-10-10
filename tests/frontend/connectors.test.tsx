@@ -100,7 +100,7 @@ describe("Connected Apps", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Check connection" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Authorization expired; reconnect");
     expect(api.checkConnector).toHaveBeenCalledWith(ACCOUNT.id);
-    expect(api.listConnectors.mock.calls.length).toBeGreaterThan(1);
+    await waitFor(() => expect(api.listConnectors.mock.calls.length).toBeGreaterThan(1));
   });
 
   it("can clear every resource to stop synchronization", async () => {

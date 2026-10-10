@@ -25,7 +25,7 @@ export function RagTransparency({ rag, generation }: { rag: Diagnosis["rag"]; ge
         <span className="text-sm font-medium">How FixFlow found this answer</span>
         <span className="hidden gap-4 font-mono text-[11px] text-muted sm:flex">
           <span>Retrieved: {rag.retrieved}</span>
-          <span>Reranked: {rag.reranked}</span>
+          {rag.reranked > 0 && <span>Reranked: {rag.reranked}</span>}
           <span>Sources used: {rag.sourcesUsed}</span>
         </span>
         <ChevronDown size={15} className={cn("ml-auto text-muted transition-transform", open && "rotate-180")} />
@@ -47,7 +47,7 @@ export function RagTransparency({ rag, generation }: { rag: Diagnosis["rag"]; ge
                 </ul>
               </FlowStep>}
               <Arrow />
-              <FlowStep label="Keyword retrieval" mono value={`PostgreSQL full-text search · ${rag.retrieved} chunks`} />
+              <FlowStep label={rag.retrievalMethod === "dense" ? "Semantic retrieval" : "Keyword retrieval"} mono value={`${rag.retrievalMethod === "dense" ? "Private semantic search" : "PostgreSQL full-text search"} · ${rag.retrieved} excerpts`} />
               <Arrow />
               {rag.topChunks.length > 0 && <FlowStep label="Top Documents">
                 <ul className="space-y-1">
@@ -60,15 +60,14 @@ export function RagTransparency({ rag, generation }: { rag: Diagnosis["rag"]; ge
                   ))}
                 </ul>
               </FlowStep>}
+              {rag.reranked > 0 && <><Arrow /><FlowStep label="Reranking" value={`${rag.reranked} excerpts reranked`} /></>}
               <Arrow />
-              <FlowStep label="Reranking" value={rag.reranked ? `${rag.reranked} chunks reranked` : "Not applied"} />
-              <Arrow />
-              <FlowStep label="AI generation" value={generation === "model" ? "AI provider connected" : "Not connected"} />
+              <FlowStep label="Answer preparation" value={generation === "model" ? "Local model with checked source quotes" : "Source excerpts only"} />
             </div>
 
-            <div className="grid grid-cols-3 gap-2 self-start lg:grid-cols-1">
-              <Stat label="Chunks retrieved" value={rag.retrieved} />
-              <Stat label="Kept after rerank" value={rag.reranked} />
+            <div className="grid grid-cols-2 gap-2 self-start lg:grid-cols-1">
+              <Stat label="Excerpts retrieved" value={rag.retrieved} />
+              {rag.reranked > 0 && <Stat label="Kept after rerank" value={rag.reranked} />}
               <Stat label="Sources cited" value={rag.sourcesUsed} />
             </div>
           </div>

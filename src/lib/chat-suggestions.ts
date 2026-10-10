@@ -1,5 +1,5 @@
 export const FOLLOWUP_SUGGESTIONS = [
-  "Why does this happen only on Linux?",
-  "Can I solve this without changing the event loop?",
-  "Explain this fix simply.",
+  "What evidence supports this answer?",
+  "What exceptions do the sources mention?",
+  "Explain this in simpler terms.",
 ];

@@ -66,6 +66,9 @@ async def database(
     monkeypatch.setenv("FIXFLOW_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("EMBEDDING_DIM", "")
     monkeypatch.setenv("EMBEDDING_MODEL", "")
+    monkeypatch.setenv("GENERATION_OLLAMA_URL", "")
+    monkeypatch.setenv("GENERATION_MODEL", "")
+    monkeypatch.setenv("GENERATION_MODEL_DIGEST", "")
     get_settings.cache_clear()
     await close_database()
     async with get_engine().begin() as connection:

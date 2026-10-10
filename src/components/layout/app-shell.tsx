@@ -9,10 +9,10 @@ import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
 
 const PAGE_META: Record<string, { title: string; techs: string[] }> = {
-  "/": { title: "New Debug Session", techs: [] },
-  "/history": { title: "Debug History", techs: [] },
-  "/saved": { title: "Saved Solutions", techs: [] },
-  "/sources": { title: "Knowledge Sources", techs: ["Documentation"] },
+  "/": { title: "New Question", techs: [] },
+  "/history": { title: "Conversation History", techs: [] },
+  "/saved": { title: "Saved Answers", techs: [] },
+  "/sources": { title: "Knowledge Sources", techs: [] },
   "/settings": { title: "Settings", techs: [] },
 };
 
@@ -57,7 +57,7 @@ export function AppShell({
             { href: "/saved", label: "Saved" },
           ].map((item) => <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>{item.label}</Link>)}
         </nav>
-        <Link href="/sources" className="ff-pill ff-pill-dark ff-header-cta">Add documentation <ArrowUpRight size={17} /></Link>
+        <Link href="/sources" className="ff-pill ff-pill-dark ff-header-cta">Add a source <ArrowUpRight size={17} /></Link>
       </header>
       <Sidebar open={mobileOpen} onClose={() => setMobileOpen(false)} />
       <div className="flex min-w-0 flex-1 flex-col">
@@ -76,8 +76,8 @@ export function AppShell({
       </div>
       <footer className="ff-footer">
         <div><Brand /><p>A little context goes a long way.</p></div>
-        <nav aria-label="Footer navigation"><Link href="/sources">Knowledge sources</Link><Link href="/history">Debug history</Link><Link href="/saved">Saved solutions</Link><Link href="/settings">Settings <ArrowUpRight size={14} /></Link></nav>
-        <div className="ff-footer-bottom"><span>FixFlow · Your debugging workspace</span><span>Built around your documentation.</span></div>
+        <nav aria-label="Footer navigation"><Link href="/sources">Knowledge sources</Link><Link href="/history">Conversation history</Link><Link href="/saved">Saved answers</Link><Link href="/settings">Settings <ArrowUpRight size={14} /></Link></nav>
+        <div className="ff-footer-bottom"><span>FixFlow · Your knowledge workspace</span><span>Built around your sources.</span></div>
       </footer>
     </div>
   );

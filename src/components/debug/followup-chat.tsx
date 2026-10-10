@@ -7,6 +7,7 @@ import { listMessages, sendFollowUp } from "@/lib/api";
 import type { ChatMessage, SourceType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
+import { GroundedAnswerView } from "./grounded-answer";
 
 const SOURCE_ICON: Record<SourceType, React.ReactNode> = {
   docs: <BookOpen size={11} />,
@@ -21,7 +22,6 @@ export function FollowUpChat(props: { sessionId: string; confidence: number | nu
 
 function SessionChat({
   sessionId,
-  confidence,
 }: {
   sessionId: string;
   confidence: number | null;
@@ -70,7 +70,7 @@ function SessionChat({
       setMessages((m) =>
         m.map((msg) =>
           msg.id === pendingId
-            ? { id: reply.id, role: "fixflow", text: reply.text, sources: reply.sources }
+            ? { ...reply, role: "fixflow" }
             : msg
         )
       );
@@ -100,7 +100,7 @@ function SessionChat({
     <section aria-label="Follow-up chat" className="rounded-xl border border-border bg-panel">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
         <Bot size={15} className="text-accent" />
-        <h3 className="text-sm font-semibold">Ask about this fix…</h3>
+        <h3 className="text-sm font-semibold">Continue the conversation</h3>
         <span className="ml-auto hidden text-[11px] text-muted sm:inline">
           saved with this session
         </span>
@@ -114,7 +114,7 @@ function SessionChat({
           }}>Retry</button>
         </p>}
         {!loading && !loadError && !messages.length && <p className="text-sm text-muted">
-          {confidence === null ? "Search your documentation with a follow-up question." : "Ask a follow-up about this result."}
+          Ask a follow-up question about your sources.
         </p>}
         {messages.map((m) =>
           m.role === "user" ? (
@@ -133,7 +133,7 @@ function SessionChat({
               </span>
               <div className="max-w-[85%] space-y-2">
                 <div className="rounded-lg rounded-tl-sm border border-border bg-background px-3.5 py-2.5">
-                  {m.pending ? (
+                  {m.pending && (
                     <span className="flex gap-1 py-1" aria-label="FixFlow is thinking">
                       {[0, 1, 2].map((i) => (
                         <span
@@ -143,15 +143,16 @@ function SessionChat({
                         />
                       ))}
                     </span>
-                  ) : (
-                    <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">{m.text}</p>
                   )}
+                  {!m.pending && (m.answer ? <GroundedAnswerView answer={m.answer} /> : (
+                    <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">{m.text}</p>
+                  ))}
                 </div>
-                {m.sources && m.sources.length > 0 && (
+                {!m.answer && m.sources && m.sources.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {m.sources.map((s) => (
                       <span
-                        key={`${s.type}:${s.title}`}
+                        key={s.id ?? `${s.type}:${s.title}`}
                         className={cn(
                           "inline-flex items-center gap-1 rounded border border-border bg-panel-2 px-2 py-0.5 text-[10px]",
                           s.type === "docs" ? "text-lime/90" : "text-muted"
@@ -187,7 +188,7 @@ function SessionChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && void ask(input)}
-            placeholder="Ask a follow-up about this diagnosis…"
+            placeholder="Ask a follow-up about your sources…"
             aria-label="Follow-up question"
             disabled={busy || loading || loadError}
             maxLength={4000}

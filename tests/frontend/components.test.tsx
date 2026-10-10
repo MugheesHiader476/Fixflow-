@@ -109,8 +109,9 @@ describe("debug interactions", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Search documentation" }));
-    expect(screen.getByText("Add an error message, code, or context first")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Ask question" }));
+    expect(screen.getByText("Add a question, error message, code, or context first")).toBeDefined();
+    fireEvent.click(screen.getByRole("tab", { name: "Error" }));
     fireEvent.click(screen.getByRole("button", { name: /try example/i }));
     fireEvent.click(screen.getByRole("button", { name: "Search documentation" }));
     expect(onDiagnose).toHaveBeenCalledWith(

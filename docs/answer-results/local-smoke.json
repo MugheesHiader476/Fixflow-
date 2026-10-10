@@ -1,0 +1,152 @@
+{
+  "scope": "Real local models, Next gateway, FastAPI, PostgreSQL and workers; external Clerk identity simulated",
+  "answer_model": {
+    "name": "qwen3:4b",
+    "digest": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7"
+  },
+  "embedding_model": {
+    "model": "embeddinggemma:300m",
+    "model_digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+    "dimension": 768,
+    "formatting_version": "gemma-v1",
+    "truncate": false,
+    "winner_rule": "Recall@10 then Recall@5 then MRR@10; within 0.01 at each gate prefer lower warm latency, then download size",
+    "benchmark_hash": "868e5a5ff7a44650999cf99233cccec0131f75d4843ae6eb48d0fcb8ddd6e046"
+  },
+  "checks": [
+    {
+      "name": "Browser upload and real embedding: refund-policy.txt",
+      "result": "PASS",
+      "seconds": 12.232202471
+    },
+    {
+      "name": "Browser upload and real embedding: revenue.csv",
+      "result": "PASS",
+      "seconds": 4.39032762
+    },
+    {
+      "name": "Browser upload and real embedding: retention.json",
+      "result": "PASS",
+      "seconds": 5.136538892999997
+    },
+    {
+      "name": "Policy answer has exact quotes, owner source IDs and persisted citations",
+      "result": "PASS",
+      "seconds": 32.088871803
+    },
+    {
+      "name": "Contextual follow-up uses fresh evidence and survives reload",
+      "result": "PASS",
+      "seconds": 24.970922131
+    },
+    {
+      "name": "CSV answer retains the exact row value",
+      "result": "PASS",
+      "seconds": 24.235254471000008
+    },
+    {
+      "name": "JSON answer retains the configured region and retention",
+      "result": "PASS",
+      "seconds": 34.36688280399999
+    },
+    {
+      "name": "Missing evidence abstains, and a foreign account has no source access",
+      "result": "PASS",
+      "seconds": 26.956469336999987
+    },
+    {
+      "name": "Mobile question/answer layout remains bounded",
+      "result": "PASS",
+      "seconds": 0.2576203549999918
+    }
+  ],
+  "answers": [
+    {
+      "question": "What is the refund deadline, and are shipping fees refundable?",
+      "status": "answered",
+      "text": "The refund deadline is 30 days from purchase. [1]\n\nShipping fees are not refundable. [2]",
+      "citations": [
+        {
+          "number": 1,
+          "title": "refund-policy.txt",
+          "quote": "Refund requests must be made within 30 days of purchase.",
+          "location": "Version 1 \u00b7 Lines 1-1"
+        },
+        {
+          "number": 2,
+          "title": "refund-policy.txt",
+          "quote": "Shipping fees are not refundable.",
+          "location": "Version 1 \u00b7 Lines 1-1"
+        }
+      ]
+    },
+    {
+      "question": "What about the shipping fees?",
+      "status": "answered",
+      "text": "Refund requests must be made within 30 days of purchase, and shipping fees are not refundable. [1]",
+      "citations": [
+        {
+          "number": 1,
+          "title": "refund-policy.txt",
+          "quote": "Refund requests must be made within 30 days of purchase. Shipping fees are not refundable.",
+          "location": "Version 1 \u00b7 Lines 1-1"
+        }
+      ]
+    },
+    {
+      "question": "What was the April revenue for Orion?",
+      "status": "answered",
+      "text": "The April revenue for Orion was $4,200. [1]",
+      "citations": [
+        {
+          "number": 1,
+          "title": "revenue.csv",
+          "quote": "| April | Orion | 4200 |",
+          "location": "Version 1 \u00b7 Lines 1-3"
+        }
+      ]
+    },
+    {
+      "question": "What is Atlas retention_days in the EU region?",
+      "status": "answered",
+      "text": "Atlas has a retention period of 7 days in the EU region. [1] [2] [3]",
+      "citations": [
+        {
+          "number": 1,
+          "title": "retention.json",
+          "quote": "\"retention_days\": 7",
+          "location": "$/retention_days \u00b7 Version 1"
+        },
+        {
+          "number": 2,
+          "title": "retention.json",
+          "quote": "\"region\": \"EU\"",
+          "location": "$/region \u00b7 Version 1"
+        },
+        {
+          "number": 3,
+          "title": "retention.json",
+          "quote": "\"product\": \"Atlas\"",
+          "location": "$/product \u00b7 Version 1"
+        }
+      ]
+    },
+    {
+      "question": "What is the warranty duration for Orion?",
+      "status": "insufficient_evidence",
+      "text": "I couldn't find enough evidence in your available sources to answer that question. Add a relevant source, wait for any processing to finish, or ask a more specific question.",
+      "citations": []
+    }
+  ],
+  "preembedding": {
+    "fixtures": 101,
+    "checks_passed": 118,
+    "orphans": 0,
+    "embeddings_generated": 0
+  },
+  "limits": [
+    "Synthetic fixtures only; no customer-wide accuracy certification",
+    "External Clerk identity simulated; live sign-in and provider consent unverified",
+    "Browser step timing includes navigation, saving and reload; not an inference benchmark"
+  ]
+}

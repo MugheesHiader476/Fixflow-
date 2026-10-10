@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { BookOpen, FileText, GitBranch, Link2, Upload, Database } from "lucide-react";
 import { PageHeading } from "@/components/layout/page-heading";
 import { AppShell } from "@/components/layout/app-shell";
@@ -11,6 +12,7 @@ import {
   addKnowledgeSource,
   listKnowledgeSources,
   retryEmbedding,
+  setSourceAvailability,
 } from "@/lib/api";
 import type { KnowledgeSource } from "@/lib/types";
 import { isSourcePending, mergeSources, SOURCE_STATUS } from "@/lib/sources";
@@ -41,7 +43,7 @@ const SOURCE_MODES: {
   {
     id: "upload",
     label: "Upload a file",
-    description: "PDF, Markdown, TXT, RST, CSV, HTML, or DOCX.",
+    description: "Documents, Office files, structured data, or code.",
     icon: Upload,
   },
 ];
@@ -53,6 +55,7 @@ function sourceName(mode: SourceMode, title: string, value: string): string {
 }
 
 export default function SourcesPage() {
+  const [changingSourceId, setChangingSourceId] = useState<string | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [ingestionFormat, setIngestionFormat] = useState<"document" | "okf">("document");
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -149,7 +152,7 @@ export default function SourcesPage() {
       uploadsVersion.current += 1;
       setSources((current) => [source, ...current.filter((item) => item.id !== source.id)]);
       resetForm();
-      toast(source.error_message || "Source saved to the knowledge base.", source.status === "failed" ? "error" : "success");
+      toast(source.error_message || "Source accepted. Preparing it for questions.", source.status === "failed" ? "error" : "success");
     } catch (error) {
       if (!controller.signal.aborted) toast(error instanceof Error ? error.message : "Could not add this source. Try again.", "error");
     } finally {
@@ -190,18 +193,33 @@ export default function SourcesPage() {
     }
   };
 
+  const changeAvailability = async (source: KnowledgeSource) => {
+    if (changingSourceId) return;
+    setChangingSourceId(source.id);
+    try {
+      const updated = await setSourceAvailability(source.id, source.is_active === false);
+      uploadsVersion.current += 1;
+      setSources((current) => current.map((item) => item.id === updated.id ? updated : item));
+      toast(updated.is_active ? "Source restored to search." : "Source removed from search. Saved conversations are preserved.", "success");
+    } catch (failure) {
+      toast(failure instanceof Error ? failure.message : "Could not update source availability.", "error");
+    } finally {
+      setChangingSourceId(null);
+    }
+  };
+
   return (
-    <AppShell sessionTitle="Knowledge Sources" techs={["Documentation"]}>
+    <AppShell sessionTitle="Knowledge Sources">
       <div className="ff-page">
-        <PageHeading eyebrow="YOUR KNOWLEDGE, CONNECTED" title="Good context starts here." action={<span className="ff-source-count"><Database size={16} />{sources.length} sources available</span>}>
-          Your guides, runbooks, and reference docs. Bring them together and make them part of your next investigation.
+        <PageHeading eyebrow="YOUR KNOWLEDGE, CONNECTED" title="Good context starts here." action={<span className="ff-source-count"><Database size={16} />{sources.length} sources</span>}>
+          Upload documents, data, policies, or code. Once a source is ready, you can ask questions about it.
         </PageHeading>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
           <section className="min-w-0 rounded-xl border border-border bg-panel p-4 sm:p-5">
             <div className="mb-4">
-              <h2 className="text-sm font-semibold">Add documentation</h2>
-              <p className="mt-1 text-xs text-muted">Upload or paste a document to make it available for keyword search.</p>
+              <h2 className="text-sm font-semibold">Add a source</h2>
+              <p className="mt-1 text-xs text-muted">Upload or paste content, or <Link href="/connectors" className="text-accent underline">connect an authorized app</Link>.</p>
             </div>
 
             <div className="grid gap-1.5 sm:grid-cols-3" role="tablist" aria-label="Source type">
@@ -234,7 +252,9 @@ export default function SourcesPage() {
 
             <form onSubmit={submitSource} className="mt-5 space-y-3">
               <fieldset disabled={busy} className="min-w-0 space-y-3">
-              <label className="block text-xs font-medium">Content format
+              <details className="rounded-md border border-border p-3 text-xs">
+              <summary className="cursor-pointer text-muted">Advanced import options</summary>
+              <label className="mt-3 block text-xs font-medium">Content format
                 <select aria-label="Content format" value={ingestionFormat} onChange={(event) => {
                   setIngestionFormat(event.target.value === "okf" ? "okf" : "document"); resetForm();
                 }} className="mt-1.5 block w-full rounded-md border border-border bg-background px-3 py-2">
@@ -243,6 +263,7 @@ export default function SourcesPage() {
                 </select>
               </label>
               {ingestionFormat === "okf" && <p className="text-xs text-muted">Upload a standalone Markdown concept with YAML frontmatter and a nonempty type. Bundle ZIP import is not supported.</p>}
+              </details>
               {mode !== "github" && (
                 <label className="block text-xs font-medium text-foreground/80">
                   {mode === "docs" ? "Document title" : "File"}
@@ -259,7 +280,7 @@ export default function SourcesPage() {
                       <input
                         readOnly
                         value={title}
-                        placeholder="Choose a .md, .txt, or .pdf file"
+                        placeholder="Choose a document, spreadsheet, or source file"
                         className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm text-muted placeholder:text-muted/50"
                       />
                       <Button type="button" size="md" variant="outline" onClick={() => fileRef.current?.click()}>
@@ -341,14 +362,12 @@ export default function SourcesPage() {
                     {source.kind === "github" ? <GitBranch size={14} className="mt-0.5 text-accent" /> : <FileText size={14} className="mt-0.5 text-muted" />}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium">{source.name}</p>
-                      <p className="mt-0.5 text-[10px] text-muted">
-                        {source.kind} · {source.document_count} documents · {source.chunk_count} chunks
-                      </p>
-                      {source.embedding_status && <p className="mt-1 text-[10px] text-muted">{source.ingestion_format === "okf" ? "OKF concept" : "Document"} · Embeddings: {source.embedding_status.replaceAll("_", " ")}</p>}
+                      <p className="mt-0.5 text-[10px] text-muted">{source.kind} · {source.chunk_count} searchable excerpts</p>
                       {source.embedding_error && <p role="alert" className="mt-1 text-[10px] text-danger">{source.embedding_error}</p>}
-                      {source.embedding_status === "failed" && <Button size="sm" loading={retryingId === source.id} disabled={retryingId !== null} onClick={() => { void retrySourceEmbeddings(source.id); }}>Retry embeddings</Button>}
+                      {source.embedding_status === "failed" && <Button size="sm" loading={retryingId === source.id} disabled={retryingId !== null} onClick={() => { void retrySourceEmbeddings(source.id); }}>Retry search preparation</Button>}
                       {source.error_message && <p className="mt-1 text-[10px] text-red-400">{source.error_message}</p>}
-                      {source.retrieval_available === false && ["ready_for_embedding", "embedding", "indexed"].includes(source.status) && <p className="mt-1 text-[10px] text-muted">Unavailable to retrieval. Reconnect and synchronize to verify access.</p>}
+                      {source.retrieval_available === false && source.managed_by_connector && ["ready_for_embedding", "embedding", "indexed"].includes(source.status) && <p className="mt-1 text-[10px] text-muted">Unavailable to search. Reconnect and synchronize to verify access.</p>}
+                      {!source.managed_by_connector && <Button size="sm" variant="ghost" loading={changingSourceId === source.id} disabled={changingSourceId !== null} onClick={() => { void changeAvailability(source); }}>{source.is_active === false ? "Restore to search" : "Remove from search"}</Button>}
                     </div>
                     <Badge tone={source.is_active === false ? "muted" : SOURCE_STATUS[source.status].tone}>{source.is_active === false ? "Unavailable" : SOURCE_STATUS[source.status].label}</Badge>
                   </div>

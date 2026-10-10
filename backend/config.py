@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     embedding_auto_process: bool = False
     retrieval_mode: Literal["keyword", "dense"] = "keyword"
     retrieval_timeout_seconds: float = Field(default=10, gt=0, le=120)
+    generation_ollama_url: str | None = None
+    generation_model: str | None = Field(default=None, max_length=200)
+    generation_model_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    generation_timeout_seconds: float = Field(default=90, gt=0, le=90)
+    generation_context_tokens: int = Field(default=8192, ge=4096, le=32768)
+    generation_max_tokens: int = Field(default=1024, ge=256, le=2048)
+    generation_concurrency: int = Field(default=1, ge=1, le=4)
     embedding_workers: int = Field(default=1, ge=1, le=4)
     embedding_timeout_seconds: float = Field(default=30, gt=0, le=120)
     embedding_batch_size: int = Field(default=4, ge=1, le=100)
@@ -60,6 +67,9 @@ class Settings(BaseSettings):
         "embedding_model",
         "ollama_url",
         "embedding_model_digest",
+        "generation_ollama_url",
+        "generation_model",
+        "generation_model_digest",
         mode="before",
     )
     @classmethod
@@ -93,7 +103,7 @@ class Settings(BaseSettings):
     def optional_dimension(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("ollama_url")
+    @field_validator("ollama_url", "generation_ollama_url")
     @classmethod
     def validate_ollama_url(cls, value: str | None) -> str | None:
         if value is None:
@@ -120,6 +130,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_chunking(self) -> "Settings":
+        generation_fields = (self.generation_ollama_url, self.generation_model, self.generation_model_digest)
+        if any(generation_fields) and not all(generation_fields):
+            raise ValueError("Local answers require GENERATION_OLLAMA_URL, GENERATION_MODEL and a pinned digest")
+        if self.generation_model and not self.generation_model.strip():
+            raise ValueError("GENERATION_MODEL cannot be blank")
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
         if self.db_pool_size + self.db_max_overflow <= self.ingestion_workers:
@@ -141,6 +156,10 @@ class Settings(BaseSettings):
             if self.embedding_dim != profile.dimension:
                 raise ValueError("Ollama dimension must match the pinned model profile")
         return self
+
+    @property
+    def generation_enabled(self) -> bool:
+        return bool(self.generation_ollama_url and self.generation_model and self.generation_model_digest)
 
     @property
     def data_dir(self) -> Path:

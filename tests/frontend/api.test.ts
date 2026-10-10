@@ -33,6 +33,17 @@ describe("backend API client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("gives answers time for local model loading and preserves ordinary request deadlines", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(ASYNCIO_DIAGNOSIS)));
+    const deadline = vi.spyOn(AbortSignal, "timeout");
+    const { diagnose, checkBackendHealth } = await loadApi();
+    await diagnose({ error: "failure", techs: [] });
+    expect(deadline).toHaveBeenLastCalledWith(120_000);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(HEALTH)));
+    await checkBackendHealth();
+    expect(deadline).toHaveBeenLastCalledWith(60_000);
+  });
+
   it("does not force a JSON content type onto GET requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(HEALTH)

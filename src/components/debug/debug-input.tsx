@@ -9,6 +9,7 @@ import {
   FileCode2,
   Lightbulb,
   AlertTriangle,
+  MessageCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,8 @@ export function DebugInput({
   initialValues?: DebugRequest;
   onClear?: () => void;
 }) {
-  const [tab, setTab] = useState("error");
+  const [tab, setTab] = useState(initialValues && !initialValues.question ? "error" : "question");
+  const [question, setQuestion] = useState(initialValues?.question ?? "");
   const [error, setError] = useState(initialValues?.error ?? "");
   const [code, setCode] = useState(initialValues?.code ?? "");
   const [context, setContext] = useState(initialValues?.context ?? "");
@@ -52,8 +54,8 @@ export function DebugInput({
   const [showTechs, setShowTechs] = useState(false);
   const { toast } = useToast();
   const areaRef = useRef<HTMLTextAreaElement>(null);
-  let submitLabel = "Search documentation";
-  if (busy) submitLabel = "Searching…";
+  let submitLabel = question.trim() || tab === "question" ? "Ask question" : "Search documentation";
+  if (busy) submitLabel = "Preparing answer…";
   if (readingFiles) submitLabel = "Reading files…";
 
   const filteredTechs = TECH_OPTIONS.filter((t) =>
@@ -93,6 +95,7 @@ export function DebugInput({
 
   const clearAll = () => {
     setError("");
+    setQuestion("");
     setCode("");
     setContext("");
     setRepoUrl("");
@@ -103,15 +106,15 @@ export function DebugInput({
     onFilesChange([]);
     onTechsChange([]);
     onRepoChange("");
-    setTab("error");
+    setTab("question");
     onClear?.();
     toast("Workspace cleared", "info");
   };
 
   const submit = () => {
     if (busy || readingFiles) return;
-    if (!error.trim() && !code.trim() && !context.trim() && !files.length) {
-      toast("Add an error message, code, or context first", "error");
+    if (!question.trim() && !error.trim() && !code.trim() && !context.trim() && !files.length) {
+      toast("Add a question, error message, code, or context first", "error");
       areaRef.current?.focus();
       return;
     }
@@ -120,6 +123,7 @@ export function DebugInput({
       return;
     }
     onDiagnose({
+      question: question.trim() || undefined,
       error: error || undefined,
       code: code || undefined,
       context: context || undefined,
@@ -131,7 +135,7 @@ export function DebugInput({
 
   return (
     <section
-      aria-label="Debug input"
+      aria-label="Question and debug input"
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
           event.preventDefault();
@@ -144,9 +148,11 @@ export function DebugInput({
       <div className="flex items-center pr-2">
         <Tabs
           size="sm"
+          className="min-w-0 flex-wrap"
           value={tab}
           onChange={setTab}
           items={[
+            { id: "question", label: "Question", icon: <MessageCircle size={13} /> },
             { id: "error", label: "Error", icon: <AlertTriangle size={13} /> },
             { id: "code", label: "Code", icon: <FileCode2 size={13} /> },
             { id: "context", label: "Context", icon: <Lightbulb size={13} /> },
@@ -158,6 +164,25 @@ export function DebugInput({
       </div>
 
       <div className="p-4">
+        {tab === "question" && (
+          <div className="space-y-2">
+            <textarea
+              ref={areaRef}
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="Ask about your documents, data, policies, or code…"
+              aria-label="Your question"
+              maxLength={4000}
+              rows={4}
+              className="w-full resize-y rounded-lg border border-border bg-background p-3.5 text-sm leading-relaxed text-foreground placeholder:text-muted/50 focus:border-accent/60 focus:outline-none"
+            />
+            <p className="text-xs text-muted">Answers use the sources available to your account. Add sources first, then ask in your own words.</p>
+            <div className="flex flex-wrap gap-3 text-xs text-accent">
+              <a href="/sources">Upload a source</a>
+              <a href="/connectors">Connect an app</a>
+            </div>
+          </div>
+        )}
         {tab === "error" && (
           <div className="ff-fade-up">
             <textarea
@@ -266,7 +291,7 @@ export function DebugInput({
       </div>
 
       <div className="flex flex-col gap-3 border-t border-border bg-panel-2/50 px-4 py-3 sm:flex-row sm:items-center">
-        <div className="relative min-w-0 flex-1">
+        {tab !== "question" && <div className="ff-input-technologies relative min-w-0 flex-1">
           <button
             onClick={() => setShowTechs((s) => !s)}
             aria-expanded={showTechs}
@@ -307,7 +332,7 @@ export function DebugInput({
               </div>
             </div>
           )}
-        </div>
+        </div>}
 
         <div className="flex flex-wrap items-center gap-2">
           <Tooltip label="Clear all inputs">

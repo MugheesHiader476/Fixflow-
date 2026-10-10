@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FixFlow — Your debugging workspace",
+  title: "FixFlow — Ask your knowledge",
   description:
-    "Search uploaded documentation and preserve debugging context, sessions, and conversations.",
+    "Ask questions about your authorized documents and data, inspect quoted evidence, and keep your conversations.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

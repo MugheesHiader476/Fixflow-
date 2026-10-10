@@ -29,6 +29,7 @@ import { diagnosisMarkdown } from "@/lib/diagnosis";
 import { cn, safeExternalUrl } from "@/lib/utils";
 import { RagTransparency } from "./rag-transparency";
 import { FollowUpChat } from "./followup-chat";
+import { GroundedAnswerView } from "./grounded-answer";
 
 const TYPE_ICON: Record<SourceType, React.ReactNode> = {
   docs: <BookOpen size={13} />,
@@ -98,6 +99,8 @@ export function DiagnosisResult({
   const { toast } = useToast();
   const status = DIAGNOSIS_STATUS[diagnosis.status];
   const StatusIcon = status.icon;
+  let statusLabel = status.label;
+  if (diagnosis.answer) statusLabel = diagnosis.answer.status === "answered" ? "Answer with citations" : "More evidence needed";
 
   const visible = useMemo(
     () =>
@@ -136,8 +139,8 @@ export function DiagnosisResult({
               <StatusIcon size={18} strokeWidth={2.5} />
             </span>
             <div>
-              <p className="text-sm font-semibold">{status.label}</p>
-              <p className="text-[11px] text-muted">{diagnosis.rag.sourcesUsed} documentation sources retrieved</p>
+              <p className="text-sm font-semibold">{statusLabel}</p>
+              <p className="text-[11px] text-muted">{diagnosis.rag.sourcesUsed} sources {diagnosis.answer ? "cited" : "retrieved"}</p>
             </div>
           </div>
           <div className="h-8 w-px bg-border max-sm:hidden" />
@@ -156,8 +159,8 @@ export function DiagnosisResult({
             </div>
           </div>}
           <div className="h-8 w-px bg-border max-sm:hidden" />
-          <div>
-            <p className="text-[11px] uppercase tracking-wider text-muted/70">Detected</p>
+          {diagnosis.detected.length > 0 && <div>
+            <p className="text-[11px] uppercase tracking-wider text-muted/70">Selected technologies</p>
             <div className="mt-0.5 flex gap-1.5">
               {diagnosis.detected.map((t) => (
                 <Badge key={t} tone="lime" className="font-mono">
@@ -165,7 +168,7 @@ export function DiagnosisResult({
                 </Badge>
               ))}
             </div>
-          </div>
+          </div>}
           <div className="ml-auto flex gap-2">
             <Button variant="outline" size="sm" onClick={onSaved} loading={saving} disabled={saved}>
               <BookmarkPlus size={14} /> {saved ? "Saved" : "Save"}
@@ -180,16 +183,17 @@ export function DiagnosisResult({
         Documentation search is available. AI diagnosis and suggested code changes are not connected yet.
       </p>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {diagnosis.answer && <GroundedAnswerView answer={diagnosis.answer} />}
+      {!diagnosis.answer && <div className="grid gap-4 lg:grid-cols-2">
         <ResultCard icon={<Target size={15} className="text-accent" />} title="Root Cause">
           <p className="text-sm leading-relaxed text-foreground/85">{diagnosis.rootCause}</p>
         </ResultCard>
         <ResultCard icon={<CircleAlert size={15} className="text-warning" />} title="Why This Happens">
           <p className="text-sm leading-relaxed text-foreground/85">{diagnosis.whyThisHappens}</p>
         </ResultCard>
-      </div>
+      </div>}
 
-      <ResultCard icon={<Wrench size={15} className="text-accent" />} title="Recommended Fix">
+      {diagnosis.recommendedFix.length > 0 && <ResultCard icon={<Wrench size={15} className="text-accent" />} title="Recommended Fix">
         <ol className="space-y-2.5">
           {diagnosis.recommendedFix.map((step, i) => (
             <li key={`${step.title}:${step.detail}`} className="flex gap-3">
@@ -203,7 +207,7 @@ export function DiagnosisResult({
             </li>
           ))}
         </ol>
-      </ResultCard>
+      </ResultCard>}
 
       {diagnosis.codeFix && <ResultCard icon={<GitBranch size={15} className="text-lime" />} title="Code Fix">
         <div className="space-y-3">
@@ -297,10 +301,10 @@ export function DiagnosisResult({
                       </span>
                       <span className="mt-0.5 flex items-center gap-2">
                         <span className="text-[11px] text-muted/70">{SOURCE_TYPE_LABEL[s.type]}</span>
-                        {s.used && <Badge tone="lime">{diagnosis.generation === "disabled" ? "keyword match" : "retrieved"}</Badge>}
+                        {s.used && <Badge tone="lime">{diagnosis.answer ? "cited" : "retrieved"}</Badge>}
                       </span>
                     </span>
-                    {diagnosis.generation !== "disabled" && <span className="flex shrink-0 flex-col items-end gap-1">
+                    {s.relevance > 0 && <span className="flex shrink-0 flex-col items-end gap-1">
                       <span className="font-mono text-xs font-semibold text-foreground/80">{s.relevance}%</span>
                       <span className="h-1 w-16 overflow-hidden rounded-full bg-panel-2">
                         <span

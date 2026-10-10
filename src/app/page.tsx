@@ -8,6 +8,7 @@ import { RightPanel } from "@/components/layout/right-panel";
 import { DebugInput } from "@/components/debug/debug-input";
 import { PipelineProgress } from "@/components/debug/pipeline";
 import { DiagnosisResult } from "@/components/debug/diagnosis-result";
+import { WorkspaceReadiness } from "@/components/debug/workspace-readiness";
 import { useToast } from "@/components/ui/toast";
 import { diagnose, getSession, saveSolution as saveSolutionApi, type DebugRequest } from "@/lib/api";
 import type { Diagnosis } from "@/lib/types";
@@ -99,13 +100,16 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
     setSaving(true);
     try {
       await saveSolutionApi({
-        problem: (diagnosis.request?.error || diagnosis.request?.context || diagnosis.rootCause).slice(0, 20_000),
+        problem: (diagnosis.request?.question || diagnosis.request?.error || diagnosis.request?.context || diagnosis.rootCause).slice(0, 20_000),
         rootCause: diagnosis.rootCause,
         technology: diagnosis.detected,
-        fixSummary: diagnosis.recommendedFix[0]?.detail ?? "Review the recommended fix.",
-        sources: diagnosis.sources.map((source) => ({ title: source.title, type: source.type })),
+        fixSummary: diagnosis.answer?.text ?? diagnosis.recommendedFix[0]?.detail ?? "Review the retrieved evidence.",
+        sources: diagnosis.answer?.citations ?? diagnosis.sources.map((source) => ({
+          id: source.id, title: source.title, type: source.type, source_id: source.source_id,
+          url: source.url, excerpt: source.excerpt, location: source.location,
+        })),
       });
-      toast("Solution saved to Saved Solutions", "success");
+      toast("Answer saved to Saved Answers", "success");
       setSaved(true);
     } catch {
       toast("Could not save this solution.", "error");
@@ -116,7 +120,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
 
   return (
     <AppShell
-      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Documentation"} session` : "New Debug Session"}
+      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Knowledge"} session` : "Ask your sources"}
       techs={techs.length ? techs : (diagnosis?.detected ?? [])}
       rightPanel={
         <RightPanel
@@ -133,11 +137,12 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
     >
       <div className="ff-home">
         {!sessionId && <WorkspaceHero />}
-        {!sessionId && <section className="ff-intro"><p className="ff-eyebrow"><span aria-hidden="true" />A CLEARER WAY TO DEBUG</p><div><h2>Every solution starts<br />with the right context.</h2><p>Bring the error. Add the details. Search your documentation for relevant evidence, and keep the whole investigation together.</p></div></section>}
+        {!sessionId && <section className="ff-intro"><p className="ff-eyebrow"><span aria-hidden="true" />YOUR KNOWLEDGE, WITH EVIDENCE</p><div><h2>From your sources<br />to a clearer answer.</h2><p>Upload documents or connect an authorized app. Ask about your policies, data, research, or code, and inspect the evidence behind each answer.</p></div></section>}
         <section id="workspace" className="ff-workspace-section" aria-labelledby="session-heading">
-          <div className="ff-section-heading"><div><p className="ff-eyebrow">{sessionId ? "YOUR INVESTIGATION" : "LET’S WORK THROUGH IT"}</p><SessionHeading id="session-heading">{sessionId ? "Continue the conversation." : "What are you working on?"}</SessionHeading></div><span className="ff-mode-label"><span />Documentation search</span></div>
+          <div className="ff-section-heading"><div><p className="ff-eyebrow">{sessionId ? "YOUR CONVERSATION" : "ASK YOUR KNOWLEDGE"}</p><SessionHeading id="session-heading">{sessionId ? "Continue the conversation." : "What would you like to know?"}</SessionHeading></div><span className="ff-mode-label"><span />Private source search</span></div>
           <div className={sessionId ? "ff-session-input" : "ff-workspace-grid"}>
             <div className="min-w-0">
+        {!sessionId && <WorkspaceReadiness />}
         {loadingSession && <p role="status" className="text-sm text-muted">Loading session…</p>}
         {!loadingSession && <DebugInput
           onDiagnose={runPipeline}
@@ -147,6 +152,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
           onRepoChange={setRepoUrl}
           initialValues={diagnosis?.request ? {
             ...diagnosis.request,
+            question: diagnosis.request.question ?? undefined,
             error: diagnosis.request.error ?? undefined,
             code: diagnosis.request.code ?? undefined,
             context: diagnosis.request.context ?? undefined,
@@ -155,7 +161,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
           onClear={() => { setDiagnosis(null); setError(null); setSaved(false); router.replace("/"); }}
         />}
 
-              <p className="ff-input-note">Searches your uploaded documents by keyword. AI diagnosis is not connected.</p>
+              <p className="ff-input-note">Answers use available source excerpts. If evidence is missing, FixFlow will ask for more.</p>
             </div>
             {!sessionId && <WorkspaceGuide />}
           </div>
@@ -179,8 +185,8 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
           {!busy && !loadingSession && !error && !diagnosis && (
             <div className="rounded-xl border border-dashed border-border px-6 py-10 text-center">
               <p className="text-sm text-muted">
-                Paste an error, code, or context above — then run{" "}
-                <span className="text-foreground">Search documentation</span>.
+                Add a source, ask your question above, then choose{" "}
+                <span className="text-foreground">Ask question</span>.
               </p>
               <p className="mt-1 font-mono text-[11px] text-muted/60">
                 searches your uploaded knowledge base

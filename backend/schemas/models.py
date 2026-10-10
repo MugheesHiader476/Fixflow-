@@ -40,6 +40,7 @@ class DebugAttachment(BaseModel):
 
 
 class DebugRequest(BaseModel):
+    question: PersistedText | None = Field(default=None, max_length=4000)
     error: PersistedText | None = Field(default=None, max_length=200_000)
     code: PersistedText | None = Field(default=None, max_length=500_000)
     context: PersistedText | None = Field(default=None, max_length=200_000)
@@ -48,7 +49,7 @@ class DebugRequest(BaseModel):
     techs: list[ShortText] = Field(default_factory=list, max_length=30)
     files: list[DebugAttachment] = Field(default_factory=list, max_length=5)
 
-    @field_validator("error", "code", "context")
+    @field_validator("question", "error", "code", "context")
     @classmethod
     def reject_null_bytes(cls, value: str | None) -> str | None:
         if value and "\x00" in value:
@@ -68,6 +69,17 @@ class DebugRequest(BaseModel):
         return value
 
 
+class QuestionRequest(DebugRequest):
+    question: PersistedText = Field(min_length=1, max_length=4000)
+
+    @field_validator("question")
+    @classmethod
+    def nonblank_question(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Question cannot be blank")
+        return value.strip()
+
+
 class SourceDoc(BaseModel):
     id: str
     type: SourceType
@@ -77,6 +89,9 @@ class SourceDoc(BaseModel):
     relevance: int = Field(ge=0, le=100)
     excerpt: str
     used: bool = True
+    source_id: str | None = None
+    source_hash: str | None = None
+    location: str | None = None
 
 
 class FixStep(BaseModel):
@@ -110,11 +125,32 @@ class RagDetails(BaseModel):
     reranked: int = Field(ge=0)
     sourcesUsed: int = Field(ge=0)
     topChunks: list[RagChunk]
+    retrievalMethod: Literal["keyword", "dense"] = "keyword"
 
 
 class SourceReference(BaseModel):
     title: PersistedText = Field(max_length=500)
     type: SourceType
+    id: str | None = None
+    source_id: str | None = None
+    url: str | None = None
+    excerpt: PersistedText | None = Field(default=None, max_length=6000)
+    location: str | None = None
+    quote: PersistedText | None = Field(default=None, max_length=2000)
+    number: int | None = Field(default=None, ge=1)
+
+
+class AnswerCitation(SourceReference):
+    id: str
+    quote: PersistedText = Field(min_length=1, max_length=2000)
+    number: int = Field(ge=1)
+
+
+class GroundedAnswer(BaseModel):
+    status: Literal["answered", "insufficient_evidence"]
+    text: PersistedText = Field(min_length=1, max_length=20_000)
+    citations: list[AnswerCitation] = Field(default_factory=list, max_length=30)
+    model: str | None = None
 
 
 class DiagnosisDraft(BaseModel):
@@ -128,6 +164,7 @@ class DiagnosisDraft(BaseModel):
     recommendedFix: list[FixStep]
     codeFix: CodeFix | None = None
     alternatives: list[AlternativeFix]
+    answer: GroundedAnswer | None = None
 
 
 class Diagnosis(DiagnosisDraft):
@@ -156,6 +193,7 @@ class ChatMessage(BaseModel):
     role: Literal["user", "fixflow"]
     text: str
     sources: list[SourceReference] = Field(default_factory=list)
+    answer: GroundedAnswer | None = None
 
 
 class SessionSummary(BaseModel):
@@ -191,6 +229,11 @@ class KnowledgeSource(BaseModel):
     detail: str
     is_active: bool = True
     retrieval_available: bool = True
+    managed_by_connector: bool = False
+
+
+class SourceAvailabilityRequest(BaseModel):
+    active: bool = Field(strict=True)
 
 
 class SavedSolution(BaseModel):

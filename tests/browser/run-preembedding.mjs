@@ -13,7 +13,8 @@ const staging = resolve(output, "app");
 const python = resolve("myenev/bin/python");
 const database = process.env.TEST_DATABASE_URL;
 assert.ok(database, "Set TEST_DATABASE_URL to a separate disposable browser database ending _test");
-assert.ok(new URL(database).pathname.endsWith("_test"), "Refusing a non-test database");
+const databaseName = /^postgresql(?:\+asyncpg)?:\/\/[^?]*\/([^/?]+)(?:\?.*)?$/.exec(database)?.[1];
+assert.ok(databaseName?.endsWith("_test"), "Refusing a non-test database");
 const toolRoot = process.env.FIXFLOW_BROWSER_TOOLS;
 assert.ok(toolRoot, "Set FIXFLOW_BROWSER_TOOLS to the installed Playwright package directory");
 const { chromium } = await import(pathToFileURL(resolve(toolRoot, "index.mjs")).href);
@@ -23,6 +24,7 @@ const environment = {
   ...process.env, DATABASE_URL: database, FIXFLOW_API_TOKEN: "test-only-preembedding-gateway-token-32-characters",
   FIXFLOW_DATA_DIR: resolve(output, "uploads"), OLLAMA_URL: "", EMBEDDING_MODEL_DIGEST: "", EMBEDDING_PROFILE: "plain-v1", EMBEDDING_API_URL: "", EMBEDDING_MODEL: "", EMBEDDING_DIM: "",
   RETRIEVAL_MODE: "keyword", EMBEDDING_AUTO_PROCESS: "false",
+  GENERATION_OLLAMA_URL: "", GENERATION_MODEL: "", GENERATION_MODEL_DIGEST: "",
   CONNECTORS__PUBLIC_URL: ui, FRONTEND_ORIGINS: ui, PIPELINE__OCR_ENABLED: "false", PYTHONPATH: root,
 };
 await mkdir(output, { recursive: true });
@@ -148,7 +150,7 @@ try {
   await context.tracing.start({ screenshots: true, snapshots: true });
   await page.goto(`${ui}/sources`);
   await check("Authenticated actual Next page loads without hydration errors", async () => {
-    await expect(page.getByRole("heading", { name: "Add documentation" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Add a source" })).toBeVisible();
   }, page);
   await check("Unbroken long filename remains usable at 390px and 320px", async () => {
     await page.getByRole("tab", { name: /^Upload a file/ }).click();
@@ -174,7 +176,7 @@ try {
       const finished = await terminal(context.request, result.source.id, fixture.expected);
       const terminalMs = performance.now() - result.started;
       const card = sourceCard(page, result.source.name);
-      await expect(card.getByText(fixture.expected === "ready_for_embedding" ? "Ready for embedding" : "Failed", { exact: true })).toBeVisible({ timeout: 10000 });
+      await expect(card.getByText(fixture.expected === "ready_for_embedding" ? "Ready to ask" : "Failed", { exact: true })).toBeVisible({ timeout: 10000 });
       const persisted = await inspect(result.source.id, fixture.path);
       assert.equal(persisted.source_hash, fixture.sha256, "Upload changed the original bytes");
       if (fixture.expected === "ready_for_embedding" && persisted.canonical_text) {
@@ -213,7 +215,7 @@ try {
       const finished = await terminal(context.request, result.source.id, "ready_for_embedding");
       const prepared = await inspect(result.source.id, path);
       assert.equal(prepared.source_version, 1);
-      await expect(sourceCard(page, result.source.name).getByText("Ready for embedding", { exact: true })).toBeVisible({ timeout: 15000 });
+      await expect(sourceCard(page, result.source.name).getByText("Ready to ask", { exact: true })).toBeVisible({ timeout: 15000 });
       report.restart = { ...prepared, statuses: ["uploaded", "processing", ...finished.statuses] };
     }, page);
     await check("Backend outage surfaces an error; retry submits the retained form once", async () => {
@@ -247,7 +249,7 @@ try {
       await startBackend();
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
       await terminal(context.request, result.source.id, "ready_for_embedding");
-      await expect(sourceCard(page, result.source.name).getByText("Ready for embedding", { exact: true })).toBeVisible({ timeout: 15000 });
+      await expect(sourceCard(page, result.source.name).getByText("Ready to ask", { exact: true })).toBeVisible({ timeout: 15000 });
       report.boundedRecovery = await inspect(result.source.id, path);
     }, page);
     await check("Real gateway overwrites forged owner; other identity has no private sources/search", async () => {
@@ -328,7 +330,7 @@ try {
     }, page);
     await check("Reload and mobile widths restore terminal sources without overflow", async () => {
       await page.reload();
-      await expect(sourceCard(page, "sentinels.txt").getByText("Ready for embedding", { exact: true })).toBeVisible();
+      await expect(sourceCard(page, "sentinels.txt").getByText("Ready to ask", { exact: true })).toBeVisible();
       for (const width of [390, 320]) {
         await page.setViewportSize({ width, height: 844 });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Overflow at ${width}px`);

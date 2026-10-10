@@ -116,7 +116,7 @@ export function RightPanel({
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {tab === "sources" &&
           (!diagnosis || !diagnosis.sources.length ? (
-            <EmptyHint text="Run a diagnosis to see retrieved sources here." />
+            <EmptyHint text="Ask a question to see retrieved sources here." />
           ) : (
             <div className="space-y-1">
               {diagnosis.sources.map((s) => (
@@ -127,7 +127,7 @@ export function RightPanel({
 
         {tab === "context" && (
           <div className="space-y-3 text-sm">
-            <MetaBlock label="Detected stack" value={techs.length ? techs.join(" · ") : "—"} />
+            <MetaBlock label="Selected technologies" value={techs.length ? techs.join(" · ") : "—"} />
             <MetaBlock
               label="Error class"
               value={diagnosis?.detected.includes("asyncio") ? "RuntimeError / asyncio" : "—"}
@@ -136,9 +136,8 @@ export function RightPanel({
             <MetaBlock label="Session" value="Current workspace session" />
             {diagnosis && (
               <>
-                <MetaBlock label="Confidence" value={diagnosis.confidence === null ? "Not assessed" : `${diagnosis.confidence}%`} />
-                <MetaBlock label="Chunks retrieved" value={String(diagnosis.rag.retrieved)} />
-                <MetaBlock label="Chunks reranked" value={String(diagnosis.rag.reranked)} />
+                {diagnosis.confidence !== null && <MetaBlock label="Confidence" value={`${diagnosis.confidence}%`} />}
+                <MetaBlock label="Excerpts retrieved" value={String(diagnosis.rag.retrieved)} />
               </>
             )}
           </div>

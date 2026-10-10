@@ -6,6 +6,7 @@ export interface DebugAttachment {
 }
 
 export interface DebugRequest {
+  question?: string;
   error?: string;
   code?: string;
   context?: string;
@@ -23,6 +24,34 @@ export interface SourceDoc {
   relevance: number;
   excerpt: string;
   used: boolean;
+  source_id?: string | null;
+  source_hash?: string | null;
+  location?: string | null;
+}
+
+export interface SourceReference {
+  title: string;
+  type: SourceType;
+  id?: string | null;
+  source_id?: string | null;
+  url?: string | null;
+  excerpt?: string | null;
+  location?: string | null;
+  quote?: string | null;
+  number?: number | null;
+}
+
+export interface AnswerCitation extends SourceReference {
+  id: string;
+  quote: string;
+  number: number;
+}
+
+export interface GroundedAnswer {
+  status: "answered" | "insufficient_evidence";
+  text: string;
+  citations: AnswerCitation[];
+  model: string | null;
 }
 
 export interface FixStep {
@@ -54,9 +83,11 @@ export interface Diagnosis {
   recommendedFix: FixStep[];
   codeFix: CodeFix | null;
   alternatives: AlternativeFix[];
+  answer?: GroundedAnswer | null;
   sources: SourceDoc[];
   generation?: "disabled" | "model" | "legacy";
   request?: {
+    question?: string | null;
     error?: string | null;
     code?: string | null;
     context?: string | null;
@@ -65,6 +96,7 @@ export interface Diagnosis {
     files?: DebugAttachment[];
   } | null;
   rag: {
+    retrievalMethod?: "keyword" | "dense";
     query: string;
     expansions: string[];
     retrieved: number;
@@ -78,7 +110,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "fixflow";
   text: string;
-  sources?: { title: string; type: SourceType }[];
+  sources?: SourceReference[];
+  answer?: GroundedAnswer | null;
   pending?: boolean;
 }
 
@@ -95,6 +128,7 @@ export interface DebugSession {
 }
 
 export interface KnowledgeSource {
+  managed_by_connector?: boolean;
   is_active?: boolean;
   retrieval_available?: boolean;
   id: string;
@@ -122,7 +156,7 @@ export interface SavedSolution {
   rootCause: string;
   technology: string[];
   fixSummary: string;
-  sources: { title: string; type: SourceType }[];
+  sources: SourceReference[];
   savedAt: string;
 }
 

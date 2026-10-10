@@ -40,6 +40,9 @@ export default function SettingsPage() {
   if (health.loading) backend = "checking";
   else if (health.error) backend = "offline";
   else if (health.data?.status === "ok") backend = "online";
+  let answerStatus = health.data?.ai_generation === "configured" ? "Configured" : "Not configured";
+  if (health.data?.answer_service === "ready") answerStatus = "Ready";
+  if (health.data?.answer_service === "unavailable") answerStatus = "Unavailable";
 
   return (
     <AppShell sessionTitle="Settings">
@@ -101,7 +104,7 @@ export default function SettingsPage() {
               <dt className="text-muted">Documents / chunks</dt><dd>{health.data.documents ?? "—"} / {health.data.chunks ?? "—"}</dd>
               <dt className="text-muted">Embedded chunks</dt><dd>{health.data.embedded_chunks ?? "—"}</dd>
               <dt className="text-muted">Embedding configuration</dt><dd>{health.data.embedding_configured ? "Configured" : "Not configured"}</dd>
-              <dt className="text-muted">AI generation</dt><dd>{health.data.ai_generation === "configured" ? "Configured" : "Not connected"}</dd>
+              <dt className="text-muted">Local answers</dt><dd>{answerStatus}</dd>
             </dl>
           )}
         </section>

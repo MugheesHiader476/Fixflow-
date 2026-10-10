@@ -12,6 +12,7 @@ from backend.schemas.models import (
     ChatMessage,
     DebugRequest,
     Diagnosis,
+    GroundedAnswer,
     RagDetails,
     SavedSolution,
     SaveRequest,
@@ -20,7 +21,8 @@ from backend.schemas.models import (
 )
 from backend.services.access import owner_id
 from backend.services.diagnosis import DiagnosisProvider, diagnostic_text
-from backend.services.retrieval import retrieve_sources
+from backend.services.generation import GenerationError
+from backend.services.retrieval import evidence_is_current, generation_evidence, retrieve_sources
 
 
 class SessionNotFoundError(LookupError):
@@ -33,8 +35,15 @@ def now() -> datetime:
 
 async def diagnose(db: AsyncSession, payload: DebugRequest, provider: DiagnosisProvider) -> Diagnosis:
     query = diagnostic_text(payload)
-    sources = await retrieve_sources(db, query)
+    sources = await retrieve_sources(db, query, limit=12 if provider.generation == "model" else 5)
+    if provider.generation == "model":
+        sources = await generation_evidence(db, sources, expand_context=True)
     draft = await provider.diagnose(payload, sources)
+    if provider.generation == "model" and not await evidence_is_current(db, sources):
+        raise GenerationError("Your sources changed while preparing the answer. Please ask again.")
+    cited_ids = {citation.id for citation in draft.answer.citations} if draft.answer else set()
+    if draft.answer:
+        sources = [source.model_copy(update={"used": source.id in cited_ids}) for source in sources]
     session_id = uuid4()
     diagnosis = Diagnosis(
         **draft.model_dump(),
@@ -47,8 +56,9 @@ async def diagnose(db: AsyncSession, payload: DebugRequest, provider: DiagnosisP
             expansions=[],
             retrieved=len(sources),
             reranked=0,
-            sourcesUsed=len({source.title for source in sources}),
+            sourcesUsed=len({source.source_id or source.title for source in sources if source.used}),
             topChunks=[],
+            retrievalMethod="dense" if db.info.get("retrieval_method") == "dense" else "keyword",
         ),
     )
     db.add(DebugSession(id=session_id, owner_id=owner_id(db), diagnosis=diagnosis.model_dump(mode="json")))
@@ -76,10 +86,29 @@ async def chat(db: AsyncSession, session_id: UUID, question: str, provider: Diag
     if diagnosis is None:
         raise SessionNotFoundError("Session not found")
     history = await messages(db, session_id)
-    evidence = await retrieve_sources(db, question, limit=3)
+    # Carry user questions into retrieval so references such as "that policy" resolve.
+    # Previous generated answers are not used as evidence or query expansions.
+    prior = diagnostic_text(diagnosis.request)[:1500] if diagnosis.request else ""
+    recent = [message.text[:500] for message in history[-4:] if message.role == "user"]
+    query = "\n".join([question, prior, *recent]) if provider.generation == "model" else question
+    evidence = await retrieve_sources(db, query, limit=12 if provider.generation == "model" else 3)
+    if provider.generation == "model":
+        evidence = await generation_evidence(db, evidence, expand_context=True)
     answer = await provider.reply(question, diagnosis, history, evidence)
-    references = {source.title: SourceReference(title=source.title, type=source.type) for source in evidence}
-    reply = ChatMessage(id=str(uuid4()), role="fixflow", text=answer, sources=list(references.values()))
+    if provider.generation == "model" and not await evidence_is_current(db, evidence):
+        raise GenerationError("Your sources changed while preparing the answer. Please ask again.")
+    grounded = answer if isinstance(answer, GroundedAnswer) else None
+    references = {
+        source.id: SourceReference(
+            id=source.id, title=source.title, type=source.type, source_id=source.source_id,
+            url=source.url, excerpt=source.excerpt, location=source.location,
+        )
+        for source in evidence
+    }
+    reply = ChatMessage(
+        id=str(uuid4()), role="fixflow", text=grounded.text if grounded else str(answer), answer=grounded,
+        sources=list(grounded.citations) if grounded else list(references.values()),
+    )
     user = ChatMessage(id=str(uuid4()), role="user", text=question)
     db.add_all(
         [
@@ -101,7 +130,7 @@ async def sessions(db: AsyncSession) -> list[SessionSummary]:
     for record in records:
         diagnosis = Diagnosis.model_validate(record.diagnosis)
         description = diagnostic_text(diagnosis.request) if diagnosis.request else diagnosis.rootCause
-        title = description.splitlines()[0][:100] if description else "Debug session"
+        title = description.splitlines()[0][:100] if description else "Knowledge session"
         result.append(
             SessionSummary(
                 id=str(record.id),

@@ -1,5 +1,6 @@
 """Read-only health checks for the database and future AI integration."""
 
+import asyncio
 from functools import lru_cache
 
 from alembic.config import Config
@@ -40,9 +41,21 @@ async def database_readiness(owner: str | None = None) -> dict[str, object]:
         "embedding_configured": bool(
             settings.embedding_enabled and settings.embedding_model and settings.embedding_dim
         ),
-        "ai_generation": "not_configured",
+        "ai_generation": "configured" if settings.generation_enabled else "not_configured",
         "authentication_configured": bool(settings.fixflow_api_token),
     }
+    if owner is not None:
+        result["answer_service"] = "not_configured"
+        result["retrieval_mode"] = settings.retrieval_mode
+        if settings.generation_enabled:
+            from backend.services.generation import GenerationError, OllamaAnswerProvider  # noqa: PLC0415
+
+            try:
+                async with asyncio.timeout(3):
+                    await OllamaAnswerProvider(settings).verify_identity()
+                result["answer_service"] = "ready"
+            except (GenerationError, TimeoutError):
+                result["answer_service"] = "unavailable"
     try:
         async with get_engine().connect() as connection:
             # Never mutate application data during a health/readiness probe.

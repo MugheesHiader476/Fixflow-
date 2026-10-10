@@ -79,7 +79,7 @@ describe("application layout", () => {
 
     expect(await screen.findByText("Connected")).toBeDefined();
     expect(await screen.findByText("Async failure")).toBeDefined();
-    expect(screen.getByText("Documentation")).toBeDefined();
+    expect(screen.queryByText("Documentation")).toBeNull();
     expect(screen.getByText("Context details")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
