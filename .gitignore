@@ -59,5 +59,9 @@ next-env.d.ts
 # Local documentation corpus is intentionally kept out of the GitHub repo.
 /doc/*
 
-# Ignore README files in any capitalization; other Markdown files remain eligible.
-[Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]
+# Keep Markdown documentation local, except README files (any capitalization).
+*.[Mm][Dd]
+![Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]
+
+# Markdown parser fixtures are required by the regression tests.
+!/backend/tests/fixtures/pipeline/*.md
