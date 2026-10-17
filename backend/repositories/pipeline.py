@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import Document, IngestionArtifact, KnowledgeSource
 from backend.processing.pipeline.validation import validate_result
+from backend.repositories.evidence import refresh_index
 from backend.schemas.pipeline import CanonicalDocument, PipelineResult
 
 
@@ -65,3 +66,5 @@ async def persist_result(session: AsyncSession, source_id: UUID, result: Pipelin
         session.add(IngestionArtifact(source_id=source_id, result=payload))
     else:
         artifact.result = payload
+    # Only sources explicitly opted into evidence search receive a derived index.
+    await refresh_index(session, source, result)

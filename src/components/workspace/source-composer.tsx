@@ -41,7 +41,7 @@ function ComposerOptions() {
       {open === "mode" && <div id="parsing-options" className="ff-composer-popover" aria-label="Workspace capabilities">
         <p>Workspace capabilities</p>
         <div><FileText size={17} /><span>Document parsing<small>Preserve content and source structure</small></span><Check size={16} /></div>
-        <div className="ff-unavailable"><span>AI models<small>Not enabled in this workspace</small></span></div>
+        <div className="ff-unavailable"><span>Local AI models<small>Not enabled in this workspace</small></span></div>
         <Link href="/settings">Workspace settings <ChevronDown size={13} /></Link>
       </div>}
     </div>

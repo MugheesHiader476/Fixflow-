@@ -96,7 +96,8 @@ describe("application pages", () => {
     expect(screen.getByRole("link", { name: "Open workspace" }).getAttribute("href")).toBe("#workspace");
     expect(screen.getByRole("link", { name: "Explore your knowledge" }).getAttribute("href")).toBe("/sources");
     expect(screen.getByRole("textbox", { name: "Source content" })).toBeDefined();
-    expect(screen.getByText(/AI conversations are not enabled yet/)).toBeDefined();
+    expect(screen.getByRole("region", { name: "Workspace assistant" })).toBeDefined();
+    expect(screen.getByText(/run authorized workspace workflows/)).toBeDefined();
     expect(api.diagnose).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: /Pick up the thread/ }).getAttribute("href")).toBe("/history");
     expect(screen.getByRole("link", { name: /Keep what works/ }).getAttribute("href")).toBe("/saved");
@@ -280,7 +281,7 @@ describe("application pages", () => {
     render(<SettingsPage />);
     expect(await screen.findByText("degraded")).toBeDefined();
     expect(screen.getByText(/migration_required/)).toBeDefined();
-    expect(screen.getByText("Parsing only")).toBeDefined();
+    expect(screen.getByText("Canonical parsing and opt-in evidence indexing")).toBeDefined();
   });
 
   it("uploads the selected binary document without an editable text preview", async () => {

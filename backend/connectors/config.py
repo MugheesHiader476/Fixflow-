@@ -24,6 +24,7 @@ class ConnectorConfig(Contract):
     gmail_pubsub_topic: str | None = None
     gmail_pubsub_service_account: str | None = None
     events_enabled: bool = False
+    gmail_send_enabled: bool = False
     request_timeout_seconds: float = Field(default=30, gt=0, le=120)
     max_response_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
     page_size: int = Field(default=25, ge=1, le=100)

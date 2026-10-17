@@ -1,11 +1,13 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt ./backend/requirements.txt
 COPY requirements-ingestion.txt ./requirements-ingestion.txt
 RUN python -m pip install --no-cache-dir -r backend/requirements.txt -r requirements-ingestion.txt
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && chmod -R a+rX /opt/tiktoken
 COPY alembic.ini ./
 COPY backend ./backend
 COPY scripts ./scripts

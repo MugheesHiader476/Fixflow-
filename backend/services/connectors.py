@@ -25,6 +25,7 @@ from backend.db.models import (
     KnowledgeSource,
 )
 from backend.db.session import get_session_factory
+from backend.repositories.agent_lifecycle import disable as disable_agent_workflows
 from backend.schemas.connectors import (
     AccountResponse,
     ConnectionStatus,
@@ -104,6 +105,7 @@ async def providers(db: AsyncSession) -> list[ProviderResponse]:
                 setup_message=None if enabled else "Server OAuth credentials and encryption key are required",
                 accounts=[await response(db, account) for account in accounts if account.provider == provider],
                 install_url=install_url,
+                gmail_send_enabled=provider == "gmail" and config.gmail_send_enabled,
             )
         )
     return result
@@ -326,6 +328,7 @@ async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> Connect
     account.status, account.authentication_status, account.sync_status = "disconnected", "revoked", "cancelled"
     account.error_message = warning
     account.meta = {**account.meta, "disconnected_policy": policy}
+    await disable_agent_workflows(db, account.id, purge=policy == "purge")
     # Keep selection/account identity for reconnect; clear pending account payloads.
     account.meta = {k: v for k, v in account.meta.items() if k not in {"pending_events", "failed_refs"}}
     await db.execute(

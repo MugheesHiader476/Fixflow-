@@ -31,6 +31,10 @@ class GmailConnector(OAuthConnector):
         "https://www.googleapis.com/auth/gmail.readonly",
     )
 
+    @property
+    def authorization_scopes(self) -> tuple[str, ...]:
+        return self.scopes + (("https://www.googleapis.com/auth/gmail.send",) if self.config.gmail_send_enabled else ())
+
     async def handle_callback(self, code: str, verifier: str) -> tuple[Credentials, str, str, dict[str, object]]:
         credentials = await self.exchange(code, verifier)
         token = credentials.access_token.get_secret_value()

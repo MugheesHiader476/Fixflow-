@@ -12,6 +12,11 @@ describe("trusted backend gateway", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+  it("forwards owner-authenticated embedding job status", async () => {
+    const response = await proxyBackend(new Request("http://localhost/api/backend/api/evidence/sources/11111111-1111-4111-8111-111111111111/embedding-status"), "api/evidence/sources/11111111-1111-4111-8111-111111111111/embedding-status");
+    expect(response.status).toBe(200);
+  });
+
   it.each(["api/ask", "api/chat", "api/debug"])("allows bounded model loading for %s while retaining ordinary request deadlines", async (path) => {
     const deadline = vi.spyOn(AbortSignal, "timeout");
     await proxyBackend(new Request(`http://localhost/api/backend/${path}`, { method: "POST" }), path);
@@ -95,7 +100,7 @@ describe("trusted backend gateway", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it.each(["api/ask", "api/sources/11111111-1111-4111-8111-111111111111/availability"])("forwards authorized question/source writes through the gateway: %s", async (path) => {
+  it.each(["api/ask", "api/sources/11111111-1111-4111-8111-111111111111/availability", "api/evidence/answer", "api/evidence/search", "api/evidence/sources/11111111-1111-4111-8111-111111111111/embed", "api/evidence/sources/11111111-1111-4111-8111-111111111111/index", "api/evidence/sources/11111111-1111-4111-8111-111111111111/remove-index"])("forwards authorized question/source writes through the gateway: %s", async (path) => {
     const response = await proxyBackend(new Request(`http://localhost/api/backend/${path}`, {
       method: "POST", body: JSON.stringify({ question: "Refund policy?", active: false }),
     }), path);

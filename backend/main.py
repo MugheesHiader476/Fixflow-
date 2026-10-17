@@ -14,14 +14,18 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.api.agent import router as agent_router
 from backend.api.connectors import events_router
 from backend.api.connectors import router as connector_router
+from backend.api.evidence import router as evidence_router
 from backend.api.middleware import RequestGuardMiddleware
 from backend.api.routes import router
 from backend.config import get_settings
 from backend.connectors.core import ConnectorError
 from backend.db.session import close_database
+from backend.services.agent import worker as agent_worker
 from backend.services.connector_sync import connector_worker
+from backend.services.embeddings import embedding_worker
 from backend.services.ingestion import ingestion_worker
 from backend.services.logging_security import protect_access_logs
 from backend.services.readiness import database_readiness
@@ -34,15 +38,23 @@ protect_access_logs()
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     worker = asyncio.create_task(ingestion_worker(), name="document-ingestion")
     connectors = asyncio.create_task(connector_worker(), name="connector-sync")
+    embeddings = asyncio.create_task(embedding_worker(), name="evidence-embeddings")
+    agents = asyncio.create_task(agent_worker(), name="workspace-agents")
     try:
         yield
     finally:
         worker.cancel()
         connectors.cancel()
+        embeddings.cancel()
+        agents.cancel()
         with suppress(asyncio.CancelledError):
             await worker
         with suppress(asyncio.CancelledError):
             await connectors
+        with suppress(asyncio.CancelledError):
+            await embeddings
+        with suppress(asyncio.CancelledError):
+            await agents
         await close_database()
 
 
@@ -95,7 +107,9 @@ def error_response(code: str, message: str, status_code: int) -> JSONResponse:
 
 @app.exception_handler(StarletteHTTPException)
 async def http_error(_: Request, error: StarletteHTTPException) -> JSONResponse:
-    return error_response("HTTP_ERROR", str(error.detail), error.status_code)
+    response = error_response("HTTP_ERROR", str(error.detail), error.status_code)
+    response.headers.update(error.headers or {})
+    return response
 
 
 @app.exception_handler(RequestValidationError)
@@ -131,6 +145,8 @@ async def health() -> JSONResponse:
 
 app.include_router(router, prefix="/api")
 app.include_router(connector_router, prefix="/api")
+app.include_router(evidence_router, prefix="/api")
+app.include_router(agent_router, prefix="/api")
 app.include_router(events_router)
 
 

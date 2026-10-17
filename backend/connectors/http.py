@@ -69,6 +69,7 @@ class ProviderHttp:
         headers: dict[str, str] | None = None,
         basic: tuple[str, str] | None = None,
         raw: bool = False,
+        retry: bool = True,
         _redirects: int = 0,
     ) -> bytes | dict[str, object] | list[dict[str, object]]:
         try:
@@ -88,7 +89,8 @@ class ProviderHttp:
         request_headers = {"Accept": "application/json", **(headers or {})}
         if token:
             request_headers["Authorization"] = "Bearer " + token
-        for attempt in range(3):
+        attempts = 3 if retry else 1
+        for attempt in range(attempts):
             try:
                 async with (
                     httpx.AsyncClient(
@@ -204,12 +206,12 @@ class ProviderHttp:
                     except (ValueError, RecursionError) as error:
                         raise ConnectorError("invalid_response", "Provider returned invalid JSON") from error
             except (httpx.TimeoutException, httpx.NetworkError) as error:
-                if attempt == 2:
+                if attempt == attempts - 1:
                     raise ConnectorError(
                         "provider_unavailable", "Provider request failed; synchronization can retry", 30
                     ) from error
             except ConnectorError as error:
-                if error.code != "provider_unavailable" or attempt == 2:
+                if error.code != "provider_unavailable" or attempt == attempts - 1:
                     raise
             logger.info(json.dumps({"event": "connector_retry", "host": target.hostname, "attempt": attempt + 1}))
             await asyncio.sleep(0.25 * 2**attempt)

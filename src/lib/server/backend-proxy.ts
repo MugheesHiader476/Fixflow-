@@ -5,8 +5,8 @@ import { requestTimeoutMs } from "../request-timeout";
 
 const UUID = "[0-9a-fA-F-]{36}";
 const PROVIDER = "(gmail|github|google_drive|slack)";
-const GET_PATH = new RegExp(`^(health|api/(readiness|sessions|sources|saved|connectors)|api/sessions/${UUID}(/messages)?|api/sources/${UUID}(/status)?|api/connectors/${UUID}/(resources|status)|api/connectors/${PROVIDER}/callback)$`);
-const POST_PATH = new RegExp(`^api/(ask|debug|chat|saved|documents|sources/${UUID}/(retry-embedding|availability)|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
+const GET_PATH = new RegExp(`^(health|api/(readiness|sessions|sources|saved|connectors)|api/sessions/${UUID}(/messages)?|api/sources/${UUID}(/status)?|api/connectors/${UUID}/(resources|status)|api/evidence/sources/${UUID}/embedding-status|api/agent/(runs(/${UUID})?|files/${UUID}/download)|api/connectors/${PROVIDER}/callback)$`);
+const POST_PATH = new RegExp(`^api/(agent/(runs|runs/${UUID}/cancel|actions/${UUID}/execute)|ask|debug|chat|saved|documents|sources/${UUID}/(retry-embedding|availability)|evidence/(search|answer|sources/${UUID}/(index|remove-index|embed))|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
 
 function connectorQuery(request: Request, path: string): string | null {
   if (!path.startsWith("api/connectors/")) return "";
@@ -20,6 +20,15 @@ function connectorQuery(request: Request, path: string): string | null {
   }
   const query = parameters.toString();
   return query ? `?${query}` : "";
+}
+
+function responseHeaders(upstream: Response): Headers {
+  const headers = new Headers({ "Content-Type": upstream.headers.get("Content-Type") || "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+  for (const name of ["Retry-After", "Content-Disposition"]) {
+    const value = upstream.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  return headers;
 }
 
 export async function proxyBackend(request: Request, path: string) {
@@ -54,8 +63,7 @@ export async function proxyBackend(request: Request, path: string) {
     } as RequestInit & { duplex?: "half" });
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: { "Content-Type": upstream.headers.get("Content-Type") || "application/json", "Cache-Control": "no-store",
-        ...(upstream.headers.has("Retry-After") ? { "Retry-After": upstream.headers.get("Retry-After") ?? "60" } : {}) },
+      headers: responseHeaders(upstream),
     });
   } catch {
     return NextResponse.json({ error: "Could not connect to the FixFlow backend." }, { status: 502 });

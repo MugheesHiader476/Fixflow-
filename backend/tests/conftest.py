@@ -43,6 +43,8 @@ async def clear_test_sources(url: str) -> None:
     engine = create_async_engine(url)
     try:
         async with engine.begin() as connection:
+            if await connection.scalar(text("SELECT to_regclass('public.agent_runs') IS NOT NULL")):
+                await connection.execute(text("TRUNCATE agent_runs CASCADE"))
             if await connection.scalar(text("SELECT to_regclass('public.knowledge_sources') IS NOT NULL")):
                 await connection.execute(text("TRUNCATE knowledge_sources CASCADE"))
     finally:
@@ -67,7 +69,7 @@ async def database(
                 "debug_sessions, chat_messages, saved_solutions"
                 ", connector_accounts, connector_credentials, connector_oauth_states, connector_sync_jobs, "
                 "connector_resources, connector_subscriptions, connector_events, connector_audit, "
-                "connector_rate_limits CASCADE"
+                "connector_rate_limits, agent_runs CASCADE"
             )
         )
     try:

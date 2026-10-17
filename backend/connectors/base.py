@@ -34,6 +34,10 @@ class OAuthConnector:
         self.http = http or ProviderHttp(config)
 
     @property
+    def authorization_scopes(self) -> tuple[str, ...]:
+        return self.scopes
+
+    @property
     def client_id(self) -> str:
         value = (
             self.config.google_client_id
@@ -82,7 +86,7 @@ class OAuthConnector:
                 code_challenge_method="S256",
             )
             if self.provider in {"gmail", "google_drive"}:
-                parameters.update(scope=" ".join(self.scopes), access_type="offline", prompt="consent")
+                parameters.update(scope=" ".join(self.authorization_scopes), access_type="offline", prompt="consent")
         return self.authorization_endpoint + "?" + urlencode(parameters)
 
     def token_result(self, result: dict[str, object], previous: Credentials | None = None) -> Credentials:

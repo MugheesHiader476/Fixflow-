@@ -1,8 +1,8 @@
 # FixFlow
 
-FixFlow is currently a private document ingestion and parsing foundation. Upload or paste supported content, or synchronize owner-selected resources through Gmail, Google Drive, GitHub, and Slack. Processing stops at validated canonical document output.
+FixFlow is a private workspace assistant with validated document parsing, project evidence search, and Grok workflows across selected connected apps. Upload or paste supported content, or synchronize owner-selected resources through Gmail, Google Drive, GitHub, and Slack. Parsing produces validated canonical output; selected sources can then be indexed as structure-aware passages.
 
-The previous OKF generation, chunking, embeddings, keyword/dense retrieval, and local AI answer stages have been removed. Existing conversations and saved findings remain readable; this checkout does not create new answers. The next product objective has not been selected.
+The previous OKF/concept, legacy embedding and local inference stages remain removed. Existing conversations and saved findings remain readable. The new evidence stage defaults to PostgreSQL lexical search, with explicit optional Gemini hybrid search and single-call cited synthesis; it does not revive the historical chunk/vector runtime. See [evidence/vector setup](backend/README.md) and [Grok workflow setup, tools and limits](docs/workspace-agents.md).
 
 See [the module and data-flow audit](docs/product-reset.md), [the file inventory](docs/project-file-inventory.md), and [the parsing contract](docs/ingestion-pipeline.md).
 
@@ -20,9 +20,27 @@ flowchart LR
   Worker --> Inspection[Inspection + native / layout / optional OCR]
   Inspection --> Quality[Quality checks + canonical validation]
   Quality --> Storage[Canonical JSONB artifact + whole-document projection]
+  Storage --> OptIn[Explicit source + project assignment]
+  OptIn --> Passages[Structure-aware passages + lexical search]
+  Passages --> EmbeddingJobs[Optional durable embedding batches]
+  EmbeddingJobs --> Vectors[pgvector + atomic source activation]
+  Passages --> Evidence[Lexical / RRF hybrid evidence]
+  Vectors --> Evidence
+  Evidence --> Grok[Grok bounded function loop]
+  Connectors --> Grok
+  Grok --> Actions[Authorized Gmail outbox / private file tickets]
+  Evidence --> Answer[Optional single cited answer call]
 ```
 
 Account ownership, connector permissions/leases, raw uploads, persistent parsing jobs, PostgreSQL, Clerk authentication, theme/layout, history, and saved snapshots remain. Historical database tables/columns and migrations remain to preserve existing data; they are not active processing features.
+
+## Workspace workflows
+
+Use **Work with your workspace** on the home page. Ask a question, investigate connected evidence, request files or ask for an email draft/reply. The agent chooses among typed tools rather than a fixed sequence. [Setup and examples](docs/workspace-agents.md) explain the Grok key/model, migration `0010`, selected-resource scope and Gmail send consent. Backend placeholders are in `backend/.env`; secrets stay server-side.
+
+The [prompt and security policy](docs/agent-security.md) adds versioned instructions, credential-egress checks, continuous tool/output validation and shared PostgreSQL quotas. Email tools require explicit permission for each run. Failed password/MFA lockout is handled by Clerk and must be verified in the deployed Clerk Dashboard.
+
+Email defaults to a reviewable draft. Automatic sending requires an explicit per-request recipient policy and separately granted Gmail send scope. Uncertain delivery is never blindly retried. Google Workspace PDF exports and existing Drive/GitHub PDFs use private version-bound downloads. Existing lexical/hybrid search, source parsing and historical records remain available. Developer workflow guidance is in [SKILL.md](SKILL.md).
 
 ## Native setup
 
@@ -54,6 +72,8 @@ Production native startup uses `npm run build` followed by `npm run start:local`
 Configure root `.env` from `.env.example` without overwriting existing credentials, then run `docker compose up -d`. The order remains healthy database → migration → backend → frontend. No model overlay/relay remains. Preserve existing DB/upload volumes; never use `docker compose down -v` unless deliberately erasing them.
 
 Migration `0006` adds the `parsed` terminal state and preserves all records. Existing application databases must be upgraded before this checkout processes uploads. No automatic bulk reprocessing occurs. Re-upload/update explicitly to replace an older artifact with the current parsing contract. Older chunk/vector rows remain stored and unused.
+
+Migrations `0007`–`0009` add separate opt-in passage/index tables, source-scoped Gemini vectors and durable embedding jobs. Migration `0010` adds workspace runs, email actions and private file tickets. Review the migrations and apply through `head` before using this checkout; there is no automatic corpus backfill. Lexical search works without an API key. Optional hybrid search requires backend-only `GEMINI__API_KEY`, explicit preparation of source batches and selection of Hybrid mode. Evidence-only synthesis uses `EVIDENCE__API_KEY`/`EVIDENCE__MODEL`; workspace workflows use `GROK__API_KEY`/`GROK__MODEL`. Exact/latest/live facts require authorized native tools; unsupported operations are reported explicitly.
 
 ## Supported parsing
 

@@ -24,7 +24,7 @@ async def test_health(client: httpx.AsyncClient) -> None:
     assert health["database"] == "connected"
     assert health["pgvector"] == "available"
     assert health["schema"] == "ready"
-    assert health["revision"] == health["expected_revision"] == "0006"
+    assert health["revision"] == health["expected_revision"] == "0010"
     assert health["sources"] == health["documents"] == health["chunks"] == health["embedded_chunks"] == 0
     assert health["ai_generation"] == "removed"
 
@@ -228,5 +228,5 @@ async def test_health_detects_migration_mismatch(client: httpx.AsyncClient) -> N
         assert response.json()["schema"] == "migration_required"
     finally:
         async with get_session_factory()() as db:
-            await db.execute(text("UPDATE alembic_version SET version_num='0006'"))
+            await db.execute(text("UPDATE alembic_version SET version_num='0010'"))
             await db.commit()

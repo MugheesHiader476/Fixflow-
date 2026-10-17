@@ -40,6 +40,10 @@ function validHealth(value: unknown): boolean {
     && ["revision", "expected_revision"].every((name) => value[name] === null || text(value[name]))
     && ["sources", "documents", "chunks", "embedded_chunks", "pending_sources", "failed_sources"].every((name) => value[name] === null || count(value[name]))
     && typeof value.embedding_configured === "boolean"
+    && (value.evidence_search === undefined || value.evidence_search === "project_opt_in")
+    && (value.evidence_generation === undefined || ["configured", "not_configured"].includes(String(value.evidence_generation)))
+    && (value.workspace_agent === undefined || ["configured", "not_configured"].includes(String(value.workspace_agent)))
+    && (value.evidence_semantic === undefined || ["configured", "not_configured"].includes(String(value.evidence_semantic)))
     && (value.answer_service === undefined || ["removed", "ready", "unavailable", "not_configured"].includes(String(value.answer_service)));
 }
 
@@ -93,6 +97,8 @@ function validSession(value: unknown): boolean {
 }
 
 export function validResponse(path: string, value: unknown, method = "GET"): boolean {
+  if (path.startsWith("/api/agent/")) return validWorkflowResponse(path, value);
+  if (path.startsWith("/api/evidence/")) return validEvidenceResponse(path, value);
   if (path.startsWith("/api/connectors")) return validConnectorResponse(path, value);
   if (path === "/health" || path === "/api/readiness") return validHealth(value);
   if (path === "/api/sources") return list(value, validSource);
@@ -105,3 +111,6 @@ export function validResponse(path: string, value: unknown, method = "GET"): boo
   return validDiagnosis(value);
 }
 import { validConnectorResponse } from "./connector-contracts";
+import { validEvidenceResponse } from "./evidence-contracts";
+
+import { validWorkflowResponse } from "./agent-contracts";

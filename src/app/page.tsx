@@ -8,6 +8,8 @@ import { RightPanel } from "@/components/layout/right-panel";
 import { DebugInput } from "@/components/debug/debug-input";
 import { DiagnosisResult } from "@/components/debug/diagnosis-result";
 import { SourceComposer } from "@/components/workspace/source-composer";
+import { AgentPanel } from "@/components/workspace/agent-panel";
+import { EvidencePanel } from "@/components/workspace/evidence-panel";
 import { ArrowUpRight, BookOpen, Plug, Upload } from "lucide-react";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
@@ -97,12 +99,14 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
           <div className="ff-start-heading"><span className="ff-greeting-mark" aria-hidden="true"><ArrowUpRight size={27} /></span><h1 id="workspace-title">Your knowledge, together.</h1></div>
           <p className="ff-start-description">A little context. A clearer next step.</p>
           <SourceComposer />
+          <AgentPanel />
+          <EvidencePanel />
           <nav className="ff-starter-actions" aria-label="Get started">
             <Link href="/sources"><Upload size={15} />Upload a file</Link>
             <Link href="/connectors"><Plug size={15} />Connect an app</Link>
             <Link href="/sources"><BookOpen size={15} />Explore your sources</Link>
           </nav>
-          <p className="ff-current-capability">Document parsing is available. AI conversations are not enabled yet.</p>
+          <p className="ff-current-capability">Parse sources, search project evidence, and run authorized workspace workflows.</p>
         </section>}
         {sessionId && <section className="ff-workspace-section" aria-labelledby="session-heading">
           <div className="ff-section-heading"><div><p className="ff-eyebrow">YOUR CONVERSATION</p><h1 id="session-heading">Review the conversation.</h1></div></div>

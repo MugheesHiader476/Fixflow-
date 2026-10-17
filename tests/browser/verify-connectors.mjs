@@ -67,7 +67,11 @@ async function check(name, run) {
   await run(); checks.push(name); console.log("PASS " + name);
 }
 async function capture(options) { if (process.env.FIXFLOW_FAILURE_ARTIFACTS_ONLY !== "1") await page.screenshot(options); }
-async function noOverflow() { assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Horizontal overflow"); }
+async function noOverflow() {
+  // The shell animates its width when crossing the mobile breakpoint.
+  await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth, undefined, { timeout: 2000 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Horizontal overflow");
+}
 try {
   await check("Provider cards, callback notice, connected identity and unconfigured state", async () => {
     await page.goto("http://127.0.0.1:4173/connectors?connected=gmail", { waitUntil: "networkidle" });

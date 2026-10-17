@@ -13,16 +13,18 @@ from backend.schemas.pipeline import PipelineResult
 
 async def parsed_source(session: AsyncSession, source_id: UUID, trusted_owner_id: str) -> PipelineResult | None:
     source = await session.scalar(
-        select(KnowledgeSource).where(
+        select(KnowledgeSource)
+        .where(
             KnowledgeSource.id == source_id,
             KnowledgeSource.owner_id == trusted_owner_id,
             KnowledgeSource.status == "parsed",
             accessible_source(current_time=True),
         )
+        .execution_options(populate_existing=True)
     )
     if source is None:
         return None
-    artifact = await session.get(IngestionArtifact, source_id)
+    artifact = await session.get(IngestionArtifact, source_id, populate_existing=True)
     if artifact is None:
         raise ValueError("Missing parsing artifact")
     result = PipelineResult.model_validate(artifact.result)

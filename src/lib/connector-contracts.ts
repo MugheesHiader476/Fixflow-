@@ -32,6 +32,7 @@ export interface ConnectorCard {
   provider: ConnectorProvider;
   configured: boolean;
   setup_message: string | null;
+  gmail_send_enabled?: boolean;
   accounts: ConnectorAccount[];
   install_url: string | null;
 }
@@ -99,6 +100,7 @@ export function validConnectorResponse(path: string, value: unknown): boolean {
   const route = path.split("?")[0];
   if (route === "/api/connectors") return Array.isArray(value) && value.every((v) => record(v) && provider(v.provider)
     && typeof v.configured === "boolean" && optional(v.setup_message)
+    && (v.gmail_send_enabled === undefined || typeof v.gmail_send_enabled === "boolean")
     && (v.install_url === null || (text(v.install_url) && /^https:\/\/github\.com\/apps\/[a-zA-Z0-9-]+\/installations\/new$/.test(v.install_url)))
     && Array.isArray(v.accounts) && v.accounts.every(validAccount));
   if (route.endsWith("/connect")) return record(value) && authorizationUrl(value.authorization_url);

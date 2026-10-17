@@ -196,3 +196,4 @@ class ProviderResponse(Contract):
     setup_message: str | None
     accounts: list[AccountResponse]
     install_url: str | None = None
+    gmail_send_enabled: bool = False

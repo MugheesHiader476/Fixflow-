@@ -7,6 +7,9 @@ from sqlalchemy.engine import URL, make_url
 
 from backend.connectors.config import ConnectorConfig
 from backend.processing.pipeline.config import PipelineConfig
+from backend.schemas.agent import GrokConfig
+from backend.schemas.evidence import EvidenceConfig, GeminiConfig
+from backend.security.config import SecurityConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,6 +38,10 @@ class Settings(BaseSettings):
     ingestion_workers: int = Field(default=2, ge=1, le=8)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     connectors: ConnectorConfig = Field(default_factory=ConnectorConfig)
+    evidence: EvidenceConfig = Field(default_factory=EvidenceConfig)
+    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
+    grok: GrokConfig = Field(default_factory=GrokConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @field_validator("fixflow_api_token", mode="before")
     @classmethod

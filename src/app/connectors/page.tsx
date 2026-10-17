@@ -65,6 +65,7 @@ export default function ConnectorsPage() {
     {data && visible?.length === 0 && <p role="status" className="ff-connector-empty">No apps match this view. Try another search or choose All apps.</p>}
     {data && <div className="ff-connector-grid">{visible?.map((card) => <section key={card.provider} aria-label={NAMES[card.provider]} className="ff-connector-card">
       <div className="ff-connector-card-title"><ProviderIcon provider={card.provider} /><div><h3>{NAMES[card.provider]}</h3><span>{accountLabel(card.accounts.length)}</span></div><span className={card.configured ? "ff-connection-tag" : "ff-connection-tag ff-needs-setup"}>{card.configured ? "Available" : "Setup needed"}</span></div><p className="ff-connector-detail">{DETAIL[card.provider]}</p>
+      {card.gmail_send_enabled && <p className="mt-3 text-xs text-muted">Gmail sending is enabled on this server. Connecting also requests send permission; reconnect existing accounts to grant it. Workflow recipient authorization is still required.</p>}
       {!card.configured && <p className="mt-3 text-sm text-muted">{card.setup_message}</p>}
       {!card.accounts.length && <p className="mt-3 text-sm text-muted">No account connected.</p>}
       <div className="mt-4 flex items-center gap-3"><Button variant="primary" disabled={!card.configured || busy !== null} loading={busy === card.provider} onClick={() => void connect(card.provider)}>Connect {NAMES[card.provider]}</Button>

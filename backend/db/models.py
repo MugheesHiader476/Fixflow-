@@ -92,6 +92,108 @@ class IngestionArtifact(Timestamped, Base):
     result: Mapped[dict[str, object]] = mapped_column(JSONB)
 
 
+class PassageIndex(Timestamped, Base):
+    """Explicit project assignment and versioned derived index, separate from parsing."""
+
+    __tablename__ = "passage_indexes"
+    source_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_sources.id", ondelete="CASCADE"), primary_key=True)
+    project: Mapped[str] = mapped_column(String(100), index=True)
+    specification: Mapped[dict[str, object]] = mapped_column(JSONB)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    vector_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    vector_profile: Mapped[str | None] = mapped_column(String(200))
+
+
+class EvidencePassage(Base):
+    __tablename__ = "evidence_passages"
+    __table_args__ = (
+        UniqueConstraint("source_id", "ordinal", name="uq_evidence_source_ordinal"),
+        UniqueConstraint("source_id", "id", name="uq_evidence_source_id"),
+        Index("ix_evidence_search", "search_text", postgresql_using="gin"),
+    )
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[UUID] = mapped_column(ForeignKey("passage_indexes.source_id", ondelete="CASCADE"), index=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    source_hash: Mapped[str] = mapped_column(String(64))
+    content: Mapped[str] = mapped_column(Text)
+    prefix: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    embedding_input_hash: Mapped[str | None] = mapped_column(String(64))
+    search_text: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "setweight(to_tsvector('english', content), 'A') || "
+            "setweight(to_tsvector('simple', content), 'A') || "
+            "setweight(to_tsvector('english', prefix), 'B')",
+            persisted=True,
+        ),
+    )
+
+
+class EvidenceEmbedding(Base):
+    """Source-scoped exact-input reuse; never shared across owners or resources."""
+
+    __tablename__ = "evidence_embeddings"
+    __table_args__ = (
+        CheckConstraint("dimensions = 768 AND vector_dims(embedding) = dimensions", name="ck_evidence_vector_dims"),
+        CheckConstraint("vector_norm(embedding) > 0", name="ck_evidence_vector_norm"),
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("passage_indexes.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    profile: Mapped[str] = mapped_column(String(200), primary_key=True)
+    input_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
+    model: Mapped[str] = mapped_column(String(100), default="gemini-embedding-2", server_default="gemini-embedding-2")
+    revision: Mapped[str] = mapped_column(String(80), default="legacy-unverified", server_default="legacy-unverified")
+    dimensions: Mapped[int] = mapped_column(Integer, default=768, server_default="768")
+    input_format_version: Mapped[str] = mapped_column(String(40), default="search-v1", server_default="search-v1")
+
+
+class PassageEmbedding(Base):
+    """Versioned passage membership; vectors and passage text each remain stored once."""
+
+    __tablename__ = "passage_embeddings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_id", "passage_id"], ["evidence_passages.source_id", "evidence_passages.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["source_id", "profile", "input_hash"],
+            ["evidence_embeddings.source_id", "evidence_embeddings.profile", "evidence_embeddings.input_hash"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_passage_embeddings_source_id", "source_id"),
+    )
+    passage_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    profile: Mapped[str] = mapped_column(String(200), primary_key=True)
+    source_id: Mapped[UUID] = mapped_column()
+    source_version: Mapped[str] = mapped_column(String(64))
+    input_hash: Mapped[str] = mapped_column(String(64))
+
+
+class EmbeddingJob(Timestamped, Base):
+    __tablename__ = "embedding_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','complete','failed','cancelled')", name="ck_embedding_job_status"
+        ),
+        Index("ix_embedding_jobs_pending", "status", "next_attempt_at"),
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("passage_indexes.source_id", ondelete="CASCADE"), primary_key=True
+    )
+    source_version: Mapped[str] = mapped_column(String(64))
+    profile: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
+    run_token: Mapped[UUID | None] = mapped_column()
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    embedding_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    input_tokens: Mapped[int | None] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(String(200))
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
@@ -270,3 +372,57 @@ class ConnectorRateLimit(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     next_allowed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class AgentRun(Owned, Timestamped, Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','completed','failed','cancelled')", name="ck_agent_run_status"),
+        Index("ix_agent_runs_pending", "status", "next_attempt_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    request: Mapped[dict[str, object]] = mapped_column(JSONB)
+    scope: Mapped[dict[str, object]] = mapped_column(JSONB)
+    model: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
+    messages: Mapped[list[dict[str, object]]] = mapped_column(JSONB, default=list, server_default="[]")
+    pending_calls: Mapped[list[dict[str, object]]] = mapped_column(JSONB, default=list, server_default="[]")
+    materials: Mapped[list[dict[str, object]]] = mapped_column(JSONB, default=list, server_default="[]")
+    answer: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    steps: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    usage: Mapped[dict[str, int | None]] = mapped_column(JSONB, default=dict, server_default="{}")
+    run_token: Mapped[UUID | None] = mapped_column()
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    error: Mapped[str | None] = mapped_column(String(300))
+
+
+class AgentAction(Owned, Timestamped, Base):
+    __tablename__ = "agent_actions"
+    __table_args__ = (
+        UniqueConstraint("run_id", "payload_hash", name="uq_agent_action_payload"),
+        UniqueConstraint("run_id", "intent_hash", name="uq_agent_action_intent"),
+        CheckConstraint("status IN ('draft','dispatching','sent','blocked','unknown')", name="ck_agent_action_status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("connector_accounts.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="draft", server_default="draft")
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    intent_hash: Mapped[str] = mapped_column(String(64))
+    provider_message_id: Mapped[str | None] = mapped_column(String(200))
+    error: Mapped[str | None] = mapped_column(String(300))
+
+
+class AgentFile(Owned, Timestamped, Base):
+    __tablename__ = "agent_files"
+    __table_args__ = (UniqueConstraint("run_id", "request_hash", name="uq_agent_file_request"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("connector_accounts.id", ondelete="CASCADE"), index=True)
+    request: Mapped[dict[str, object]] = mapped_column(JSONB)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    reference: Mapped[dict[str, object]] = mapped_column(JSONB)
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100))

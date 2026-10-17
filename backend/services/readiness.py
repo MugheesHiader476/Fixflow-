@@ -41,6 +41,12 @@ async def database_readiness(owner: str | None = None) -> dict[str, object]:
         "embedding_configured": False,
         "ai_generation": "removed",
         "processing_mode": "parsing_only",
+        "evidence_search": "project_opt_in",
+        "evidence_semantic": "configured" if settings.gemini.configured else "not_configured",
+        "workspace_agent": "configured" if settings.grok.configured else "not_configured",
+        "evidence_generation": "configured"
+        if settings.evidence.api_key and settings.evidence.model
+        else "not_configured",
         "authentication_configured": bool(settings.fixflow_api_token),
     }
     if owner is not None:
