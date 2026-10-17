@@ -38,6 +38,20 @@ describe("Connected Apps", () => {
     expect(screen.getByRole("button", { name: "Sync now" })).toHaveProperty("disabled", true);
   });
 
+  it("filters apps by name and active connection without hiding setup state", async () => {
+    render(<ConnectorsPage />);
+    await screen.findByRole("heading", { name: "Gmail" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), { target: { value: "drive" } });
+    expect(screen.getByRole("heading", { name: "Google Drive" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Gmail" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect Google Drive" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Connected" }));
+    expect(screen.getByRole("status")).toHaveProperty("textContent", expect.stringContaining("No apps match"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search connectors" }), { target: { value: "" } });
+    expect(screen.getByRole("heading", { name: "Gmail" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Google Drive" })).toBeNull();
+  });
+
   it("discovers pages, selects labels, and saves actual options", async () => {
     render(<ConnectorsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Configure resources" }));

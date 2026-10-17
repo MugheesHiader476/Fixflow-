@@ -53,16 +53,38 @@ async function noOverflow() {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Unexpected horizontal overflow");
 }
 try {
-  await check("Home retains layout and disables removed question actions", async () => {
+  await check("Home provides source composer and keeps AI unavailable", async () => {
     await page.goto(base, { waitUntil: "networkidle" });
     await expect(page.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Your question" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Questions unavailable", exact: true })).toBeDisabled();
-    await expect(page.getByText(/source search, and AI answers have been removed/)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Source content" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: /Chat/ })).toBeDisabled();
+    await expect(page.getByText(/AI conversations are not enabled yet/)).toBeVisible();
     await page.getByRole("link", { name: "Open workspace", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Prepare your sources." })).toBeInViewport();
+    await expect(page.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeInViewport();
     await noOverflow();
     await page.screenshot({ path: resolve(output, "parsing-home.png"), fullPage: true });
+  });
+  await check("Composer accepts content, preserves source status semantics and dismisses menus", async () => {
+    await page.getByRole("button", { name: "Add a source", exact: true }).click();
+    await expect(page.getByRole("link", { name: /Upload a document/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("link", { name: /Upload a document/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "Parsing only", exact: true }).click();
+    await expect(page.getByText("Not enabled in this workspace")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByRole("textbox", { name: "Source content" }).fill("# Parsing guide\nPreserve original evidence.");
+    await page.getByRole("button", { name: "Add content for parsing" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Parsing is queued" })).toBeVisible();
+    assert.ok(report.requests.some((request) => request.method === "POST" && request.path.endsWith("/documents")));
+  });
+  await check("Desktop sidebar collapse and theme controls work", async () => {
+    await page.locator("aside.ff-sidebar").getByRole("button", { name: "Collapse sidebar" }).click();
+    await expect(page.locator("aside.ff-sidebar")).toBeHidden();
+    await page.getByRole("button", { name: "Expand sidebar" }).click();
+    await expect(page.locator("aside.ff-sidebar")).toBeVisible();
+    await page.getByRole("button", { name: "Toggle theme" }).click();
+    await page.screenshot({ path: resolve(output, "workspace-light.png"), fullPage: true });
+    await page.getByRole("button", { name: "Toggle theme" }).click();
   });
   await check("Upload acceptance polls through processing to parsed and then stops", async () => {
     await page.goto(`${base}/sources`, { waitUntil: "networkidle" });
@@ -86,11 +108,16 @@ try {
   await check("320px and 390px home and source layouts stay bounded", async () => {
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      for (const path of ["/", "/sources"]) {
+      for (const path of ["/", "/sources", "/history", "/saved", "/settings", "/connectors"]) {
         await page.goto(base + path, { waitUntil: "networkidle" });
         await noOverflow();
       }
     }
+    await page.goto(base, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Open menu" }).click();
+    await expect(page.getByRole("dialog", { name: "Workspace menu" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "Workspace menu" })).not.toBeVisible();
     await page.screenshot({ path: resolve(output, "parsing-mobile.png"), fullPage: true });
   });
   assert.equal(report.errors.length, 0);

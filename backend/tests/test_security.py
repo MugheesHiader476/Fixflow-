@@ -44,3 +44,21 @@ def test_configuration_requires_postgresql_and_credentials(monkeypatch: pytest.M
 def test_gateway_secret_requires_header_safe_characters(token: str) -> None:
     with pytest.raises(ValueError, match="printable ASCII"):
         Settings(fixflow_api_token=SecretStr(token))
+
+
+def test_access_logs_do_not_keep_oauth_codes_or_query_values(caplog: pytest.LogCaptureFixture) -> None:
+    import logging  # noqa: PLC0415
+
+    logger = logging.getLogger("uvicorn.access")
+    with caplog.at_level(logging.INFO, logger="uvicorn.access"):
+        logger.info(
+            '%s - "%s %s HTTP/%s" %d',
+            "127.0.0.1",
+            "GET",
+            "/api/connectors/gmail/callback?code=AUDIT-CODE-CANARY&state=AUDIT-STATE-CANARY",
+            "1.1",
+            422,
+        )
+    assert "AUDIT-CODE-CANARY" not in caplog.text
+    assert "AUDIT-STATE-CANARY" not in caplog.text
+    assert "/api/connectors/gmail/callback" in caplog.text

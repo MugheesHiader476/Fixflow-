@@ -48,9 +48,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --ignore-scripts
 
-      - name: Run frontend tests with coverage
-        run: npm run test:coverage
-
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -61,10 +58,43 @@ jobs:
       - name: Install backend dependencies
         run: 'pip install --require-hashes --only-binary=:all: -r requirements-dev.lock.txt'
 
-      - name: Run backend tests with coverage
-        run: python -m pytest
+      - name: Install pinned external Playwright tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/fixflow-browser-tools" --save-exact playwright@1.62.1
+          node "$RUNNER_TEMP/fixflow-browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
+          node <<'JS'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const tools = path.join(process.env.RUNNER_TEMP, "fixflow-browser-tools/node_modules/playwright");
+          const { chromium } = require(tools);
+          fs.appendFileSync(process.env.GITHUB_ENV,
+            "FIXFLOW_BROWSER_TOOLS=" + tools + "\nFIXFLOW_CHROME=" + chromium.executablePath() + "\n");
+          JS
+
+      - name: Run complete evaluation with disposable data
+        run: python scripts/evaluate.py
         env:
           TEST_DATABASE_URL: postgresql+asyncpg://fixflow@localhost:5432/fixflow_test
+          # Synthetic build configuration only; no paid/live identity or provider credentials.
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Zml4Zmxvdy1ldmFsdWF0aW9uLmNsZXJrLmFjY291bnRzLmRldiQ
+          CLERK_SECRET_KEY: sk_test_evaluation_only_not_a_real_account
+
+      - name: Upload evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fixflow-evaluation-evidence
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .local/evaluation/*.log
+            .local/evaluation/*.json
+            .local/evaluation/*.xml
+            .local/evaluation/*.html
+            .local/evaluation/*.png
+            .local/evaluation/*.zip
+            .local/evaluation/component-browser/
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7.2.1

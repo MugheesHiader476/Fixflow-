@@ -3,11 +3,13 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
-import { WorkspaceHero, WorkspaceGuide, WorkspaceFeatures } from "@/components/layout/workspace-intro";
+import { WorkspaceHero, WorkspaceFeatures } from "@/components/layout/workspace-intro";
 import { RightPanel } from "@/components/layout/right-panel";
 import { DebugInput } from "@/components/debug/debug-input";
 import { DiagnosisResult } from "@/components/debug/diagnosis-result";
-import { WorkspaceReadiness } from "@/components/debug/workspace-readiness";
+import { SourceComposer } from "@/components/workspace/source-composer";
+import { ArrowUpRight, BookOpen, Plug, Upload } from "lucide-react";
+import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
 import { getSession, saveSolution as saveSolutionApi } from "@/lib/api";
 import type { Diagnosis } from "@/lib/types";
@@ -22,7 +24,6 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
   const [techs, setTechs] = useState<string[]>([]);
   const [repoUrl, setRepoUrl] = useState("");
   const [rightOpen, setRightOpen] = useState(false);
-  const SessionHeading = sessionId ? "h1" : "h2";
   const { toast } = useToast();
   const router = useRouter();
 
@@ -88,38 +89,34 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
         />
       }
       rightPanelOpen={rightOpen}
-      onToggleRightPanel={() => setRightOpen((o) => !o)}
+      onToggleRightPanel={sessionId ? () => setRightOpen((o) => !o) : undefined}
     >
       <div className="ff-home">
-        {!sessionId && <WorkspaceHero />}
-        {!sessionId && <section className="ff-intro"><p className="ff-eyebrow"><span aria-hidden="true" />YOUR KNOWLEDGE, WITH EVIDENCE</p><div><h2>Your sources.<br />Their original structure.</h2><p>Upload documents or connect an authorized app. Content is parsed and stored privately with its source locations.</p></div></section>}
-        <section id="workspace" className="ff-workspace-section" aria-labelledby="session-heading">
-          <div className="ff-section-heading"><div><p className="ff-eyebrow">{sessionId ? "YOUR CONVERSATION" : "YOUR WORKSPACE"}</p><SessionHeading id="session-heading">{sessionId ? "Review the conversation." : "Prepare your sources."}</SessionHeading></div><span className="ff-mode-label"><span />Private document parsing</span></div>
-          <div className={sessionId ? "ff-session-input" : "ff-workspace-grid"}>
-            <div className="min-w-0">
-        {!sessionId && <WorkspaceReadiness />}
-        {loadingSession && <p role="status" className="text-sm text-muted">Loading session…</p>}
-        {!loadingSession && <DebugInput
-          disabled
-          busy={false}
-          onFilesChange={setFiles}
-          onTechsChange={setTechs}
-          onRepoChange={setRepoUrl}
-          initialValues={diagnosis?.request ? {
-            ...diagnosis.request,
-            question: diagnosis.request.question ?? undefined,
-            error: diagnosis.request.error ?? undefined,
-            code: diagnosis.request.code ?? undefined,
-            context: diagnosis.request.context ?? undefined,
-            repoUrl: diagnosis.request.repo_url ?? undefined,
-          } : undefined}
-          onClear={() => { setDiagnosis(null); setError(null); setSaved(false); router.replace("/"); }}
-        />}
-
-              <p className="ff-input-note">Questions, search, and AI answers have been removed. Existing sessions remain available in History.</p>
-            </div>
-            {!sessionId && <WorkspaceGuide />}
-          </div>
+        {!sessionId && <section id="workspace" className="ff-start" aria-labelledby="workspace-title">
+          <div className="ff-workspace-status"><span />Your private knowledge workspace</div>
+          <div className="ff-start-heading"><span className="ff-greeting-mark" aria-hidden="true"><ArrowUpRight size={27} /></span><h1 id="workspace-title">Your knowledge, together.</h1></div>
+          <p className="ff-start-description">A little context. A clearer next step.</p>
+          <SourceComposer />
+          <nav className="ff-starter-actions" aria-label="Get started">
+            <Link href="/sources"><Upload size={15} />Upload a file</Link>
+            <Link href="/connectors"><Plug size={15} />Connect an app</Link>
+            <Link href="/sources"><BookOpen size={15} />Explore your sources</Link>
+          </nav>
+          <p className="ff-current-capability">Document parsing is available. AI conversations are not enabled yet.</p>
+        </section>}
+        {sessionId && <section className="ff-workspace-section" aria-labelledby="session-heading">
+          <div className="ff-section-heading"><div><p className="ff-eyebrow">YOUR CONVERSATION</p><h1 id="session-heading">Review the conversation.</h1></div></div>
+          {loadingSession && <p role="status" className="text-sm text-muted">Loading session…</p>}
+          {!loadingSession && <DebugInput
+            disabled busy={false} onFilesChange={setFiles} onTechsChange={setTechs} onRepoChange={setRepoUrl}
+            initialValues={diagnosis?.request ? {
+              ...diagnosis.request, question: diagnosis.request.question ?? undefined,
+              error: diagnosis.request.error ?? undefined, code: diagnosis.request.code ?? undefined,
+              context: diagnosis.request.context ?? undefined, repoUrl: diagnosis.request.repo_url ?? undefined,
+            } : undefined}
+            onClear={() => { setDiagnosis(null); setError(null); setSaved(false); router.replace("/"); }}
+          />}
+          <p className="ff-input-note">This is a historical conversation. New AI answers are not enabled.</p>
         <div className="ff-results">
 
           {error && (
@@ -136,16 +133,6 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
               </button>
             </div>
           )}
-          {!loadingSession && !error && !diagnosis && (
-            <div className="rounded-xl border border-dashed border-border px-6 py-10 text-center">
-              <p className="text-sm text-muted">
-                Upload a source on Knowledge Sources to inspect and parse its content.
-              </p>
-              <p className="mt-1 font-mono text-[11px] text-muted/60">
-                parsing only · no chunking or model inference
-              </p>
-            </div>
-          )}
           {diagnosis && (
             <DiagnosisResult
               key={diagnosis.sessionId}
@@ -156,8 +143,8 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
             />
           )}
         </div>
-        </section>
-        {!sessionId && <WorkspaceFeatures />}
+        </section>}
+        {!sessionId && <><WorkspaceHero /><WorkspaceFeatures /></>}
       </div>
     </AppShell>
   );

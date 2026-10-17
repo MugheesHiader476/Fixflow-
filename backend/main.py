@@ -23,9 +23,11 @@ from backend.connectors.core import ConnectorError
 from backend.db.session import close_database
 from backend.services.connector_sync import connector_worker
 from backend.services.ingestion import ingestion_worker
+from backend.services.logging_security import protect_access_logs
 from backend.services.readiness import database_readiness
 
 logger = logging.getLogger(__name__)
+protect_access_logs()
 
 
 @asynccontextmanager

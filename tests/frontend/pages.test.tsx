@@ -95,7 +95,9 @@ describe("application pages", () => {
     expect(screen.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeDefined();
     expect(screen.getByRole("link", { name: "Open workspace" }).getAttribute("href")).toBe("#workspace");
     expect(screen.getByRole("link", { name: "Explore your knowledge" }).getAttribute("href")).toBe("/sources");
-    expect(await screen.findByText(/source search, and AI answers have been removed/)).toBeDefined();
+    expect(screen.getByRole("textbox", { name: "Source content" })).toBeDefined();
+    expect(screen.getByText(/AI conversations are not enabled yet/)).toBeDefined();
+    expect(api.diagnose).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: /Pick up the thread/ }).getAttribute("href")).toBe("/history");
     expect(screen.getByRole("link", { name: /Keep what works/ }).getAttribute("href")).toBe("/saved");
   });
@@ -260,7 +262,7 @@ describe("application pages", () => {
     navigation.session = null;
     view.rerender(<DebugSessionPage />);
     expect(screen.queryByText(ASYNCIO_DIAGNOSIS.rootCause)).toBeNull();
-    expect(screen.getByRole("button", { name: "Run diagnosis" })).toBeDefined();
+    expect(screen.getByRole("textbox", { name: "Source content" })).toBeDefined();
   });
 
   it("lets users retry a failed history load", async () => {

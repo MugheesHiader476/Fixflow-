@@ -71,14 +71,18 @@ class ProviderHttp:
         raw: bool = False,
         _redirects: int = 0,
     ) -> bytes | dict[str, object] | list[dict[str, object]]:
-        target = urlsplit(url)
+        try:
+            target = urlsplit(url)
+            port = target.port
+        except ValueError as error:
+            raise ConnectorError("unsafe_url", "Provider URL is not authorized") from error
         if (
             target.scheme != "https"
             or target.hostname not in HOSTS
             or target.username
             or target.password
             or target.fragment
-            or target.port not in {None, 443}
+            or port not in {None, 443}
         ):
             raise ConnectorError("unsafe_url", "Provider URL is not authorized")
         request_headers = {"Accept": "application/json", **(headers or {})}
@@ -95,8 +99,11 @@ class ProviderHttp:
                     ) as response,
                 ):
                     if response.status_code in {301, 302, 303, 307, 308} and method == "GET":
-                        destination = urljoin(url, response.headers.get("Location", ""))
-                        redirected = urlsplit(destination)
+                        try:
+                            destination = urljoin(url, response.headers.get("Location", ""))
+                            redirected = urlsplit(destination)
+                        except ValueError as error:
+                            raise ConnectorError("unsafe_url", "Provider redirect is not authorized") from error
                         same_provider = redirected.hostname == target.hostname or (
                             raw
                             and target.hostname in {"slack.com", "files.slack.com"}
@@ -147,7 +154,10 @@ class ProviderHttp:
                                         "Provider quota reached; synchronization will resume",
                                         retry_seconds(response),
                                     )
-                            elif provider_error in {"invalid_grant", "invalid_token"}:
+                            elif isinstance(provider_error, str) and provider_error in {
+                                "invalid_grant",
+                                "invalid_token",
+                            }:
                                 raise ConnectorError(
                                     "reauth_required", "Provider authorization expired or was revoked; reconnect"
                                 )

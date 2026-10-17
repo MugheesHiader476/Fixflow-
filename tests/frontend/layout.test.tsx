@@ -129,12 +129,12 @@ describe("application layout", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("uses the editorial light theme by default and keeps dark mode available", async () => {
+  it("uses the warm dark theme by default and keeps light mode available", async () => {
     render(<ThemeProvider><ThemeState /></ThemeProvider>);
-    expect(await screen.findByRole("button", { name: "Light" })).toBeDefined();
-    expect(document.documentElement.dataset.theme).toBe("light");
-    fireEvent.click(screen.getByRole("button", { name: "Light" }));
+    expect(await screen.findByRole("button", { name: "Dark" })).toBeDefined();
     expect(document.documentElement.dataset.theme).toBe("dark");
+    fireEvent.click(screen.getByRole("button", { name: "Dark" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
   });
 
   it("restores and persists the selected theme", async () => {

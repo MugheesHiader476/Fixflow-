@@ -4,12 +4,12 @@ import { ArrowDown, ArrowUpRight, BookOpen, Bookmark, History } from "lucide-rea
 
 export function WorkspaceHero() {
   return (
-    <section className="ff-hero" aria-labelledby="workspace-title">
-      <Image src="/images/developer-workspace.webp" alt="A softly lit developer workspace overlooking the city at blue hour" fill preload sizes="(max-width: 768px) 100vw, 94vw" className="ff-hero-image" />
+    <section className="ff-hero" aria-labelledby="hero-title">
+      <Image src="/images/developer-workspace.webp" alt="A softly lit developer workspace overlooking the city at blue hour" fill sizes="(max-width: 768px) 100vw, (max-width: 1200px) 75vw, 1100px" className="ff-hero-image" />
       <div className="ff-hero-shade" />
       <div className="ff-hero-content">
         <p className="ff-eyebrow"><span aria-hidden="true" />A little context. A lot of clarity.</p>
-        <h1 id="workspace-title">Your knowledge.<br />Structured content.</h1>
+        <h2 id="hero-title">Your knowledge.<br />Structured content.</h2>
         <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Inspect and parse content for your next workflow.</p>
         <div className="ff-hero-actions">
           <a className="ff-pill ff-pill-white" href="#workspace">Open workspace <ArrowUpRight size={18} /></a>
@@ -37,8 +37,8 @@ export function WorkspaceGuide() {
 
 const WORKFLOWS = [
   { number: "01", icon: BookOpen, title: "Your knowledge, together.", description: "Bring your documentation into one place. Parse content while preserving its structure.", href: "/sources", action: "Knowledge sources" },
-  { number: "02", icon: History, title: "Pick up the thread.", description: "Every session keeps your inputs and conversation, ready for your next investigation.", href: "/history", action: "Debug history" },
-  { number: "03", icon: Bookmark, title: "Keep what works.", description: "Save useful findings and references. Make the next debugging session a little easier.", href: "/saved", action: "Saved solutions" },
+  { number: "02", icon: History, title: "Pick up the thread.", description: "Revisit your earlier conversations and their original references, all in one place.", href: "/history", action: "Debug history" },
+  { number: "03", icon: Bookmark, title: "Keep what works.", description: "Save useful findings and references. Keep the useful details close at hand.", href: "/saved", action: "Saved solutions" },
 ];
 
 export function WorkspaceFeatures() {

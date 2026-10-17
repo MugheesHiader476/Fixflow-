@@ -7,10 +7,9 @@ import {
   Show,
   UserButton,
 } from "@clerk/nextjs";
-import { Moon, PanelRight, Sun, Wifi, WifiOff } from "lucide-react";
+import { Menu, Moon, PanelLeftOpen, PanelRight, Sun, Wifi, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tabs";
-import { MobileNavButton } from "./sidebar";
 import { useTheme } from "./theme-provider";
 import { checkBackendHealth } from "@/lib/api";
 
@@ -28,6 +27,8 @@ export function TopBar({
   sessionTitle,
   techs,
   onMobileNav,
+  onDesktopNav,
+  sidebarCollapsed,
   rightPanelOpen,
   onToggleRightPanel,
   showRightToggle,
@@ -35,6 +36,8 @@ export function TopBar({
   sessionTitle: string;
   techs: string[];
   onMobileNav: () => void;
+  onDesktopNav: () => void;
+  sidebarCollapsed: boolean;
   rightPanelOpen: boolean;
   onToggleRightPanel: () => void;
   showRightToggle: boolean;
@@ -58,7 +61,8 @@ export function TopBar({
 
   return (
     <div className="ff-workspace-bar">
-      <MobileNavButton onClick={onMobileNav} />
+      <button type="button" onClick={onMobileNav} aria-label="Open menu" aria-haspopup="dialog" className="ff-icon-button ff-mobile-menu"><Menu size={20} /></button>
+      <button type="button" onClick={onDesktopNav} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!sidebarCollapsed} aria-controls="desktop-sidebar" className="ff-icon-button ff-desktop-menu"><PanelLeftOpen size={18} /></button>
 
       <div className="flex min-w-0 items-center gap-2.5">
         <div className="min-w-0">

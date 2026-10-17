@@ -15,12 +15,14 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.2",
+    "@react-three/fiber": "^9.8.2",
     "clsx": "^2.1.1",
     "lucide-react": "^1.45.0",
-    "next": "16.3.5",
+    "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -29,10 +31,11 @@
     "@types/node": "^24.13.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^6.1.1",
     "@vitest/coverage-v8": "^5.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.3.5",
+    "eslint-config-next": "16.3.8",
     "eslint-plugin-sonarjs": "^4.2.0",
     "jsdom": "^30.0.1",
     "tailwindcss": "^4",

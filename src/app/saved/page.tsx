@@ -23,14 +23,14 @@ export default function SavedPage() {
         {loading && <p role="status" className="text-sm text-muted">Loading saved answers…</p>}
         <section className="grid gap-3 md:grid-cols-2">
           {solutions.map((solution) => (
-            <article key={solution.id} className="rounded-lg border border-border bg-panel p-4">
+            <article key={solution.id} className="min-w-0 break-words rounded-lg border border-border bg-panel p-4">
               <div className="flex items-start gap-2">
                 <Bookmark size={16} className="mt-0.5 shrink-0 text-lime" />
                 <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-medium">{solution.problem}</h2>
                   <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted">{solution.fixSummary}</p>
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {solution.technology.map((technology) => <Badge key={technology} tone="muted">{technology}</Badge>)}
+                    {solution.technology.map((technology) => <Badge key={technology} tone="muted" className="max-w-full break-all whitespace-normal">{technology}</Badge>)}
                   </div>
                 </div>
               </div>

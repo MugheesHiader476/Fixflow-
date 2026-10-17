@@ -2,7 +2,7 @@
 
 ## Next.js version warning
 
-This repository uses Next.js 16.x (`package.json`: 16.3.5), which differs from older APIs and routing conventions. Before Next.js-specific changes, inspect the installed version, read relevant `node_modules/next/dist/docs/` documentation when available, and follow current repository patterns. Preserve any Next-generated agent warning if `next dev` regenerates this file.
+This repository uses Next.js 16.x (`package.json`: 16.3.8), which differs from older APIs and routing conventions. Before Next.js-specific changes, inspect the installed version, read relevant `node_modules/next/dist/docs/` documentation when available, and follow current repository patterns. Preserve any Next-generated agent warning if `next dev` regenerates this file.
 
 ## Current product boundary
 

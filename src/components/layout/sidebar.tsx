@@ -3,26 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Bookmark, Database, History, Menu, Plus, Settings, X, ArrowUpRight } from "lucide-react";
+import { Bookmark, Database, History, PanelLeftClose, Plug, Plus, Settings, ShieldCheck, X } from "lucide-react";
 import { timeAgo } from "@/lib/utils";
 import { listSessions } from "@/lib/api";
 import type { DebugSession } from "@/lib/types";
 import { Brand } from "./brand";
 
-export function MobileNavButton({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} aria-label="Open menu" aria-haspopup="dialog" className="ff-menu-button"><Menu size={18} /><span>Menu</span></button>;
-}
-
 const NAV = [
-  { href: "/", label: "New Question", icon: Plus },
+  { href: "/", label: "New workspace", icon: Plus },
   { href: "/sources", label: "Knowledge Sources", icon: Database },
-  { href: "/connectors", label: "Connected Apps", icon: ArrowUpRight },
+  { href: "/connectors", label: "Connected Apps", icon: Plug },
   { href: "/history", label: "Conversation History", icon: History },
-  { href: "/saved", label: "Saved Answers", icon: Bookmark },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/saved", label: "Saved findings", icon: Bookmark },
 ];
 
-export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function Sidebar({ open, collapsed, onClose, onCollapse }: {
+  open: boolean; collapsed: boolean; onClose: () => void; onCollapse: () => void;
+}) {
   const pathname = usePathname();
   const dialog = useRef<HTMLDialogElement>(null);
   const [sessions, setSessions] = useState<DebugSession[]>([]);
@@ -38,7 +35,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const refresh = () => {
       void listSessions(controller.signal)
         .then((items) => {
-          if (!controller.signal.aborted) { setSessions(items.slice(0, 4)); setLoadError(false); }
+          if (!controller.signal.aborted) { setSessions(items.slice(0, 16)); setLoadError(false); }
         })
         .catch(() => { if (!controller.signal.aborted) { setSessions([]); setLoadError(true); } });
     };
@@ -47,17 +44,38 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     return () => { controller.abort(); window.removeEventListener("fixflow:sessions-changed", refresh); };
   }, []);
 
-  return (
+  const content = (mobile: boolean) => <>
+    <div className="ff-sidebar-head">
+      <Brand />
+      <button type="button" onClick={mobile ? onClose : onCollapse} aria-label={mobile ? "Close menu" : "Collapse sidebar"} className="ff-icon-button">
+        {mobile ? <X size={18} /> : <PanelLeftClose size={18} />}
+      </button>
+    </div>
+    <nav aria-label={mobile ? "Mobile workspace navigation" : "Workspace navigation"} className="ff-sidebar-nav">
+      {NAV.map((item) => <Link key={item.href} href={item.href} onClick={mobile ? onClose : undefined}
+        aria-current={pathname === item.href ? "page" : undefined}>
+        <item.icon size={18} strokeWidth={1.6} /><span>{item.label}</span>
+        {item.href === "/" && <kbd>New</kbd>}
+      </Link>)}
+    </nav>
+    <div className="ff-sidebar-history">
+      <div className="ff-sidebar-label"><span>Recent conversations</span><Link href="/history" aria-label="View all conversations"><History size={14} /></Link></div>
+      {sessions.map((session) => <Link key={session.id} href={"/?session=" + encodeURIComponent(session.id)} onClick={mobile ? onClose : undefined}
+        title={session.title}>
+        <span className="ff-session-dot" /><span>{session.title}</span><small>{timeAgo(session.createdAt)}</small>
+      </Link>)}
+      {!sessions.length && <p>{loadError ? "Could not load conversations. Open history to retry." : "Your past conversations will appear here."}</p>}
+    </div>
+    <div className="ff-sidebar-bottom">
+      <Link href="/settings" onClick={mobile ? onClose : undefined} aria-current={pathname === "/settings" ? "page" : undefined}><Settings size={18} />Settings</Link>
+      <div className="ff-sidebar-account"><span className="ff-account-avatar">F</span><div><strong>Private workspace</strong><span><ShieldCheck size={11} />Only your selected sources</span></div></div>
+    </div>
+  </>;
+
+  return <>
+    <aside id="desktop-sidebar" className="ff-sidebar" aria-label="Workspace sidebar" hidden={collapsed}>{content(false)}</aside>
     <dialog ref={dialog} className="ff-menu-dialog" aria-label="Workspace menu" onCancel={onClose} onClose={onClose}>
-      <div className="ff-menu-header"><Brand /><button type="button" onClick={onClose} aria-label="Close menu"><X size={22} /></button></div>
-      <p className="ff-eyebrow">YOUR WORKSPACE</p>
-      <nav aria-label="Workspace navigation" className="ff-drawer-nav">
-        {NAV.map((item) => <Link key={item.href} href={item.href} onClick={onClose} aria-current={pathname === item.href ? "page" : undefined}><item.icon size={18} />{item.label}<ArrowUpRight size={16} /></Link>)}
-      </nav>
-      <div className="ff-recent-sessions"><p className="ff-eyebrow">RECENT SESSIONS</p>
-        {sessions.map((session) => <Link key={session.id} href={`/?session=${encodeURIComponent(session.id)}`} onClick={onClose}><span>{session.title}</span><small>{session.technology[0] || "Documentation"} · {timeAgo(session.createdAt)}</small></Link>)}
-        {!sessions.length && <p className="text-sm text-muted">{loadError ? "Could not load recent sessions. Open history to retry." : "Your next investigation starts here."}</p>}
-      </div>
+      {open && content(true)}
     </dialog>
-  );
+  </>;
 }
