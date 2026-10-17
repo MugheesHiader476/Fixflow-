@@ -40,9 +40,6 @@ export default function SettingsPage() {
   if (health.loading) backend = "checking";
   else if (health.error) backend = "offline";
   else if (health.data?.status === "ok") backend = "online";
-  let answerStatus = health.data?.ai_generation === "configured" ? "Configured" : "Not configured";
-  if (health.data?.answer_service === "ready") answerStatus = "Ready";
-  if (health.data?.answer_service === "unavailable") answerStatus = "Unavailable";
 
   return (
     <AppShell sessionTitle="Settings">
@@ -88,7 +85,7 @@ export default function SettingsPage() {
           </div>
           {backend === "offline" && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-danger">
-              <CircleAlert size={13} /> Start FastAPI to enable documentation search and history.
+              <CircleAlert size={13} /> Start FastAPI to enable parsing and history.
             </p>
           )}
           {backend === "online" && (
@@ -101,10 +98,8 @@ export default function SettingsPage() {
             <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-3 text-xs">
               <dt className="text-muted">Database / pgvector</dt><dd>{health.data.database} / {health.data.pgvector}</dd>
               <dt className="text-muted">Schema</dt><dd>{health.data.schema} (revision {health.data.revision ?? "unknown"})</dd>
-              <dt className="text-muted">Documents / chunks</dt><dd>{health.data.documents ?? "—"} / {health.data.chunks ?? "—"}</dd>
-              <dt className="text-muted">Embedded chunks</dt><dd>{health.data.embedded_chunks ?? "—"}</dd>
-              <dt className="text-muted">Embedding configuration</dt><dd>{health.data.embedding_configured ? "Configured" : "Not configured"}</dd>
-              <dt className="text-muted">Local answers</dt><dd>{answerStatus}</dd>
+              <dt className="text-muted">Stored documents</dt><dd>{health.data.documents ?? "—"}</dd>
+              <dt className="text-muted">Processing</dt><dd>Parsing only</dd>
             </dl>
           )}
         </section>
@@ -116,7 +111,7 @@ export default function SettingsPage() {
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="text-sm font-semibold">Knowledge collection</h2>
-              <p className="mt-1 text-xs text-muted">Sources available to the retrieval service</p>
+              <p className="mt-1 text-xs text-muted">Uploaded and connected source records</p>
             </div>
             <Badge tone="lime">{sources.length} sources</Badge>
           </div>
@@ -124,13 +119,13 @@ export default function SettingsPage() {
             {sources.map((source) => (
               <div key={source.id} className="flex items-center gap-2 text-xs">
                 <span className="min-w-0 flex-1 truncate text-foreground/80">{source.name}</span>
-                <span className="font-mono text-muted">{source.chunks} records</span>
+                <span className="font-mono text-muted">{source.document_count} documents</span>
                 <Badge tone={SOURCE_STATUS[source.status].tone}>{SOURCE_STATUS[source.status].label}</Badge>
               </div>
             ))}
             {knowledge.loading && <p role="status" className="text-xs text-muted">Loading source status…</p>}
             {knowledge.error && <p role="alert" className="text-xs text-danger">{knowledge.error}</p>}
-            {!knowledge.loading && !knowledge.error && !sources.length && <p className="text-xs text-muted">No documents yet. Upload documentation in Knowledge Sources to enable retrieval.</p>}
+            {!knowledge.loading && !knowledge.error && !sources.length && <p className="text-xs text-muted">No documents yet. Upload a document in Knowledge Sources to parse it.</p>}
           </div>
         </section>
 

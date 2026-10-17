@@ -1,1 +1,1 @@
-"""Validated source → canonical evidence → OKF → chunks pipeline."""
+"""Validated source inspection, parsing and canonical evidence output."""

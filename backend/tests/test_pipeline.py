@@ -1,7 +1,6 @@
 """Golden evidence, stage gates, routing, provenance, cache and incremental regression tests."""
 
 import copy
-import json
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -11,8 +10,6 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from backend.processing.pipeline.chunks import ByteTokenizer, TiktokenTokenizer, validate_chunks
-from backend.processing.pipeline.concepts import validate_okf
 from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.execution import execute_pipeline
 from backend.processing.pipeline.inspection import inspect
@@ -50,11 +47,16 @@ def test_golden_modalities(name: str, modality: str, required: str) -> None:
     assert result.canonical.profile.modality == modality
     assert required in {b.type for b in result.canonical.blocks}
     assert result.canonical.parse_quality.passed
-    assert result.concepts and result.chunks
-    assert all(p.source_id == "golden" for c in result.chunks for p in c.provenance)
-    assert all(c.token_count <= 1024 for c in result.chunks)
-    assert all("verified:" not in c.markdown for c in result.concepts)
-    assert result.bundle["index.md"].startswith("---\nokf_version: '0.2'")
+    assert result.contract_version == 3
+    assert all(p.source_id == "golden" for p in result.canonical.provenance)
+    assert set(result.model_dump()) == {
+        "canonical",
+        "engine_version",
+        "config_hash",
+        "stage_hashes",
+        "warnings",
+        "contract_version",
+    }
     assert result.stage_hashes["source"] == result.canonical.source.sha256
 
 
@@ -78,51 +80,6 @@ def test_pdf_and_office_tables_keep_cells_and_locations() -> None:
         if name.endswith("xlsx"):
             assert table.provenance.sheet == "Metrics"
             assert table.provenance.cell_range
-
-
-def test_structure_provenance_and_neighbor_graphs() -> None:
-    result = run_pipeline(GOLDEN / "guide.md", "structure", PipelineConfig(max_chunk_tokens=110, min_chunk_tokens=8))
-    assert len(result.concepts) == 3
-    assert result.concepts[1].parent_concept_id == result.concepts[0].concept_id
-    assert result.concepts[0].child_concept_ids == [result.concepts[1].concept_id]
-    assert {tuple(s.path) for s in result.canonical.sections} >= {("Authentication",), ("Authentication", "Timeouts")}
-    assert result.chunks[0].raw_content.startswith("Validate tokens")
-    assert result.chunks[0].retrieval_content.startswith("Concept: Authentication")
-    assert any(c.next_id for c in result.chunks)
-    for chunk in result.chunks:
-        parent = next(p for p in result.parents if p.parent_id == chunk.parent_id)
-        assert chunk.chunk_id in parent.child_ids
-        assert chunk.source_block_ids
-
-
-def test_large_table_has_repeated_headers_and_complete_rows() -> None:
-    config = PipelineConfig(max_chunk_tokens=220, min_chunk_tokens=8, table_rows_per_chunk=3)
-    result = run_pipeline(GOLDEN / "table.md", "table", config)
-    assert len(result.chunks) > 1
-    assert all(c.raw_content.startswith("| Metric | Value |\n| --- | --- |") for c in result.chunks)
-    assert sum(c.raw_content.count("requests_") for c in result.chunks) == 40
-    assert all(c.token_count <= 220 for c in result.chunks)
-
-
-def test_small_concept_stays_whole_and_no_overlap(tmp_path: Path) -> None:
-    path = tmp_path / "small.md"
-    path.write_text("# Authentication\n\nValidate tokens before opening a session.\n\nThe timeout is thirty seconds.")
-    result = run_pipeline(path, "whole")
-    assert len(result.chunks) == len(result.concepts) == 1
-    assert result.chunks[0].raw_content.count("thirty seconds") == 1
-
-
-def test_equal_text_in_different_subsections_keeps_each_context(tmp_path: Path) -> None:
-    path = tmp_path / "sections.md"
-    path.write_text(
-        "# Requests\n\n## Read\n\nValidate authorization before processing.\n\n"
-        "## Write\n\nValidate authorization before processing."
-    )
-    result = run_pipeline(path, "sections")
-    assert len(result.concepts) == 3 and len(result.chunks) == 2
-    assert len(result.concepts[0].child_concept_ids) == 2
-    assert [c.section_path for c in result.chunks] == [["Requests", "Read"], ["Requests", "Write"]]
-    assert result.chunks[0].chunk_id != result.chunks[1].chunk_id
 
 
 def test_ocr_decoder_failure_escalates_to_configured_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,7 +158,7 @@ def test_scan_requires_real_configured_adapter_and_fallback_preserves_provenance
         PipelineConfig(parser_priority=["native", "test-ocr"]),
         parsers=[NativeParser(), CallbackParser("test-ocr", 3, lambda _: True, test_adapter)],
     )
-    assert result.chunks[0].provenance[0].extraction_method == "ocr"
+    assert result.canonical.provenance[0].extraction_method == "ocr"
 
 
 def test_cache_skips_inspection_and_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,30 +172,23 @@ def test_cache_skips_inspection_and_parsers(monkeypatch: pytest.MonkeyPatch) -> 
     assert current.model_dump() == previous.model_dump()
 
 
-def test_incremental_update_reuses_unchanged_concept_and_chunks(tmp_path: Path) -> None:
+def test_updates_preserve_version_and_ordered_content(tmp_path: Path) -> None:
     path = tmp_path / "guide.md"
     path.write_text((GOLDEN / "guide.md").read_text())
     previous = run_pipeline(path, "incremental")
     path.write_text(path.read_text().replace("Retry failed uploads", "Reprocess failed uploads"))
     current = run_pipeline(path, "incremental", previous=previous)
-    assert current.reused_concepts == 2
     assert current.canonical.source.version == 2
-    assert current.concepts[0] == previous.concepts[0]
-    assert current.chunks[0].chunk_id == previous.chunks[0].chunk_id
-    assert current.chunks[0].raw_content == previous.chunks[0].raw_content
-    assert current.chunks[0].unit_slices == previous.chunks[0].unit_slices
-    assert current.chunks[0].canonical_document_id == current.canonical.document_id
-    assert current.chunks[-1].content_hash != previous.chunks[-1].content_hash
+    assert current.canonical.blocks[0] == previous.canonical.blocks[0]
     assert current.stage_hashes["canonical"] != previous.stage_hashes["canonical"]
 
 
 def test_force_reprocesses_and_config_change_invalidates_cache() -> None:
     previous = run_pipeline(GOLDEN / "guide.md", "force")
     forced = run_pipeline(GOLDEN / "guide.md", "force", previous=previous, force=True)
-    assert forced.reused_concepts == 0
-    changed = run_pipeline(GOLDEN / "guide.md", "force", PipelineConfig(max_chunk_tokens=130), previous=previous)
+    assert forced.canonical.source.version == previous.canonical.source.version
+    changed = run_pipeline(GOLDEN / "guide.md", "force", PipelineConfig(max_blocks=100), previous=previous)
     assert changed.config_hash != previous.config_hash
-    assert all(c.token_count <= 130 for c in changed.chunks)
 
 
 @pytest.mark.parametrize("corruption", ["duplicate", "parent", "reference", "provenance", "table", "hash"])
@@ -259,58 +209,6 @@ def test_canonical_gate_rejects_corrupt_evidence(corruption: str) -> None:
         payload["blocks"][0]["content_hash"] = "wrong"
     with pytest.raises(ValidationError):
         CanonicalDocument.model_validate(payload)
-
-
-def test_generated_okf_hard_errors_and_broken_links_are_warnings() -> None:
-    result = run_pipeline(GOLDEN / "guide.md", "okf")
-    concept = result.concepts[0].model_copy(deep=True)
-    concept.markdown += "\nSee [other](/concepts/missing.md).\n"
-    assert validate_okf([concept, *result.concepts[1:]], result.canonical) == ["Unresolved internal source link"]
-    concept.markdown = concept.markdown.replace("status: draft", "status: invented")
-    with pytest.raises(ValueError, match="lifecycle"):
-        validate_okf([concept, *result.concepts[1:]], result.canonical)
-    concept.markdown = result.concepts[0].markdown.replace("status: draft", "verified: {by: 'human:invented'}")
-    with pytest.raises(ValueError, match="verification"):
-        validate_okf([concept, *result.concepts[1:]], result.canonical)
-
-
-def test_chunk_gate_checks_tokens_neighbors_and_provenance() -> None:
-    result = run_pipeline(GOLDEN / "guide.md", "chunk-gates")
-    for field, value in (("token_count", 999999), ("provenance", []), ("next_id", "missing")):
-        chunks = [c.model_copy(deep=True) for c in result.chunks]
-        setattr(chunks[0], field, value)
-        with pytest.raises(ValueError):
-            validate_chunks(
-                chunks, result.parents, result.concepts, result.canonical, ByteTokenizer(), PipelineConfig()
-            )
-
-
-def test_heading_only_is_rejected_and_oversized_valid_code_is_reconstructed(tmp_path: Path) -> None:
-    path = tmp_path / "empty.md"
-    path.write_text("# Heading only")
-    with pytest.raises(PipelineError):
-        run_pipeline(path, "empty")
-    path = tmp_path / "huge.py"
-    path.write_text("def long_function():\n" + "    print('keep this function intact')\n" * 100)
-    result = run_pipeline(path, "huge", PipelineConfig(max_chunk_tokens=100))
-    code = next(u for u in result.atomic_units if u.content_type == "code")
-    from backend.processing.pipeline.units import selected_content  # noqa: PLC0415
-
-    locations = [s for c in result.chunks for s in c.unit_slices if s.unit_id == code.unit_id]
-    locations.sort(key=lambda s: s.character_start or 0)
-    assert "".join(selected_content(code, s)[0] for s in locations) == code.content
-    assert result.coverage["coverage_percent"] == result.coverage["continuation_reconstruction_percent"] == 100
-    assert all(c.byte_length <= 100 for c in result.chunks)
-
-
-def test_json_structural_splitting_produces_valid_subtrees(tmp_path: Path) -> None:
-    path = tmp_path / "large.json"
-    values = [{"name": f"request-{i}", "value": i} for i in range(40)]
-    path.write_text(json.dumps({"requests": values}))
-    result = run_pipeline(path, "json", PipelineConfig(max_chunk_tokens=180, min_chunk_tokens=8))
-    reconstructed = [item for chunk in result.chunks for item in json.loads(chunk.raw_content)]
-    assert reconstructed == values
-    assert all(c.token_count <= 180 for c in result.chunks)
 
 
 @pytest.mark.parametrize(
@@ -353,39 +251,11 @@ def test_real_ocr_adapter_when_installed(name: str) -> None:
     assert {b.provenance.parser for b in result.canonical.blocks} == {"ocr"}
 
 
-def test_concept_alias_resolution_requires_matching_evidence(tmp_path: Path) -> None:
-    path = tmp_path / "aliases.md"
-    path.write_text(
-        "# JWT\n\nJSON Web Token (JWT) authenticates sessions.\n\n"
-        "# JSON Web Token\n\nJSON Web Token (JWT) authenticates sessions.\n"
-    )
-    result = run_pipeline(path, "aliases")
-    assert len(result.concepts) == 1
-    assert "JWT" in result.concepts[0].aliases
-    assert len(result.chunks[0].source_block_ids) == 2
-    assert result.chunks[0].raw_content.count("authenticates sessions") == 1
-    path.write_text(path.read_text().replace("JWT) authenticates sessions.", "JWT) has different evidence.", 1))
-    result = run_pipeline(path, "aliases")
-    assert len(result.concepts) == 2
-
-
 def test_process_boundary_enforces_deadline_and_output_limit() -> None:
     with pytest.raises(PipelineError, match=r"time limit|processing limit"):
         execute_pipeline(GOLDEN / "guide.md", "deadline", PipelineConfig(processing_timeout_seconds=0.001))
     with pytest.raises(PipelineError, match="artifact size"):
         execute_pipeline(GOLDEN / "guide.md", "bounded", PipelineConfig(max_result_bytes=1024))
-
-
-def test_tokenizer_adapter_counts_enriched_text_without_a_model_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Encoding:
-        def encode(self, text: str, *, disallowed_special: tuple[()]) -> list[str]:
-            return text.split()
-
-    monkeypatch.setattr("tiktoken.get_encoding", lambda _: Encoding())
-    tokenizer = TiktokenTokenizer("test-only-encoding")
-    result = run_pipeline(GOLDEN / "guide.md", "tokens", PipelineConfig(min_chunk_tokens=2), tokenizer=tokenizer)
-    assert result.canonical.metadata["tokenizer"] == "tiktoken:test-only-encoding"
-    assert all(c.token_count == len(c.retrieval_content.split()) for c in result.chunks)
 
 
 def test_content_inspection_recognizes_structured_text_in_txt(tmp_path: Path) -> None:

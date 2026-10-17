@@ -1,5 +1,5 @@
 import re
-from typing import Literal, cast
+from typing import cast
 
 from pydantic import Field, model_validator
 
@@ -41,14 +41,6 @@ class PipelineConfig(Contract):
     min_ocr_confidence: float = Field(default=0.65, ge=0, le=1)
     min_reading_order_confidence: float = Field(default=0.8, ge=0, le=1)
     max_duplicate_rate: float = Field(default=0.5, ge=0, le=1)
-    max_chunk_tokens: int = Field(default=1024, ge=64, le=32000)
-    min_chunk_tokens: int = Field(default=16, ge=1)
-    tokenizer: Literal["utf8_bytes", "tiktoken"] = "utf8_bytes"
-    tokenizer_encoding: str | None = None
-    semantic_refinement: bool = True
-    semantic_breakpoint: float = Field(default=0.15, ge=0, le=1)
-    table_rows_per_chunk: int = Field(default=50, ge=1, le=10000)
-    merge_small_chunks: bool = True
     ocr_enabled: bool = False
     ocr_language: str = Field(default="eng", pattern=r"^[a-zA-Z0-9_+]+$")
     parser_timeout_seconds: float = Field(default=60, gt=0, le=600)
@@ -58,15 +50,10 @@ class PipelineConfig(Contract):
     max_pages: int = Field(default=1000, ge=1)
     max_blocks: int = Field(default=20000, ge=1)
     max_characters: int = Field(default=5_000_000, ge=1)
-    max_chunks: int = Field(default=10000, ge=1)
     cache_enabled: bool = True
 
     @model_validator(mode="after")
     def consistent(self) -> "PipelineConfig":
-        if self.min_chunk_tokens >= self.max_chunk_tokens:
-            raise ValueError("Minimum tokens must be smaller than maximum tokens")
-        if self.tokenizer == "tiktoken" and not self.tokenizer_encoding:
-            raise ValueError("Configure an explicit tokenizer encoding")
         if not self.parser_priority or len(self.parser_priority) != len(set(self.parser_priority)):
             raise ValueError("Parser priorities must be nonempty and unique")
         if any(not re.fullmatch(r"[a-zA-Z_][\w.]*:[a-zA-Z_]\w*", value) for value in self.adapter_factories):

@@ -33,13 +33,10 @@ describe("backend API client", () => {
     vi.unstubAllGlobals();
   });
 
-  it("gives answers time for local model loading and preserves ordinary request deadlines", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(ASYNCIO_DIAGNOSIS)));
-    const deadline = vi.spyOn(AbortSignal, "timeout");
-    const { diagnose, checkBackendHealth } = await loadApi();
-    await diagnose({ error: "failure", techs: [] });
-    expect(deadline).toHaveBeenLastCalledWith(120_000);
+  it("bounds requests with the ordinary deadline", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(HEALTH)));
+    const deadline = vi.spyOn(AbortSignal, "timeout");
+    const { checkBackendHealth } = await loadApi();
     await checkBackendHealth();
     expect(deadline).toHaveBeenLastCalledWith(60_000);
   });
@@ -81,35 +78,17 @@ describe("backend API client", () => {
     await expect(getSession("missing")).rejects.toThrow("Session not found");
   });
 
-  it("serializes diagnosis, chat, and saved-solution requests", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(ASYNCIO_DIAGNOSIS))
-      .mockResolvedValueOnce(jsonResponse({ id: "reply", role: "fixflow", text: "Documentation", sources: [] }))
-      .mockResolvedValueOnce(jsonResponse({ id: "saved", problem: "failure", rootCause: "cause", technology: [], fixSummary: "fix", sources: [], savedAt: "2026-10-02T00:00:00Z" }));
+  it("serializes saved snapshots without using the removed answer endpoints", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      id: "saved", problem: "failure", rootCause: "cause", technology: [], fixSummary: "fix",
+      sources: [], savedAt: "2026-10-02T00:00:00Z",
+    }));
     vi.stubGlobal("fetch", fetchMock);
-    const { diagnose, saveSolution, sendFollowUp } = await loadApi();
-
-    await diagnose({ error: "failure", repoUrl: "https://example.test/repo", techs: ["React"] });
-    await sendFollowUp("Why?", "session/1");
-    await saveSolution({
-      problem: "failure",
-      rootCause: "cause",
-      technology: ["React"],
-      fixSummary: "fix",
-      sources: [{ title: "Docs", type: "docs" }],
-    });
-
-    const requests = fetchMock.mock.calls.map(([, init]) => init as RequestInit);
-    expect(requests).toHaveLength(3);
-    expect(JSON.parse(String(requests[0].body))).toMatchObject({
-      error: "failure",
-      repo_url: "https://example.test/repo",
-    });
-    expect(JSON.parse(String(requests[1].body))).toEqual({
-      question: "Why?",
-      session_id: "session/1",
-    });
-    expect(requests.every((request) => new Headers(request.headers).has("Content-Type"))).toBe(true);
+    const { saveSolution } = await loadApi();
+    await saveSolution({ problem: "failure", rootCause: "cause", technology: [], fixSummary: "fix", sources: [] });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/api/saved");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ problem: "failure", sources: [] });
   });
 
   it("loads collection endpoints", async () => {

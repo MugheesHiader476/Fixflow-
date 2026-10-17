@@ -34,12 +34,12 @@ from backend.db.models import (
     ConnectorOAuthState,
     ConnectorResource,
     ConnectorSyncJob,
-    DocumentChunk,
+    Document,
     IngestionArtifact,
     KnowledgeSource,
 )
 from backend.db.session import get_session_factory
-from backend.repositories.retrieval import search_chunks
+from backend.repositories.parsed import parsed_source
 from backend.schemas.connectors import AccessPolicy, Credentials, RawSourceEnvelope, Resource, Selection, SyncPage
 from backend.services.connector_sources import asset_path, register
 from backend.services.connector_sync import process_job
@@ -47,11 +47,15 @@ from backend.services.ingestion import ingest_source
 
 pytestmark = pytest.mark.anyio
 VAULT_KEY = Fernet.generate_key().decode()
-APP_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
-    serialization.Encoding.PEM,
-    serialization.PrivateFormat.PKCS8,
-    serialization.NoEncryption(),
-).decode()
+APP_PRIVATE_KEY = (
+    rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    .private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    .decode()
+)
 BODY = (
     "PostgreSQL connection pools require spare capacity for background ingestion. "
     "When the pool is exhausted, configure a bounded worker count and monitor waiting connections. "
@@ -251,7 +255,7 @@ async def test_connection_selection_sync_ingestion_acl_and_disconnect(
     await ingest_source(source_id)
     async with get_session_factory()() as db:
         db.info["owner_id"] = "user_test"
-        assert await search_chunks(db, "PostgreSQL connection pools")
+        assert await parsed_source(db, source.id, "user_test") is not None
         artifact = await db.get(IngestionArtifact, source_id)
         assert (
             artifact
@@ -260,7 +264,7 @@ async def test_connection_selection_sync_ingestion_acl_and_disconnect(
             )["application_owner"]
             == "user_test"
         )
-        chunk = await db.scalar(select(DocumentChunk))
+        chunk = await db.scalar(select(Document))
         assert chunk and record(record(chunk.meta["source_context"])["permissions"])["application_owner"] == "user_test"
         assert "private-provider-token" not in json.dumps(artifact.result)
         from backend.services.connector_sources import refresh_artifact_permissions  # noqa: PLC0415
@@ -272,7 +276,7 @@ async def test_connection_selection_sync_ingestion_acl_and_disconnect(
         await db.refresh(chunk)
         assert record(record(chunk.meta["source_context"])["permissions"])["users"] == ["new-reader@example.test"]
         db.info["owner_id"] = "user_other"
-        assert not await search_chunks(db, "PostgreSQL connection pools")
+        assert await parsed_source(db, source.id, "user_other") is None
     assert (await client.post(f"/api/connectors/{identifier}/sync", json={})).status_code == 202
     await run_jobs(identifier)
     async with get_session_factory()() as db:
@@ -280,7 +284,9 @@ async def test_connection_selection_sync_ingestion_acl_and_disconnect(
         await db.execute(update(KnowledgeSource).values(access_expires_at=datetime.now(UTC) - timedelta(seconds=1)))
         await db.commit()
         db.info["owner_id"] = "user_test"
-        assert not await search_chunks(db, "PostgreSQL connection pools")
+        assert await parsed_source(db, source.id, "user_test") is None
+    expired = (await client.get(f"/api/sources/{source_id}")).json()
+    assert expired["access_available"] is False and expired["retrieval_available"] is False
     result = await client.post(f"/api/connectors/{identifier}/disconnect", json={"policy": "retain"})
     assert result.status_code == 200 and result.json()["status"] == "disconnected"
     async with get_session_factory()() as db:

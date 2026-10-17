@@ -1,7 +1,7 @@
 import { validResponse } from "./response-validation";
 import { requestTimeoutMs } from "./request-timeout";
 import type {
-  ChatMessage, DebugRequest, DebugSession, Diagnosis, KnowledgeSource, SavedSolution, SourceReference, SourceType,
+  ChatMessage, DebugSession, Diagnosis, KnowledgeSource, SavedSolution, SourceReference, SourceType,
 } from "./types";
 
 export type { DebugRequest } from "./types";
@@ -25,8 +25,9 @@ export interface BackendHealth {
   failed_sources: number | null;
   embedding_configured: boolean;
   ai_generation: string;
-  answer_service?: "ready" | "unavailable" | "not_configured";
-  retrieval_mode?: "keyword" | "dense";
+  answer_service?: "removed" | "ready" | "unavailable" | "not_configured";
+  retrieval_mode?: "keyword" | "dense" | "removed";
+  processing_mode?: "parsing_only";
 }
 
 export function checkBackendHealth(signal?: AbortSignal): Promise<BackendHealth> {
@@ -40,7 +41,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit, acceptedStat
   }
   let response: Response;
   try {
-    const timeout = AbortSignal.timeout(requestTimeoutMs(path, init?.method));
+    const timeout = AbortSignal.timeout(requestTimeoutMs());
     const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     response = await fetch(`${API_URL.replace(/\/$/, "")}${path}`, { ...init, headers, signal });
   } catch (error) {
@@ -67,20 +68,6 @@ function apiErrorMessage(body: unknown, status: number): string {
     if (typeof body.error === "string") return body.error;
   }
   return `API request failed (${status})`;
-}
-
-export function diagnose(req: DebugRequest, signal?: AbortSignal): Promise<Diagnosis> {
-  return apiFetch(req.question ? "/api/ask" : "/api/debug", {
-    method: "POST", signal,
-    body: JSON.stringify({
-      question: req.question, error: req.error, code: req.code, context: req.context,
-      repo_url: req.repoUrl, techs: req.techs, files: req.files,
-    }),
-  });
-}
-
-export function sendFollowUp(question: string, sessionId: string, signal?: AbortSignal): Promise<ChatMessage> {
-  return apiFetch("/api/chat", { method: "POST", signal, body: JSON.stringify({ question, session_id: sessionId }) });
 }
 
 export function listSessions(signal?: AbortSignal): Promise<DebugSession[]> {
@@ -136,10 +123,6 @@ export function saveSolution(input: {
 export const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
   docs: "Documentation", github: "GitHub Issue", community: "Community", code: "Code Example",
 };
-
-export function retryEmbedding(id: string): Promise<KnowledgeSource> {
-  return apiFetch(`/api/sources/${encodeURIComponent(id)}/retry-embedding`, { method: "POST" });
-}
 
 export function setSourceAvailability(id: string, active: boolean): Promise<KnowledgeSource> {
   return apiFetch(`/api/sources/${encodeURIComponent(id)}/availability`, {

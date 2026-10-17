@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,16 +27,15 @@ from backend.schemas.models import (
     SaveRequest,
     SessionSummary,
     SourceAvailabilityRequest,
+    diagnostic_text,
 )
 from backend.services import store
 from backend.services.access import owner_id
-from backend.services.diagnosis import DiagnosisProvider, diagnostic_text, get_diagnosis_provider
 from backend.services.readiness import database_readiness
 from backend.services.uploads import discard_upload, safe_filename, save_upload, validated_remote_url
 
 router = APIRouter()
 Database = Annotated[AsyncSession, Depends(get_session)]
-Provider = Annotated[DiagnosisProvider, Depends(get_diagnosis_provider)]
 
 
 @router.get("/readiness")
@@ -46,27 +45,20 @@ async def readiness(db: Database) -> JSONResponse:
 
 
 @router.post("/debug", response_model=Diagnosis)
-async def debug(payload: DebugRequest, db: Database, provider: Provider) -> Diagnosis:
+async def debug(payload: DebugRequest, db: Database) -> Diagnosis:
     if not diagnostic_text(payload):
         raise HTTPException(422, "Provide a question, error, code, or context")
-    return await store.diagnose(db, payload, provider)
+    raise HTTPException(410, "Questions and answers were removed. This workspace currently supports parsing only.")
 
 
 @router.post("/ask", response_model=Diagnosis)
-async def ask(payload: QuestionRequest, db: Database, provider: Provider) -> Diagnosis:
-    return await store.diagnose(db, payload, provider)
+async def ask(payload: QuestionRequest, db: Database) -> Diagnosis:
+    raise HTTPException(410, "Questions and answers were removed. This workspace currently supports parsing only.")
 
 
 @router.post("/chat", response_model=ChatMessage)
-async def chat(payload: ChatRequest, db: Database, provider: Provider) -> ChatMessage:
-    try:
-        session_id = UUID(payload.session_id)
-    except ValueError as error:
-        raise HTTPException(404, "Session not found") from error
-    try:
-        return await store.chat(db, session_id, payload.question, provider)
-    except store.SessionNotFoundError as error:
-        raise HTTPException(404, str(error)) from error
+async def chat(payload: ChatRequest, db: Database) -> ChatMessage:
+    raise HTTPException(410, "Follow-up answers were removed. Existing conversations remain available in History.")
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
@@ -216,8 +208,8 @@ async def documents(
             if existing.file_hash == digest and existing.ingestion_format != ingestion_format:
                 raise HTTPException(409, "This content already exists with a different ingestion format")
             needs_upgrade = (
-                existing.status in {"ready_for_embedding", "embedding", "indexed"}
-                and existing.ingestion_metadata.get("pipeline_contract_version") != 2
+                existing.status in {"parsed", "ready_for_embedding", "embedding", "indexed"}
+                and existing.ingestion_metadata.get("pipeline_contract_version") != 3
             )
             if existing.file_hash == digest and existing.status != "failed" and not force and not needs_upgrade:
                 discard_upload(path)
@@ -269,8 +261,8 @@ async def documents(
                 raise HTTPException(409, "This content already exists with a different ingestion format")
             result = record.id
             needs_upgrade = (
-                record.status in {"ready_for_embedding", "embedding", "indexed"}
-                and record.ingestion_metadata.get("pipeline_contract_version") != 2
+                record.status in {"parsed", "ready_for_embedding", "embedding", "indexed"}
+                and record.ingestion_metadata.get("pipeline_contract_version") != 3
             )
             if (record.status == "failed" or force or needs_upgrade) and path:
                 lock_key = int.from_bytes(record.id.bytes[:8], "big", signed=True)
@@ -300,22 +292,4 @@ async def documents(
 
 @router.post("/sources/{source_id}/retry-embedding", response_model=KnowledgeSource)
 async def retry_embedding(source_id: UUID, db: Database) -> KnowledgeSource:
-    from backend.services.embeddings import get_embedding_provider  # noqa: PLC0415
-
-    if get_embedding_provider() is None:
-        raise HTTPException(409, "Embedding pipeline is not configured")
-    changed = await db.scalar(
-        update(SourceRecord)
-        .where(
-            SourceRecord.id == source_id,
-            SourceRecord.owner_id == owner_id(db),
-            SourceRecord.status == "ready_for_embedding",
-            SourceRecord.embedding_status == "failed",
-        )
-        .values(embedding_status="pending", embedding_error=None)
-        .returning(SourceRecord.id)
-    )
-    if changed is None:
-        raise HTTPException(404, "No retryable source found")
-    await db.commit()
-    return await source(changed, db)
+    raise HTTPException(410, "Embedding generation was removed. This workspace currently supports parsing only.")

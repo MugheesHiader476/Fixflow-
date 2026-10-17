@@ -1,8 +1,7 @@
-"""Batch persistence shared by uploads and the optional JSONL importer."""
+"""Legacy row fixtures for verifying preserved database constraints; no content splitting."""
 
 import hashlib
 import json
-from collections.abc import Iterable
 from typing import cast
 from uuid import UUID, uuid5
 
@@ -11,7 +10,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import Document, DocumentChunk
-from backend.processing.chunking import records_for_source
 
 
 def content_hash(text: str) -> str:
@@ -82,21 +80,3 @@ async def insert_chunks(session: AsyncSession, rows: list[dict[str, object]]) ->
         insert(cast(Table, DocumentChunk.__table__)).values(rows).on_conflict_do_nothing().returning(DocumentChunk.id)
     )
     return len(result.all())
-
-
-def chunk_documents(
-    source_id: UUID, rows: Iterable[dict[str, object]], chunk_size: int, overlap: int
-) -> Iterable[dict[str, object]]:
-    for row in rows:
-        item = {"page_content": row["page_content"], "metadata": row["metadata"]}
-        for record in records_for_source(item, integer(row["document_index"]), chunk_size, overlap, set()):
-            metadata = json_metadata(record["metadata"])
-            # Live document projections must be scoped to a source, even for identical uploads.
-            metadata["chunk_id"] = content_hash(f"{source_id}:{metadata['chunk_id']}")
-            yield chunk_values(
-                source_id,
-                UUID(str(row["id"])),
-                str(record["page_content"]),
-                metadata,
-                integer(metadata.get("chunk_index")),
-            )

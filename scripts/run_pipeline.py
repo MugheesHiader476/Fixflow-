@@ -1,4 +1,4 @@
-"""Local export of the same validated pipeline used by the persisted upload worker."""
+"""Export validated canonical parsing output from the same runner used by uploads."""
 
 import argparse
 import json
@@ -63,7 +63,7 @@ def main() -> None:
     except PipelineError as error:
         parser.exit(2, str(error) + "\n")
     # Replace validated export files atomically; publish pipeline.json last. Uploads use PostgreSQL instead.
-    for relative, content in {**result.bundle, "pipeline.json": result.model_dump_json(indent=2)}.items():
+    for relative, content in {"pipeline.json": result.model_dump_json(indent=2)}.items():
         target = output / relative
         if not target.resolve().is_relative_to(output) or target.is_symlink():
             parser.error("Unsafe output path")
@@ -72,17 +72,11 @@ def main() -> None:
         with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
             stream.write(content)
         temporary.replace(target)
-    if previous:
-        for relative in previous.bundle.keys() - result.bundle.keys():
-            obsolete = output / relative
-            if not obsolete.is_symlink() and obsolete.resolve().is_relative_to(output):
-                obsolete.unlink(missing_ok=True)
     print(
         json.dumps(
             {
-                "concepts": len(result.concepts),
-                "chunks": len(result.chunks),
-                "reused_concepts": result.reused_concepts,
+                "blocks": len(result.canonical.blocks),
+                "contract_version": result.contract_version,
                 "warnings": result.warnings,
                 "initial_seconds": round(initial_seconds, 4),
                 "cached_median_seconds": round(statistics.median(samples), 4) if samples else None,

@@ -1,7 +1,5 @@
 import asyncio
 import logging
-from collections.abc import Iterator
-from itertools import islice
 from pathlib import Path
 from uuid import UUID
 
@@ -12,12 +10,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.config import get_settings
 from backend.db.models import KnowledgeSource
 from backend.db.session import get_session_factory
-from backend.processing.loaders import loader_for
-from backend.processing.okf import OkfConcept, concept_metadata, maybe_parse_concept, parse_concept
 from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.execution import execute_pipeline as run_pipeline
 from backend.processing.pipeline.runner import PipelineError
-from backend.repositories.corpus import document_values, json_metadata
 from backend.repositories.pipeline import persist_result, previous_result
 
 logger = logging.getLogger(__name__)
@@ -26,55 +21,6 @@ PENDING_STATUSES = ("uploaded", "processing", "chunked")
 
 class IngestionError(RuntimeError):
     """A failed job has rolled back and its safe error has been persisted."""
-
-
-def load_documents(
-    path: Path, source_id: UUID, digest: str, *, strict_okf: bool = False
-) -> Iterator[dict[str, object]]:
-    loader = loader_for(path)
-    if loader is None:
-        raise ValueError("Unsupported document type")
-    extracted_chars = 0
-    for index, document in enumerate(loader.lazy_load()):
-        content = document.page_content.strip()
-        if not content:
-            continue
-        if "\x00" in content:
-            raise ValueError("No extractable valid text: null bytes are not supported.")
-        extracted_chars += len(content)
-        if extracted_chars > get_settings().max_extracted_chars:
-            raise ValueError("No extractable text within the configured processing limit.")
-        metadata = json_metadata(document.metadata)
-        if path.suffix.lower() == ".md":
-            concept: OkfConcept | None
-            if strict_okf:
-                try:
-                    concept = parse_concept(content, path.name)
-                except ValueError as error:
-                    raise ValueError(
-                        "Invalid OKF concept: check Markdown frontmatter, type and metadata limits."
-                    ) from error
-            else:
-                concept = maybe_parse_concept(content, path.name)
-            if concept is not None:
-                content = concept.body.strip()
-                metadata.update(concept_metadata(concept))
-                if not content:
-                    continue
-        metadata.update(
-            {
-                "file_hash": digest,
-                "filename": path.name,
-                "file_extension": path.suffix.lower(),
-                "document_index": index,
-                "source": str(path),
-            }
-        )
-        yield document_values(source_id, content, metadata, index)
-
-
-def next_batch(iterator: Iterator[dict[str, object]], size: int) -> list[dict[str, object]]:
-    return list(islice(iterator, size))
 
 
 async def set_status(source_id: UUID, status: str, error: str | None = None) -> None:
@@ -110,7 +56,6 @@ async def ingest_source(source_id: UUID) -> None:
                 {
                     **settings.pipeline.model_dump(),
                     "max_characters": settings.max_extracted_chars,
-                    "max_chunks": settings.max_document_chunks,
                 }
             )
             previous = await previous_result(session, source_id)
@@ -152,20 +97,18 @@ async def ingest_source(source_id: UUID) -> None:
                 **source.ingestion_metadata,
                 "force": False,
                 "pipeline_contract_version": result.contract_version,
-                "coverage": result.coverage,
-                "chunk_statistics": result.statistics,
+                "parsed_blocks": len(result.canonical.blocks),
                 "version": result.canonical.source.version,
                 "mime_type": result.canonical.source.mime_type,
                 "registration": result.canonical.source.model_dump(mode="json"),
                 "profile": result.canonical.profile.model_dump(mode="json"),
             }
-            source.status = "chunked"
-            await session.flush()
-            source.status = "ready_for_embedding"
+            source.status = "parsed"
             source.error_message = None
-            source.embedding_status = "pending" if settings.embedding_enabled else "not_configured"
+            source.embedding_status = "not_configured"
+            source.embedding_error = None
     except Exception as error:
-        # Loader/driver failures must roll back every document and chunk in this job.
+        # Parser/driver failures must roll back every artifact and document in this job.
         logger.error("Ingestion failed for %s (%s)", source_id, type(error).__name__)
         message = "Document processing failed. Check the file format and installed ingestion dependencies."
         if isinstance(error, PipelineError):

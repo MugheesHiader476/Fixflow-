@@ -15,11 +15,11 @@ function DisconnectConfirmation({ account, busy, onClose, onConfirm }: {
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="disconnect-title" className="m-auto max-w-lg rounded-2xl border border-border bg-panel p-6 text-foreground backdrop:bg-black/60">
     <h2 id="disconnect-title" className="text-xl font-semibold">Disconnect {account.display_name}?</h2>
-    <p className="my-3 text-sm text-muted">Synchronization stops and connected content becomes unavailable to retrieval with every option.</p>
+    <p className="my-3 text-sm text-muted">Synchronization stops and connected content becomes unavailable for content access with every option.</p>
     <fieldset disabled={busy} className="space-y-3">
       <label className="block"><input type="radio" name="policy" checked={policy === "retain"} onChange={() => setPolicy("retain")} /> Retain content for an authorized reconnect</label>
       <label className="block"><input type="radio" name="policy" checked={policy === "soft_delete"} onChange={() => setPolicy("soft_delete")} /> Mark content removed</label>
-      <label className="block"><input type="radio" name="policy" checked={policy === "purge"} onChange={() => setPolicy("purge")} /> Permanently purge connected sources and chunks</label>
+      <label className="block"><input type="radio" name="policy" checked={policy === "purge"} onChange={() => setPolicy("purge")} /> Permanently purge connected sources and artifacts</label>
     </fieldset>
     {policy === "purge" && <p className="mt-3 text-danger">Purging cannot be undone.</p>}
     <div className="mt-5 flex gap-3"><Button disabled={busy} onClick={onClose}>Cancel</Button><Button variant="danger" loading={busy} onClick={() => onConfirm(policy)}>Confirm disconnect</Button></div>
@@ -65,7 +65,7 @@ export function AccountPanel({ account, onChanged, onReconnect }: {
       {!authorized && <Button size="sm" onClick={onReconnect}>Reconnect</Button>}
       {account.status !== "disconnected" && <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirming(true)}>Disconnect</Button>}
     </div>
-    <p className="mt-3 text-xs text-muted">Sync completion means resources were fetched and queued. Check parsing and chunk status in <Link href="/sources" className="underline">Knowledge Sources</Link>.</p>
+    <p className="mt-3 text-xs text-muted">Sync completion means resources were fetched and queued. Check parsing status in <Link href="/sources" className="underline">Knowledge Sources</Link>.</p>
     {selecting && <ResourceSelection account={account} onClose={() => setSelecting(false)} onSaved={() => { setSelecting(false); onChanged(); }} />}
     {confirming && <DisconnectConfirmation account={account} busy={busy} onClose={() => setConfirming(false)} onConfirm={(policy) => void run(() => disconnectConnector(account.id, policy))} />}
   </div>;

@@ -34,9 +34,10 @@ def source_response(
         version=source.version,
         url=source.url,
         error_message=source.error_message,
-        detail=source.error_message or f"{document_count} documents · {chunk_count} chunks",
+        detail=source.error_message or f"{document_count} stored documents · parsing only",
         is_active=source.is_active,
-        retrieval_available=accessible and source.status in {"ready_for_embedding", "embedding", "indexed"},
+        retrieval_available=False,
+        access_available=accessible,
         managed_by_connector=source.connector_account_id is not None,
     )
 

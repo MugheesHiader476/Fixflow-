@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DebugInput } from "@/components/debug/debug-input";
 import { DiagnosisResult } from "@/components/debug/diagnosis-result";
 import { FollowUpChat } from "@/components/debug/followup-chat";
-import { PipelineProgress } from "@/components/debug/pipeline";
 import { RagTransparency } from "@/components/debug/rag-transparency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,12 +11,10 @@ import { Tabs, Tooltip } from "@/components/ui/tabs";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { ASYNCIO_DIAGNOSIS } from "./fixtures/diagnosis";
 
-const sendFollowUp = vi.hoisted(() => vi.fn());
 const listMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
-  sendFollowUp,
   listMessages,
 }));
 
@@ -61,12 +58,10 @@ describe("shared UI", () => {
   it("shows pipeline and expandable RAG details", () => {
     render(
       <>
-        <PipelineProgress />
         <RagTransparency rag={ASYNCIO_DIAGNOSIS.rag} />
       </>
     );
 
-    expect(screen.getByRole("status")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: /How FixFlow found/ }));
     expect(screen.getByText("Keyword retrieval")).toBeDefined();
     expect(screen.getByText("24", { selector: "p" })).toBeDefined();
@@ -185,29 +180,13 @@ describe("debug interactions", () => {
     }));
   });
 
-  it("sends a follow-up and renders its grounded source", async () => {
-    sendFollowUp.mockResolvedValue({
-      id: "reply-1",
-      role: "fixflow",
-      text: "Await the coroutine directly.",
-      sources: [{ title: "Async docs", type: "docs" }],
-    });
-    withToasts(<FollowUpChat sessionId="session-1" confidence={88} />);
-
-    await waitFor(() => expect(screen.getByLabelText("Follow-up question")).toHaveProperty("disabled", false));
-
-    fireEvent.change(screen.getByLabelText("Follow-up question"), {
-      target: { value: "How should I call it?" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Send follow-up" }));
-
-    expect(await screen.findByText("Await the coroutine directly.")).toBeDefined();
+  it("preserves messages and disables removed follow-up actions", async () => {
+    listMessages.mockResolvedValueOnce([{ id: "old", role: "fixflow", text: "Historical answer", sources: [{title: "Async docs", type: "docs"}] }]);
+    withToasts(<FollowUpChat sessionId="session-1" confidence={null} />);
+    expect(await screen.findByText("Historical answer")).toBeDefined();
     expect(screen.getByText("Async docs")).toBeDefined();
-    expect(sendFollowUp).toHaveBeenCalledWith(
-      "How should I call it?",
-      "session-1",
-      expect.any(AbortSignal)
-    );
+    expect(screen.getByLabelText("Follow-up question").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByText(/Follow-up answers were removed/)).toBeDefined();
   });
 
   it("restores persisted conversation and resets it when switching sessions", async () => {
@@ -215,20 +194,11 @@ describe("debug interactions", () => {
     const view = withToasts(<FollowUpChat sessionId="first" confidence={null} />);
     expect(await screen.findByText("Earlier question")).toBeDefined();
     view.rerender(<ToastProvider><FollowUpChat sessionId="second" confidence={null} /></ToastProvider>);
-    await waitFor(() => expect(screen.getByLabelText("Follow-up question")).toHaveProperty("disabled", false));
+    await waitFor(() => expect(screen.getByLabelText("Follow-up question").closest("fieldset")).toHaveProperty("disabled", true));
     expect(screen.queryByText("Earlier question")).toBeNull();
   });
 
-  it("restores an unsent question after a chat failure", async () => {
-    sendFollowUp.mockRejectedValueOnce(new Error("offline"));
-    withToasts(<FollowUpChat sessionId="failed" confidence={null} />);
-    const input = screen.getByLabelText("Follow-up question");
-    await waitFor(() => expect(input).toHaveProperty("disabled", false));
-    fireEvent.change(input, { target: { value: "Retry this question" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send follow-up" }));
-    await waitFor(() => expect(input).toHaveProperty("value", "Retry this question"));
-    expect(screen.queryByText("Retry this question")).toBeNull();
-  });
+
 
   it("renders an honest retrieval-only result without confidence or fabricated code", async () => {
     withToasts(<DiagnosisResult diagnosis={{
@@ -237,6 +207,6 @@ describe("debug interactions", () => {
     expect(screen.getByText(/AI diagnosis and suggested code changes are not connected/)).toBeDefined();
     expect(screen.queryByText("92%")).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
-    await waitFor(() => expect(screen.getByLabelText("Follow-up question")).toHaveProperty("disabled", false));
+    await waitFor(() => expect(screen.getByLabelText("Follow-up question").closest("fieldset")).toHaveProperty("disabled", true));
   });
 });

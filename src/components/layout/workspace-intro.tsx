@@ -9,10 +9,10 @@ export function WorkspaceHero() {
       <div className="ff-hero-shade" />
       <div className="ff-hero-content">
         <p className="ff-eyebrow"><span aria-hidden="true" />A little context. A lot of clarity.</p>
-        <h1 id="workspace-title">Your knowledge.<br />Clearer answers.</h1>
-        <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Ask a question and see the evidence behind the answer.</p>
+        <h1 id="workspace-title">Your knowledge.<br />Structured content.</h1>
+        <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Inspect and parse content for your next workflow.</p>
         <div className="ff-hero-actions">
-          <a className="ff-pill ff-pill-white" href="#workspace">Start a session <ArrowUpRight size={18} /></a>
+          <a className="ff-pill ff-pill-white" href="#workspace">Open workspace <ArrowUpRight size={18} /></a>
           <Link className="ff-hero-link" href="/sources">Explore your knowledge <ArrowUpRight size={16} /></Link>
         </div>
       </div>
@@ -36,7 +36,7 @@ export function WorkspaceGuide() {
 }
 
 const WORKFLOWS = [
-  { number: "01", icon: BookOpen, title: "Your knowledge, together.", description: "Bring your documentation into one place. Search the details that matter to your code.", href: "/sources", action: "Knowledge sources" },
+  { number: "01", icon: BookOpen, title: "Your knowledge, together.", description: "Bring your documentation into one place. Parse content while preserving its structure.", href: "/sources", action: "Knowledge sources" },
   { number: "02", icon: History, title: "Pick up the thread.", description: "Every session keeps your inputs and conversation, ready for your next investigation.", href: "/history", action: "Debug history" },
   { number: "03", icon: Bookmark, title: "Keep what works.", description: "Save useful findings and references. Make the next debugging session a little easier.", href: "/saved", action: "Saved solutions" },
 ];

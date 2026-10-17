@@ -21,7 +21,9 @@ PersistedText = Annotated[str, AfterValidator(database_text)]
 
 SourceType = Literal["docs", "github", "community", "code"]
 KnowledgeKind = Literal["docs", "github", "community", "upload"]
-SourceStatus = Literal["uploaded", "processing", "chunked", "ready_for_embedding", "embedding", "indexed", "failed"]
+SourceStatus = Literal[
+    "parsed", "uploaded", "processing", "chunked", "ready_for_embedding", "embedding", "indexed", "failed"
+]
 IngestionFormat = Literal["document", "okf"]
 EmbeddingStatus = Literal["not_configured", "pending", "processing", "complete", "failed"]
 ShortText = Annotated[PersistedText, Field(max_length=200)]
@@ -228,7 +230,8 @@ class KnowledgeSource(BaseModel):
     updated: datetime
     detail: str
     is_active: bool = True
-    retrieval_available: bool = True
+    retrieval_available: bool = False
+    access_available: bool = True
     managed_by_connector: bool = False
 
 
@@ -252,3 +255,9 @@ class SaveRequest(BaseModel):
     technology: list[ShortText] = Field(default_factory=list, max_length=30)
     fixSummary: PersistedText = Field(max_length=50_000)
     sources: list[SourceReference] = Field(default_factory=list, max_length=100)
+
+
+def diagnostic_text(payload: DebugRequest) -> str:
+    """Display original inputs from historical sessions without invoking retrieval."""
+    values = [payload.question, payload.error, payload.context, payload.code, *(file.content for file in payload.files)]
+    return "\n".join(value.strip() for value in values if value and value.strip())

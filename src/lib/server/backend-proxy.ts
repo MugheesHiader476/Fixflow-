@@ -48,7 +48,7 @@ export async function proxyBackend(request: Request, path: string) {
       method: request.method,
       headers,
       ...(request.method === "POST" ? { body: request.body, duplex: "half" } : {}),
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs(path, request.method))]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs())]),
       redirect: "error",
       cache: "no-store",
     } as RequestInit & { duplex?: "half" });

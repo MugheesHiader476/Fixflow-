@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-import statistics
 import time
 from datetime import UTC, datetime
 from importlib import import_module
@@ -11,38 +10,14 @@ from pathlib import Path
 
 from backend.processing.okf import parse_concept
 from backend.processing.pipeline.canonical import canonicalize, quality
-from backend.processing.pipeline.chunks import (
-    Tokenizer,
-    chunk_concept,
-    chunk_hash,
-    context,
-    link_chunks,
-    split_block,
-    tokenizer_for,
-    validate_chunks,
-)
-from backend.processing.pipeline.concepts import (
-    bundle,
-    dependency_hash,
-    extract_concepts,
-    resolve_concepts,
-    validate_okf,
-)
 from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.context import apply_context, normalize_context
 from backend.processing.pipeline.inspection import inspect, read_source
 from backend.processing.pipeline.parsers import LayoutParser, NativeParser, OcrParser, Parser
-from backend.processing.pipeline.units import (
-    atomic_units,
-    character_slice,
-    chunk_order,
-    coverage_report,
-    validate_units,
-)
 from backend.processing.pipeline.validation import validate_result
-from backend.schemas.pipeline import Chunk, PipelineResult, Source, digest
+from backend.schemas.pipeline import PipelineResult, Source, digest
 
-ENGINE_VERSION = "2.1.2"
+ENGINE_VERSION = "3.0.0"
 logger = logging.getLogger(__name__)
 
 
@@ -73,19 +48,16 @@ def run_pipeline(
     force: bool = False,
     strict_okf: bool = False,
     parsers: list[Parser] | None = None,
-    tokenizer: Tokenizer | None = None,
     ingested_at: datetime | None = None,
     source_context: dict[str, object] | None = None,
 ) -> PipelineResult:
     config = config or PipelineConfig()
     source_context = normalize_context(source_id, source_context)
-    tokenizer_identity = tokenizer.name if tokenizer else f"{config.tokenizer}:{config.tokenizer_encoding}"
     config_hash = digest(
         [
             ENGINE_VERSION,
             config.model_dump(mode="json"),
             strict_okf,
-            tokenizer_identity,
             {
                 k: v
                 for k, v in (source_context or {}).items()
@@ -107,15 +79,11 @@ def run_pipeline(
             and previous.config_hash == config_hash
         ):
             # Revalidate persisted output rather than trusting a stale or corrupt cache envelope.
-            tokenizer = tokenizer or tokenizer_for(config)
-            validate_units(previous.atomic_units, previous.canonical, previous.concepts)
-            validate_okf(previous.concepts, previous.canonical)
-            validate_chunks(previous.chunks, previous.parents, previous.concepts, previous.canonical, tokenizer, config)
-            validate_result(previous, tokenizer)
+            validate_result(previous)
             event("cache_hit", source_id)
             cached = previous.model_copy(deep=True)
             apply_context(cached, source_context)
-            validate_result(cached, tokenizer)
+            validate_result(cached)
             return cached
         inspection = inspect(path, config, data)
         if previous and previous.canonical.source.source_id != source_id:
@@ -193,131 +161,17 @@ def run_pipeline(
                 "Pipeline parsing failed quality validation; configure a suitable fallback parser or OCR"
                 + (" (layout_uncertain; needs review)" if "layout_uncertain" in quality_failures else "")
             )
-        tokenizer = tokenizer or tokenizer_for(config)
-        canonical.metadata["tokenizer"] = tokenizer.name
         canonical.metadata["source_envelope"] = source_context
-        canonical.metadata["chunk_policy"] = config.model_dump(mode="json")
-        reusable = previous if previous and previous.config_hash == config_hash and not force else None
-        concepts = extract_concepts(canonical, ENGINE_VERSION, reusable)
-        concepts, merged_count = resolve_concepts(concepts, canonical)
-        event("concepts_resolved", source_id, concepts=len(concepts), merged=merged_count)
-        warnings = validate_okf(concepts, canonical)
-        event("okf_validated", source_id, concepts=len(concepts), warnings=len(warnings))
-        atomic = atomic_units(canonical, concepts)
-        old_concepts = {c.concept_id: c for c in reusable.concepts} if reusable else {}
-        chunks: list[Chunk] = []
-        reused = 0
-        by_id = {b.block_id: b for b in canonical.blocks}
-        for concept in concepts:
-            current_dependency = dependency_hash([by_id[i] for i in concept.source_block_ids])
-            old = old_concepts.get(concept.concept_id)
-            if old and old.dependency_hash == current_dependency and reusable:
-                chunks.extend(c.model_copy(deep=True) for c in reusable.chunks if c.concept_id == concept.concept_id)
-                reused += 1
-                event("concept_cache_hit", source_id, concept_hash=concept.content_hash)
-            else:
-                chunks.extend(chunk_concept(canonical, concept, tokenizer, config))
-        # Compact context must never omit large headings: persist their exact
-        # canonical evidence as normal/continuation chunks when it cannot fit.
-        prefixes = [c.retrieval_content[: -len(c.raw_content)] for c in chunks]
-        for block in canonical.blocks:
-            if block.type not in {"heading", "title", "metadata"} or any(block.content in p for p in prefixes):
-                continue
-            concept = next(c for c in concepts if block.block_id in c.direct_block_ids)
-            for unit in split_block(block, concept, tokenizer, config):
-                retrieval = context(concept, unit, tokenizer, config) + unit.content
-                content_hash = chunk_hash(unit.content, concept.concept_id, unit.path, unit.kind, unit.slices)
-                chunks.append(
-                    Chunk(
-                        chunk_id="c-" + digest([source_id, content_hash])[:40],
-                        concept_id=concept.concept_id,
-                        parent_id="p-" + digest([concept.concept_id, unit.path])[:32],
-                        section_path=unit.path,
-                        source_block_ids=[block.block_id],
-                        provenance=[block.provenance],
-                        content_type=unit.kind,
-                        raw_content=unit.content,
-                        retrieval_content=retrieval,
-                        token_count=tokenizer.count(retrieval),
-                        content_hash=content_hash,
-                        source_id=source_id,
-                        canonical_document_id=canonical.document_id,
-                        authorization_scope=source.authorization_scope,
-                        unit_slices=unit.slices,
-                        byte_length=len(retrieval.encode()),
-                        character_length=len(retrieval),
-                    )
-                )
-        # Restore global canonical order, including direct parent evidence after a child section.
-        ordered = chunk_order(chunks, atomic)
-        chunks = [chunk for _, chunk in sorted(zip(ordered, chunks, strict=True), key=lambda pair: pair[0])]
-        for chunk in chunks:
-            chunk.canonical_document_id = canonical.document_id
-            chunk.unit_slices = [r for r in chunk.unit_slices if r.role == "content"]
-            prefix = chunk.retrieval_content[: -len(chunk.raw_content)]
-            for block in canonical.blocks:
-                if block.type in {"heading", "title", "metadata"} and block.content in prefix:
-                    location = character_slice(block)
-                    location.role = "context"
-                    chunk.unit_slices.append(location)
-        parents = link_chunks(chunks)
-        validate_chunks(chunks, parents, concepts, canonical, tokenizer, config)
-        event("chunks_validated", source_id, count=len(chunks), reused_concepts=reused)
-        dependencies: dict[str, list[str]] = {b.block_id: [] for b in canonical.blocks}
-        dependencies.update({c.concept_id: [] for c in concepts})
-        dependencies.update({u.unit_id: [] for u in atomic})
-        for concept in concepts:
-            for identifier in concept.source_block_ids:
-                dependencies[identifier].append(concept.concept_id)
-        for chunk in chunks:
-            dependencies[chunk.concept_id].append(chunk.chunk_id)
-            for identifier in dict.fromkeys(r.unit_id for r in chunk.unit_slices):
-                dependencies[identifier].append(chunk.chunk_id)
-        stage_hashes = {
-            "source": source.sha256,
-            "canonical": canonical.content_hash,
-            "concepts": digest([c.content_hash for c in concepts]),
-            "chunks": digest([c.content_hash for c in chunks]),
-        }
         result = PipelineResult(
             canonical=canonical,
-            concepts=concepts,
-            chunks=chunks,
-            parents=parents,
-            bundle=bundle(concepts),
             engine_version=ENGINE_VERSION,
             config_hash=config_hash,
-            dependencies=dependencies,
-            stage_hashes=stage_hashes,
-            warnings=[*canonical.parse_quality.warnings, *warnings],
-            reused_concepts=reused,
-            atomic_units=atomic,
-            coverage=coverage_report(chunks, atomic),
-            statistics={
-                "canonical_elements": len(canonical.blocks),
-                "concepts": len(concepts),
-                "atomic_units": len(atomic),
-                "chunks": len(chunks),
-                "min_bytes": min(c.byte_length for c in chunks),
-                "max_bytes": max(c.byte_length for c in chunks),
-                "mean_bytes": statistics.mean(c.byte_length for c in chunks),
-                "median_bytes": statistics.median(c.byte_length for c in chunks),
-                "parser": canonical.blocks[0].provenance.parser,
-                "duplicate_canonical_elements": len(atomic) - len({u.content_hash for u in atomic}),
-                "hard_size_fragments": sum(
-                    r.boundary_kind == "hard_size" for c in chunks for r in c.unit_slices if r.role == "content"
-                ),
-                "validation_failures": 0,
-                "uncovered_elements": 0,
-                "continuation_fragments": sum(s.continuation is not None for c in chunks for s in c.unit_slices),
-            },
-            contract_version=2,
+            stage_hashes={"source": source.sha256, "canonical": canonical.content_hash},
+            warnings=canonical.parse_quality.warnings.copy(),
         )
-        apply_context(result, source_context or {})
-        validate_okf(result.concepts, result.canonical)
-        validate_units(result.atomic_units, result.canonical, result.concepts)
-        validate_result(result, tokenizer)
-        event("coverage_validated", source_id, coverage=result.coverage, statistics=result.statistics)
+        apply_context(result, source_context)
+        validate_result(result)
+        event("parsing_validated", source_id, blocks=len(canonical.blocks))
         return result
     except PipelineError:
         event("validation_failed", source_id)

@@ -31,7 +31,7 @@ from markdown_it import MarkdownIt
 from backend.processing.okf import UniqueSafeLoader, maybe_parse_concept, unique_mapping
 from backend.processing.pipeline.config import PipelineConfig
 from backend.processing.pipeline.inspection import CODE_LANGUAGES, Inspection
-from backend.processing.pipeline.splitting import code_symbols, yaml_anchors
+from backend.processing.pipeline.structure import code_symbols, yaml_anchors
 from backend.schemas.pipeline import Asset, Block, BlockType, Provenance, Source, digest
 
 VERSION = "5"

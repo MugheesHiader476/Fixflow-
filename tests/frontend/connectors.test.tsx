@@ -70,7 +70,7 @@ describe("Connected Apps", () => {
     render(<ConnectorsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
     expect(api.disconnectConnector).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByLabelText("Permanently purge connected sources and chunks"));
+    fireEvent.click(screen.getByLabelText("Permanently purge connected sources and artifacts"));
     expect(screen.getByText("Purging cannot be undone.")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Confirm disconnect" }));
     await waitFor(() => expect(api.disconnectConnector).toHaveBeenCalledWith(ACCOUNT.id, "purge"));

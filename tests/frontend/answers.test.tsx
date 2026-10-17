@@ -43,7 +43,7 @@ describe("question answering", () => {
     expect(screen.queryByText("Root Cause")).toBeNull();
     expect(screen.queryByText("0%")).toBeNull();
     expect(diagnosisMarkdown(result)).toContain("> Refunds are available for 30 days.");
-    await waitFor(() => expect(screen.getByLabelText("Follow-up question")).toHaveProperty("disabled", false));
+    await waitFor(() => expect(screen.getByLabelText("Follow-up question").closest("fieldset")).toHaveProperty("disabled", true));
   });
 
   it("rejects missing citations, fake quote text, and invalid numbering at the response boundary", () => {

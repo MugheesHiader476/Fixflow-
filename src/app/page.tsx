@@ -1,21 +1,19 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { WorkspaceHero, WorkspaceGuide, WorkspaceFeatures } from "@/components/layout/workspace-intro";
 import { RightPanel } from "@/components/layout/right-panel";
 import { DebugInput } from "@/components/debug/debug-input";
-import { PipelineProgress } from "@/components/debug/pipeline";
 import { DiagnosisResult } from "@/components/debug/diagnosis-result";
 import { WorkspaceReadiness } from "@/components/debug/workspace-readiness";
 import { useToast } from "@/components/ui/toast";
-import { diagnose, getSession, saveSolution as saveSolutionApi, type DebugRequest } from "@/lib/api";
+import { getSession, saveSolution as saveSolutionApi } from "@/lib/api";
 import type { Diagnosis } from "@/lib/types";
 
 function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
-  const [busy, setBusy] = useState(false);
   const [loadingSession, setLoadingSession] = useState(Boolean(sessionId));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -24,9 +22,6 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
   const [techs, setTechs] = useState<string[]>([]);
   const [repoUrl, setRepoUrl] = useState("");
   const [rightOpen, setRightOpen] = useState(false);
-  const resultRef = useRef<HTMLDivElement>(null);
-  const diagnosisRequest = useRef<AbortController | null>(null);
-  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const SessionHeading = sessionId ? "h1" : "h2";
   const { toast } = useToast();
   const router = useRouter();
@@ -55,46 +50,6 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
     }
   }, [sessionId]);
 
-  useEffect(
-    () => () => {
-      diagnosisRequest.current?.abort();
-      if (scrollTimer.current) clearTimeout(scrollTimer.current);
-    },
-    []
-  );
-
-  const runPipeline = useCallback(async (req: DebugRequest) => {
-    diagnosisRequest.current?.abort();
-    if (scrollTimer.current) clearTimeout(scrollTimer.current);
-    const controller = new AbortController();
-    diagnosisRequest.current = controller;
-    setBusy(true);
-    setError(null);
-    setDiagnosis(null);
-    setSaved(false);
-    try {
-      const result = await diagnose(req, controller.signal);
-      if (controller.signal.aborted) return;
-      setDiagnosis(result);
-      setRightOpen(true);
-      window.dispatchEvent(new Event("fixflow:sessions-changed"));
-      router.replace(`/?session=${encodeURIComponent(result.sessionId)}`);
-      scrollTimer.current = setTimeout(
-        () => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-        100
-      );
-    } catch (failure) {
-      if (!controller.signal.aborted) {
-        setError(failure instanceof Error ? failure.message : "Search failed. Please try again.");
-      }
-    } finally {
-      if (diagnosisRequest.current === controller) {
-        diagnosisRequest.current = null;
-        setBusy(false);
-      }
-    }
-  }, [router]);
-
   const saveSolution = async () => {
     if (!diagnosis || saving || saved) return;
     setSaving(true);
@@ -120,7 +75,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
 
   return (
     <AppShell
-      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Knowledge"} session` : "Ask your sources"}
+      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Knowledge"} session` : "Parsing workspace"}
       techs={techs.length ? techs : (diagnosis?.detected ?? [])}
       rightPanel={
         <RightPanel
@@ -137,16 +92,16 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
     >
       <div className="ff-home">
         {!sessionId && <WorkspaceHero />}
-        {!sessionId && <section className="ff-intro"><p className="ff-eyebrow"><span aria-hidden="true" />YOUR KNOWLEDGE, WITH EVIDENCE</p><div><h2>From your sources<br />to a clearer answer.</h2><p>Upload documents or connect an authorized app. Ask about your policies, data, research, or code, and inspect the evidence behind each answer.</p></div></section>}
+        {!sessionId && <section className="ff-intro"><p className="ff-eyebrow"><span aria-hidden="true" />YOUR KNOWLEDGE, WITH EVIDENCE</p><div><h2>Your sources.<br />Their original structure.</h2><p>Upload documents or connect an authorized app. Content is parsed and stored privately with its source locations.</p></div></section>}
         <section id="workspace" className="ff-workspace-section" aria-labelledby="session-heading">
-          <div className="ff-section-heading"><div><p className="ff-eyebrow">{sessionId ? "YOUR CONVERSATION" : "ASK YOUR KNOWLEDGE"}</p><SessionHeading id="session-heading">{sessionId ? "Continue the conversation." : "What would you like to know?"}</SessionHeading></div><span className="ff-mode-label"><span />Private source search</span></div>
+          <div className="ff-section-heading"><div><p className="ff-eyebrow">{sessionId ? "YOUR CONVERSATION" : "YOUR WORKSPACE"}</p><SessionHeading id="session-heading">{sessionId ? "Review the conversation." : "Prepare your sources."}</SessionHeading></div><span className="ff-mode-label"><span />Private document parsing</span></div>
           <div className={sessionId ? "ff-session-input" : "ff-workspace-grid"}>
             <div className="min-w-0">
         {!sessionId && <WorkspaceReadiness />}
         {loadingSession && <p role="status" className="text-sm text-muted">Loading session…</p>}
         {!loadingSession && <DebugInput
-          onDiagnose={runPipeline}
-          busy={busy}
+          disabled
+          busy={false}
           onFilesChange={setFiles}
           onTechsChange={setTechs}
           onRepoChange={setRepoUrl}
@@ -161,14 +116,13 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
           onClear={() => { setDiagnosis(null); setError(null); setSaved(false); router.replace("/"); }}
         />}
 
-              <p className="ff-input-note">Answers use available source excerpts. If evidence is missing, FixFlow will ask for more.</p>
+              <p className="ff-input-note">Questions, search, and AI answers have been removed. Existing sessions remain available in History.</p>
             </div>
             {!sessionId && <WorkspaceGuide />}
           </div>
-        <div ref={resultRef} className="ff-results">
+        <div className="ff-results">
 
-          {busy && <PipelineProgress />}
-          {error && !busy && (
+          {error && (
             <div
               className="ff-fade-up rounded-xl border border-danger/40 bg-danger/10 px-4 py-3.5 text-sm text-danger"
               role="alert"
@@ -182,18 +136,17 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
               </button>
             </div>
           )}
-          {!busy && !loadingSession && !error && !diagnosis && (
+          {!loadingSession && !error && !diagnosis && (
             <div className="rounded-xl border border-dashed border-border px-6 py-10 text-center">
               <p className="text-sm text-muted">
-                Add a source, ask your question above, then choose{" "}
-                <span className="text-foreground">Ask question</span>.
+                Upload a source on Knowledge Sources to inspect and parse its content.
               </p>
               <p className="mt-1 font-mono text-[11px] text-muted/60">
-                searches your uploaded knowledge base
+                parsing only · no chunking or model inference
               </p>
             </div>
           )}
-          {diagnosis && !busy && (
+          {diagnosis && (
             <DiagnosisResult
               key={diagnosis.sessionId}
               diagnosis={diagnosis}

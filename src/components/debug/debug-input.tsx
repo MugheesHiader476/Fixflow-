@@ -24,6 +24,7 @@ import { DEBUG_FILE_ACCEPT, MAX_DEBUG_FILES, readDebugFile } from "@/lib/files";
 const EXAMPLE_ERROR = "RuntimeError: no running event loop";
 export function DebugInput({
   onDiagnose,
+  disabled = false,
   busy,
   onFilesChange,
   onTechsChange,
@@ -31,7 +32,8 @@ export function DebugInput({
   initialValues,
   onClear,
 }: {
-  onDiagnose: (req: DebugRequest) => void;
+  onDiagnose?: (req: DebugRequest) => void;
+  disabled?: boolean;
   busy: boolean;
   onFilesChange: (files: string[]) => void;
   onTechsChange: (techs: string[]) => void;
@@ -55,6 +57,7 @@ export function DebugInput({
   const { toast } = useToast();
   const areaRef = useRef<HTMLTextAreaElement>(null);
   let submitLabel = question.trim() || tab === "question" ? "Ask question" : "Search documentation";
+  if (disabled) submitLabel = "Questions unavailable";
   if (busy) submitLabel = "Preparing answer…";
   if (readingFiles) submitLabel = "Reading files…";
 
@@ -112,7 +115,7 @@ export function DebugInput({
   };
 
   const submit = () => {
-    if (busy || readingFiles) return;
+    if (disabled || busy || readingFiles || !onDiagnose) return;
     if (!question.trim() && !error.trim() && !code.trim() && !context.trim() && !files.length) {
       toast("Add a question, error message, code, or context first", "error");
       areaRef.current?.focus();
@@ -144,7 +147,7 @@ export function DebugInput({
       }}
       className="ff-debug-input overflow-visible rounded-xl border border-border bg-panel"
     >
-      <fieldset disabled={busy || readingFiles} className="min-w-0">
+      <fieldset disabled={disabled || busy || readingFiles} className="min-w-0">
       <div className="flex items-center pr-2">
         <Tabs
           size="sm"
@@ -158,9 +161,9 @@ export function DebugInput({
             { id: "context", label: "Context", icon: <Lightbulb size={13} /> },
           ]}
         />
-        <span className="ml-auto hidden items-center gap-1 font-mono text-[10px] text-muted/60 sm:flex">
+        {!disabled && <span className="ml-auto hidden items-center gap-1 font-mono text-[10px] text-muted/60 sm:flex">
           <Command size={10} /> + Enter to search
-        </span>
+        </span>}
       </div>
 
       <div className="p-4">
@@ -170,13 +173,13 @@ export function DebugInput({
               ref={areaRef}
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask about your documents, data, policies, or code…"
+              placeholder={disabled ? "Questions are unavailable. Open Knowledge Sources to upload and parse content." : "Ask about your documents, data, policies, or code…"}
               aria-label="Your question"
               maxLength={4000}
               rows={4}
               className="w-full resize-y rounded-lg border border-border bg-background p-3.5 text-sm leading-relaxed text-foreground placeholder:text-muted/50 focus:border-accent/60 focus:outline-none"
             />
-            <p className="text-xs text-muted">Answers use the sources available to your account. Add sources first, then ask in your own words.</p>
+            <p className="text-xs text-muted">{disabled ? "Upload and parsing remain available on Knowledge Sources." : "Answers use the sources available to your account. Add sources first, then ask in your own words."}</p>
             <div className="flex flex-wrap gap-3 text-xs text-accent">
               <a href="/sources">Upload a source</a>
               <a href="/connectors">Connect an app</a>
@@ -336,7 +339,7 @@ export function DebugInput({
 
         <div className="flex flex-wrap items-center gap-2">
           <Tooltip label="Clear all inputs">
-            <Button variant="ghost" onClick={clearAll} disabled={busy}>
+            <Button variant="ghost" onClick={clearAll} disabled={disabled || busy}>
               <Trash2 size={14} /> Clear
             </Button>
           </Tooltip>

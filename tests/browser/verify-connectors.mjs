@@ -118,7 +118,7 @@ try {
   });
   await check("Disconnect requires explicit purge confirmation and displays returned status", async () => {
     await page.getByRole("button", { name: "Disconnect", exact: true }).click();
-    await page.getByLabel("Permanently purge connected sources and chunks").check();
+    await page.getByLabel("Permanently purge connected sources and artifacts").check();
     await expect(page.getByText("Purging cannot be undone.")).toBeVisible();
     await noOverflow();
     await capture({ path: resolve(output, "connectors-disconnect-mobile.png"), fullPage: true });

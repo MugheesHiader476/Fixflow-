@@ -22,8 +22,8 @@ def test_corrupt_export_cache_requires_force(
     )
     if force:
         main()
-        assert json.loads((output / "pipeline.json").read_text())["chunks"]
-        assert (output / "index.md").exists()
+        assert json.loads((output / "pipeline.json").read_text())["canonical"]["blocks"]
+        assert not (output / "index.md").exists()
     else:
         with pytest.raises(SystemExit) as error:
             main()

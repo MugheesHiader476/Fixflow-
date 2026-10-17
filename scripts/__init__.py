@@ -1,1 +1,1 @@
-"""Document ingestion and chunking utilities."""
+"""Private document parsing and application maintenance utilities."""

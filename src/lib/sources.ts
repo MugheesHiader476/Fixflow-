@@ -4,18 +4,19 @@ export const SOURCE_STATUS: Record<KnowledgeSource["status"], {
   label: string;
   tone: "success" | "warning" | "danger" | "muted";
 }> = {
+  parsed: { label: "Parsed", tone: "success" },
   uploaded: { label: "Uploaded", tone: "muted" },
   processing: { label: "Processing", tone: "warning" },
-  chunked: { label: "Preparing", tone: "warning" },
-  ready_for_embedding: { label: "Ready to ask", tone: "success" },
-  embedding: { label: "Improving search", tone: "warning" },
-  indexed: { label: "Ready to ask", tone: "success" },
+  chunked: { label: "Legacy processed", tone: "muted" },
+  ready_for_embedding: { label: "Legacy processed", tone: "muted" },
+  embedding: { label: "Legacy processed", tone: "muted" },
+  indexed: { label: "Legacy processed", tone: "muted" },
   failed: { label: "Failed", tone: "danger" },
 };
 
 export function isSourcePending(source: KnowledgeSource): boolean {
   if (source.is_active === false) return false;
-  return ["uploaded", "processing", "chunked", "embedding"].includes(source.status) || source.embedding_status === "pending";
+  return ["uploaded", "processing", "chunked"].includes(source.status);
 }
 
 /** Keep newer upload results while including records from an earlier list request. */

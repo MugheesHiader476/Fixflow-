@@ -131,12 +131,13 @@ export interface KnowledgeSource {
   managed_by_connector?: boolean;
   is_active?: boolean;
   retrieval_available?: boolean;
+  access_available?: boolean;
   id: string;
   source_id: string;
   name: string;
   kind: "docs" | "github" | "community" | "upload";
   source_type: "docs" | "github" | "community" | "upload";
-  status: "uploaded" | "processing" | "chunked" | "ready_for_embedding" | "embedding" | "indexed" | "failed";
+  status: "parsed" | "uploaded" | "processing" | "chunked" | "ready_for_embedding" | "embedding" | "indexed" | "failed";
   chunks: number;
   documents: number;
   document_count: number;

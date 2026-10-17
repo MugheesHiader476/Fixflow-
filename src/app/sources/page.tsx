@@ -11,7 +11,6 @@ import { useToast } from "@/components/ui/toast";
 import {
   addKnowledgeSource,
   listKnowledgeSources,
-  retryEmbedding,
   setSourceAvailability,
 } from "@/lib/api";
 import type { KnowledgeSource } from "@/lib/types";
@@ -58,7 +57,6 @@ export default function SourcesPage() {
   const [changingSourceId, setChangingSourceId] = useState<string | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [ingestionFormat, setIngestionFormat] = useState<"document" | "okf">("document");
-  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [mode, setMode] = useState<SourceMode>("docs");
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -152,7 +150,7 @@ export default function SourcesPage() {
       uploadsVersion.current += 1;
       setSources((current) => [source, ...current.filter((item) => item.id !== source.id)]);
       resetForm();
-      toast(source.error_message || "Source accepted. Preparing it for questions.", source.status === "failed" ? "error" : "success");
+      toast(source.error_message || "Source accepted. Parsing is queued.", source.status === "failed" ? "error" : "success");
     } catch (error) {
       if (!controller.signal.aborted) toast(error instanceof Error ? error.message : "Could not add this source. Try again.", "error");
     } finally {
@@ -180,19 +178,6 @@ export default function SourcesPage() {
     setValue("");
   };
 
-  const retrySourceEmbeddings = async (id: string) => {
-    setRetryingId(id);
-    try {
-      const updated = await retryEmbedding(id);
-      uploadsVersion.current += 1;
-      setSources((current) => current.map((item) => item.id === updated.id ? updated : item));
-    } catch (failure) {
-      toast(failure instanceof Error ? failure.message : "Could not retry embeddings", "error");
-    } finally {
-      setRetryingId(null);
-    }
-  };
-
   const changeAvailability = async (source: KnowledgeSource) => {
     if (changingSourceId) return;
     setChangingSourceId(source.id);
@@ -200,7 +185,7 @@ export default function SourcesPage() {
       const updated = await setSourceAvailability(source.id, source.is_active === false);
       uploadsVersion.current += 1;
       setSources((current) => current.map((item) => item.id === updated.id ? updated : item));
-      toast(updated.is_active ? "Source restored to search." : "Source removed from search. Saved conversations are preserved.", "success");
+      toast(updated.is_active ? "Source reactivated." : "Source deactivated. Saved conversations are preserved.", "success");
     } catch (failure) {
       toast(failure instanceof Error ? failure.message : "Could not update source availability.", "error");
     } finally {
@@ -212,7 +197,7 @@ export default function SourcesPage() {
     <AppShell sessionTitle="Knowledge Sources">
       <div className="ff-page">
         <PageHeading eyebrow="YOUR KNOWLEDGE, CONNECTED" title="Good context starts here." action={<span className="ff-source-count"><Database size={16} />{sources.length} sources</span>}>
-          Upload documents, data, policies, or code. Once a source is ready, you can ask questions about it.
+          Upload documents, data, policies, or code. Processing stops after validated parsing.
         </PageHeading>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
@@ -362,12 +347,10 @@ export default function SourcesPage() {
                     {source.kind === "github" ? <GitBranch size={14} className="mt-0.5 text-accent" /> : <FileText size={14} className="mt-0.5 text-muted" />}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium">{source.name}</p>
-                      <p className="mt-0.5 text-[10px] text-muted">{source.kind} · {source.chunk_count} searchable excerpts</p>
-                      {source.embedding_error && <p role="alert" className="mt-1 text-[10px] text-danger">{source.embedding_error}</p>}
-                      {source.embedding_status === "failed" && <Button size="sm" loading={retryingId === source.id} disabled={retryingId !== null} onClick={() => { void retrySourceEmbeddings(source.id); }}>Retry search preparation</Button>}
+                      <p className="mt-0.5 text-[10px] text-muted">{source.kind} · {source.document_count} stored documents</p>
+                      {source.managed_by_connector && source.access_available === false && <p className="mt-1 text-[10px] text-muted">Unavailable. Reconnect and synchronize to verify access.</p>}
                       {source.error_message && <p className="mt-1 text-[10px] text-red-400">{source.error_message}</p>}
-                      {source.retrieval_available === false && source.managed_by_connector && ["ready_for_embedding", "embedding", "indexed"].includes(source.status) && <p className="mt-1 text-[10px] text-muted">Unavailable to search. Reconnect and synchronize to verify access.</p>}
-                      {!source.managed_by_connector && <Button size="sm" variant="ghost" loading={changingSourceId === source.id} disabled={changingSourceId !== null} onClick={() => { void changeAvailability(source); }}>{source.is_active === false ? "Restore to search" : "Remove from search"}</Button>}
+                      {!source.managed_by_connector && <Button size="sm" variant="ghost" loading={changingSourceId === source.id} disabled={changingSourceId !== null} onClick={() => { void changeAvailability(source); }}>{source.is_active === false ? "Reactivate source" : "Deactivate source"}</Button>}
                     </div>
                     <Badge tone={source.is_active === false ? "muted" : SOURCE_STATUS[source.status].tone}>{source.is_active === false ? "Unavailable" : SOURCE_STATUS[source.status].label}</Badge>
                   </div>

@@ -104,13 +104,7 @@ u = s.sqlalchemy_url()
 print(json.dumps({
     "gateway_hash": hashlib.sha256(s.fixflow_api_token.get_secret_value().encode()).hexdigest() if s.fixflow_api_token else None,
     "public_origin": s.connectors.public_url,
-    "answer_context": s.generation_context_tokens,
-    "answer_timeout": s.generation_timeout_seconds,
     "local_database": u.query.get("host") == str(Path(".local/postgres").resolve()),
-    "models": [
-        {"origin": s.ollama_url, "model": s.embedding_model, "digest": s.embedding_model_digest, "answer": False},
-        {"origin": s.generation_ollama_url, "model": s.generation_model, "digest": s.generation_model_digest, "answer": True},
-    ],
 }))
 `));
   process.env.NODE_ENV = development ? "development" : "production";
@@ -146,58 +140,6 @@ async def check():
 asyncio.run(check())
 `));
   if (database.status !== "ok") throw new Error("Database/schema is unavailable. Review configuration and required migrations.");
-  const models = configuration.models.filter((model) => model.origin);
-  const origins = new Set();
-  for (const model of models) {
-    const origin = loopbackOrigin(model.origin, "Ollama");
-    if (!origins.has(origin.origin) && !await getJson(`${origin.origin}/api/tags`)) {
-      const separate = models.length === 2 && models[0].origin !== models[1].origin;
-      const answers = models.some((item) => item.answer && item.origin === model.origin);
-      start(answers ? "ollama-answers" : "ollama-embeddings", "ollama", ["serve"], {
-        ...nativeEnvironment, OLLAMA_HOST: origin.host, OLLAMA_NUM_PARALLEL: "1", OLLAMA_MAX_LOADED_MODELS: "1",
-        OLLAMA_FLASH_ATTENTION: "1", OLLAMA_KV_CACHE_TYPE: model.answer && separate ? "q8_0" : "f16",
-        // The installed Qwen instruction model's GGUF template advertises thinking;
-        // force its non-thinking Ollama template rather than automatic GGUF selection.
-        ...(answers ? { OLLAMA_GO_TEMPLATE: "1" } : {}),
-        ...(!model.answer && separate ? { CUDA_VISIBLE_DEVICES: "-1", OLLAMA_VULKAN: "0" } : {}),
-      });
-      await waitFor(async () => Boolean(await getJson(`${origin.origin}/api/tags`)), "Ollama");
-    }
-    origins.add(origin.origin);
-    const inventory = await getJson(`${origin.origin}/api/tags`);
-    if (!inventory?.models?.some((item) => item.name === model.model && item.digest === model.digest)) {
-      throw new Error("A configured model pin is missing. Install and verify the documented model before starting.");
-    }
-    if (model.answer) {
-      console.log("Warming the pinned answer model and checking structured output…");
-      const response = await fetch(`${origin.origin}/api/chat`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, redirect: "error",
-        signal: AbortSignal.timeout(configuration.answer_timeout * 1000),
-        body: JSON.stringify({
-          model: model.model, stream: false, think: false, keep_alive: "5m",
-          messages: [{ role: "user", content: 'Return exactly the JSON object {"ready": true}.' }],
-          format: { type: "object", properties: { ready: { type: "boolean", const: true } },
-            required: ["ready"], additionalProperties: false },
-          options: { temperature: 0, num_predict: 64, num_ctx: configuration.answer_context, num_batch: 128 },
-        }),
-      });
-      const body = await response.text();
-      let completed = false;
-      try {
-        if (body.length <= 64 * 1024) {
-          const payload = JSON.parse(body);
-          const value = JSON.parse(payload.message?.content ?? "");
-          completed = response.ok && payload.model === model.model && payload.done === true
-            && payload.done_reason === "stop" && payload.message.role === "assistant"
-            && !payload.message.tool_calls?.length && value?.ready === true && Object.keys(value).length === 1;
-        }
-      } catch { /* Invalid model output is a startup failure, never an accepted answer. */ }
-      const current = await getJson(`${origin.origin}/api/tags`);
-      if (!completed || !current?.models?.some((item) => item.name === model.model && item.digest === model.digest)) {
-        throw new Error("The pinned answer runtime failed its structured-output check. Review .local/runtime/ logs.");
-      }
-    }
-  }
   const existingBackend = await getJson(`${backend.origin}/health`);
   if (existingBackend?.service !== "fixflow-api" || existingBackend.status !== "ok") {
     start("backend", python, ["-m", "uvicorn", "backend.main:app", "--host", backend.hostname.replace(/^\[|\]$/g, ""),
@@ -209,10 +151,6 @@ asyncio.run(check())
     signal: AbortSignal.timeout(10000), redirect: "error",
   });
   if (!authenticated.ok) throw new Error("The running backend rejected the configured gateway. Restart it with the current native environment.");
-  const readiness = await authenticated.json();
-  if (models.some((model) => model.answer) && readiness.answer_service !== "ready") {
-    throw new Error("The running backend answer service is unavailable. Restart it with the current native environment.");
-  }
   start("frontend", process.execPath, development
     ? [resolve(root, "node_modules/next/dist/bin/next"), "dev", "--hostname", frontend.hostname, "--port", frontend.port || "80"]
     : [resolve(root, "scripts/start-production.mjs"), "--hostname", frontend.hostname, "--port", frontend.port || "80"],

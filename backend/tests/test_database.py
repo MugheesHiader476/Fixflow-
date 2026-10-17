@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from io import BytesIO
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 import pytest
@@ -16,12 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.db.models import Document, DocumentChunk, KnowledgeSource
-from backend.db.session import get_engine, get_session_factory
-from backend.repositories.corpus import chunk_values, content_hash, document_values, insert_chunks, insert_documents
+from backend.db.session import get_engine
 from backend.repositories.sources import delete_source, list_sources
-from backend.repositories.vectors import EmbeddingInput, EmbeddingPipelineNotConfigured, VectorRepository
 from backend.services import ingestion
-from scripts.import_jsonl_to_db import import_jsonl
+from backend.tests.legacy_records import chunk_values, content_hash, document_values, insert_chunks, insert_documents
 
 pytestmark = pytest.mark.anyio
 
@@ -42,7 +39,7 @@ async def make_corpus(db: AsyncSession, name: str = "guide.md") -> tuple[UUID, U
 async def test_connection_pgvector_and_migrations(db: AsyncSession) -> None:
     assert await db.scalar(text("SELECT 1")) == 1
     assert await db.scalar(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'"))
-    assert await db.scalar(text("SELECT version_num FROM alembic_version")) == "0005"
+    assert await db.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
     assert await db.scalar(text("SELECT vector_dims('[1,0,0]'::vector)")) == 3
     assert get_engine() is get_engine()
 
@@ -101,7 +98,7 @@ async def test_partial_ingestion_rolls_back_then_retries(
     assert retry.json()["source_id"] == str(source_id)
     assert retry.json()["status"] == "uploaded"
     await ingestion.ingest_source(source_id)
-    assert (await client.get(f"/api/sources/{source_id}")).json()["status"] == "ready_for_embedding"
+    assert (await client.get(f"/api/sources/{source_id}")).json()["status"] == "parsed"
 
 
 async def test_only_new_file_is_loaded_and_workers_deduplicate(
@@ -129,7 +126,7 @@ async def test_only_new_file_is_loaded_and_workers_deduplicate(
         await asyncio.gather(ingestion.ingest_source(identifier), ingestion.ingest_source(identifier))
         await ingestion.ingest_source(identifier)
     assert calls == ["first.md", "second.md"]
-    assert all(source["chunk_count"] == 1 for source in (await client.get("/api/sources")).json())
+    assert all(source["chunk_count"] == 0 for source in (await client.get("/api/sources")).json())
 
 
 async def test_missing_upload_is_failed_without_reading_other_paths(db: AsyncSession, tmp_path: Path) -> None:
@@ -141,77 +138,6 @@ async def test_missing_upload_is_failed_without_reading_other_paths(db: AsyncSes
     await db.refresh(source)
     assert source.status == "failed"
     assert "unavailable" in (source.error_message or "")
-
-
-async def test_vector_configuration_guard(db: AsyncSession) -> None:
-    await make_corpus(db)
-    vectors = VectorRepository(db)
-    assert await vectors.count_embedded_chunks() == 0
-    with pytest.raises(EmbeddingPipelineNotConfigured, match="Embedding pipeline not configured"):
-        await vectors.similarity_search([1, 0, 0])
-
-
-async def test_vectors_insert_search_validation_and_clear(db: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
-    source_id, _, chunk_id = await make_corpus(db)
-    monkeypatch.setattr(get_settings(), "embedding_model", "deterministic-db-test-only")
-    monkeypatch.setattr(get_settings(), "embedding_dim", 3)
-    vectors = VectorRepository(db)
-    with pytest.raises(EmbeddingPipelineNotConfigured):
-        await vectors.similarity_search([1, 0, 0])
-    for vector in ([0.0, 0.0, 0.0], [1.0, 0.0], [float("nan"), 0.0, 1.0]):
-        with pytest.raises(ValueError):
-            await vectors.insert_embeddings([EmbeddingInput(chunk_id, vector)])
-    with pytest.raises(ValueError, match="unknown chunk"):
-        await vectors.insert_embeddings([EmbeddingInput(chunk_id, [1, 0, 0]), EmbeddingInput(uuid4(), [0, 1, 0])])
-    assert await vectors.count_embedded_chunks() == 0
-    assert await vectors.insert_embeddings([EmbeddingInput(chunk_id, [1, 0, 0])]) == 1
-    await db.commit()
-    assert await vectors.count_embedded_chunks(source_id) == 1
-    results = await vectors.similarity_search([1, 0, 0])
-    assert results[0].distance == pytest.approx(0)
-    assert results[0].source_id == source_id
-    assert (await list_sources(db))[0].status == "indexed"
-    monkeypatch.setattr(get_settings(), "embedding_model", "different-model")
-    with pytest.raises(EmbeddingPipelineNotConfigured):
-        await vectors.similarity_search([1, 0, 0])
-    monkeypatch.setattr(get_settings(), "embedding_model", "deterministic-db-test-only")
-    await vectors.delete_source_vectors(source_id)
-    await db.commit()
-    assert await vectors.count_embedded_chunks(source_id) == 0
-    assert (await list_sources(db))[0].status == "ready_for_embedding"
-
-
-async def test_jsonl_import_streams_skips_preserves_and_deduplicates(database: None, tmp_path: Path) -> None:
-    metadata = {"file_hash": "b" * 64, "filename": "legacy.md", "document_index": 0, "custom": {"keep": True}}
-    document = {"page_content": "Legacy document body with preserved metadata.", "metadata": metadata}
-    chunk = {
-        "page_content": "Legacy document body",
-        "metadata": {**metadata, "chunk_id": "legacy-chunk", "chunk_index": 0},
-    }
-    documents, chunks = tmp_path / "documents.jsonl", tmp_path / "chunks.jsonl"
-    documents.write_text("bad-json\n[]\n" + json.dumps(document) + "\n", encoding="utf-8")
-    chunks.write_text(json.dumps(chunk) + "\n", encoding="utf-8")
-    progress = await import_jsonl(documents, chunks, 1)
-    assert progress.skipped == 2
-    assert progress.documents == progress.chunks == 1
-    repeated = await import_jsonl(documents, chunks, 1)
-    assert repeated.documents == repeated.chunks == 0
-    async with get_session_factory()() as db:
-        stored = (await db.scalars(select(DocumentChunk))).one()
-        assert stored.meta == chunk["metadata"]
-        assert stored.chunk_id == "legacy-chunk"
-        assert stored.embedding is None
-        assert (await list_sources(db))[0].status == "ready_for_embedding"
-
-
-@pytest.mark.parametrize("kind", ["documents", "chunks"])
-async def test_single_snapshot_import(database: None, tmp_path: Path, kind: str) -> None:
-    path = tmp_path / f"{kind}.jsonl"
-    path.write_text(
-        json.dumps({"page_content": "A standalone legacy fragment.", "metadata": {"filename": "a.txt"}}) + "\n"
-    )
-    result = await import_jsonl(path if kind == "documents" else None, path if kind == "chunks" else None)
-    assert result.documents == result.chunks == 1
 
 
 @pytest.mark.parametrize("has_text", [True, False])
@@ -247,5 +173,6 @@ async def test_real_pdf_loading_and_empty_pdf_failure(client: httpx.AsyncClient,
         with pytest.raises(ingestion.IngestionError):
             await ingestion.ingest_source(source_id)
     detail = (await client.get(f"/api/sources/{source_id}")).json()
-    assert detail["status"] == ("ready_for_embedding" if has_text else "failed")
-    assert detail["document_count"] == detail["chunk_count"] == int(has_text)
+    assert detail["status"] == ("parsed" if has_text else "failed")
+    assert detail["document_count"] == int(has_text)
+    assert detail["chunk_count"] == 0

@@ -3,10 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Bot, CornerDownLeft, GitBranch, MessagesSquare, Code2, User } from "lucide-react";
 import { FOLLOWUP_SUGGESTIONS } from "@/lib/chat-suggestions";
-import { listMessages, sendFollowUp } from "@/lib/api";
+import { listMessages } from "@/lib/api";
 import type { ChatMessage, SourceType } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useToast } from "@/components/ui/toast";
 import { GroundedAnswerView } from "./grounded-answer";
 
 const SOURCE_ICON: Record<SourceType, React.ReactNode> = {
@@ -30,13 +29,7 @@ function SessionChat({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const messageId = useRef(0);
-  const activeRequest = useRef<AbortController | null>(null);
-  const { toast } = useToast();
   const listRef = useRef<HTMLDivElement>(null);
-  const scrollFrame = useRef<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -50,57 +43,12 @@ function SessionChat({
     return () => controller.abort();
   }, [sessionId, retry]);
 
-  const ask = async (q: string) => {
-    const question = q.trim();
-    if (!question || busy || loading || loadError || activeRequest.current) return;
-    const controller = new AbortController();
-    activeRequest.current = controller;
-    setInput("");
-    setBusy(true);
-    const pendingId = `p-${messageId.current++}`;
-    const userId = `u-${messageId.current++}`;
-    setMessages((m) => [
-      ...m,
-      { id: userId, role: "user", text: question },
-      { id: pendingId, role: "fixflow", text: "", pending: true },
-    ]);
-    try {
-      const reply = await sendFollowUp(question, sessionId, controller.signal);
-      if (controller.signal.aborted) return;
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === pendingId
-            ? { ...reply, role: "fixflow" }
-            : msg
-        )
-      );
-    } catch {
-      if (!controller.signal.aborted) {
-        setMessages((m) => m.filter((x) => x.id !== pendingId && x.id !== userId));
-        setInput(question);
-        toast("Could not send the follow-up. Try again.", "error");
-      }
-    } finally {
-      if (activeRequest.current === controller) {
-        activeRequest.current = null;
-        setBusy(false);
-        scrollFrame.current = requestAnimationFrame(() =>
-          listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: "smooth" })
-        );
-      }
-    }
-  };
-
-  useEffect(() => () => {
-    activeRequest.current?.abort();
-    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-  }, []);
 
   return (
     <section aria-label="Follow-up chat" className="rounded-xl border border-border bg-panel">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
         <Bot size={15} className="text-accent" />
-        <h3 className="text-sm font-semibold">Continue the conversation</h3>
+        <h3 className="text-sm font-semibold">Saved conversation</h3>
         <span className="ml-auto hidden text-[11px] text-muted sm:inline">
           saved with this session
         </span>
@@ -114,7 +62,7 @@ function SessionChat({
           }}>Retry</button>
         </p>}
         {!loading && !loadError && !messages.length && <p className="text-sm text-muted">
-          Ask a follow-up question about your sources.
+          No saved messages in this conversation.
         </p>}
         {messages.map((m) =>
           m.role === "user" ? (
@@ -170,13 +118,12 @@ function SessionChat({
         )}
       </div>
 
-      <div className="border-t border-border px-4 py-3">
+      <fieldset disabled className="border-t border-border px-4 py-3">
+        <p className="mb-2 text-xs text-muted">Follow-up answers were removed. Your saved messages remain available.</p>
         <div className="mb-2 flex flex-wrap gap-1.5">
           {FOLLOWUP_SUGGESTIONS.map((s) => (
             <button
               key={s}
-              onClick={() => ask(s)}
-              disabled={busy || loading || loadError}
               className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
             >
               {s}
@@ -185,25 +132,19 @@ function SessionChat({
         </div>
         <div className="flex gap-2">
           <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && void ask(input)}
             placeholder="Ask a follow-up about your sources…"
             aria-label="Follow-up question"
-            disabled={busy || loading || loadError}
             maxLength={4000}
             className="h-10 flex-1 rounded-lg border border-border bg-background px-3.5 text-sm text-foreground placeholder:text-muted/50 focus:border-accent/60 focus:outline-none disabled:opacity-60"
           />
           <button
-            onClick={() => ask(input)}
-            disabled={busy || loading || loadError || !input.trim()}
             aria-label="Send follow-up"
             className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent text-accent-foreground transition-colors hover:bg-accent-strong disabled:opacity-40"
           >
             <CornerDownLeft size={16} />
           </button>
         </div>
-      </div>
+      </fieldset>
     </section>
   );
 }

@@ -48,13 +48,12 @@ vi.mock("@clerk/nextjs", () => ({
   UserButton: () => <button>User</button>,
 }));
 vi.mock("@/components/debug/debug-input", () => ({
-  DebugInput: ({ onDiagnose }: { onDiagnose: (request: { error: string; techs: string[] }) => void }) => (
-    <button onClick={() => onDiagnose({ error: "event loop", techs: ["Python"] })}>
+  DebugInput: ({ disabled }: { disabled?: boolean }) => (
+    <button disabled={disabled}>
       Run diagnosis
     </button>
   ),
 }));
-vi.mock("@/components/debug/pipeline", () => ({ PipelineProgress: () => <p>Analyzing</p> }));
 vi.mock("@/components/debug/diagnosis-result", () => ({
   DiagnosisResult: ({
     diagnosis,
@@ -94,9 +93,9 @@ describe("application pages", () => {
   it("connects the hero to the functional workspace and knowledge pages", async () => {
     render(<DebugSessionPage />);
     expect(screen.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeDefined();
-    expect(screen.getByRole("link", { name: "Start a session" }).getAttribute("href")).toBe("#workspace");
+    expect(screen.getByRole("link", { name: "Open workspace" }).getAttribute("href")).toBe("#workspace");
     expect(screen.getByRole("link", { name: "Explore your knowledge" }).getAttribute("href")).toBe("/sources");
-    expect(await screen.findByText(/AI answers are not configured/)).toBeDefined();
+    expect(await screen.findByText(/source search, and AI answers have been removed/)).toBeDefined();
     expect(screen.getByRole("link", { name: /Pick up the thread/ }).getAttribute("href")).toBe("/history");
     expect(screen.getByRole("link", { name: /Keep what works/ }).getAttribute("href")).toBe("/saved");
   });
@@ -178,8 +177,9 @@ describe("application pages", () => {
         id: "source-1",
         name: "Runbook",
         kind: "docs",
-        status: "indexed",
-        chunks: 12,
+        status: "parsed",
+        document_count: 12,
+        chunks: 0,
         updated: new Date().toISOString(),
         detail: "ready",
       },
@@ -188,7 +188,7 @@ describe("application pages", () => {
     render(<SettingsPage />);
 
     expect(await screen.findByText("online")).toBeDefined();
-    expect(screen.getByText("12 records")).toBeDefined();
+    expect(screen.getByText("12 documents")).toBeDefined();
   });
 
   it("polls processing sources and shows real counts without claiming indexing", async () => {
@@ -197,12 +197,12 @@ describe("application pages", () => {
       status: "processing", document_count: 0, chunk_count: 0, chunks: 0, error_message: null,
     };
     api.listKnowledgeSources.mockResolvedValueOnce([source]).mockResolvedValue([
-      { ...source, status: "ready_for_embedding", document_count: 3, chunk_count: 5, chunks: 5 },
+      { ...source, status: "parsed", document_count: 3, chunk_count: 5, chunks: 5 },
     ]);
     render(<SourcesPage />);
     expect(await screen.findByText("Processing")).toBeDefined();
-    expect(await screen.findByText("Ready to ask", {}, { timeout: 4000 })).toBeDefined();
-    expect(screen.getByText(/5 searchable excerpts/)).toBeDefined();
+    expect(await screen.findByText("Parsed", {}, { timeout: 4000 })).toBeDefined();
+    expect(screen.getByText(/3 stored documents/)).toBeDefined();
     expect(screen.queryByText("Indexed")).toBeNull();
   });
 
@@ -230,10 +230,10 @@ describe("application pages", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(12000); });
       expect(api.listKnowledgeSources).toHaveBeenCalledTimes(4);
       expect(screen.getByText("Could not refresh source status. Use Refresh to retry.")).toBeDefined();
-      api.listKnowledgeSources.mockResolvedValueOnce([{ ...pending, status: "ready_for_embedding", chunk_count: 1 }]);
+      api.listKnowledgeSources.mockResolvedValueOnce([{ ...pending, status: "parsed", chunk_count: 1 }]);
       fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
       await act(async () => {});
-      expect(screen.getByText("Ready to ask")).toBeDefined();
+      expect(screen.getByText("Parsed")).toBeDefined();
       expect(screen.queryByText("Could not refresh source status. Use Refresh to retry.")).toBeNull();
     } finally {
       cleanup();
@@ -241,17 +241,15 @@ describe("application pages", () => {
     }
   });
 
-  it("runs and saves a diagnosis from the main page", async () => {
-    api.diagnose.mockResolvedValue(ASYNCIO_DIAGNOSIS);
+  it("keeps historical snapshots readable and saveable", async () => {
+    navigation.session = "existing";
+    api.getSession.mockResolvedValue(ASYNCIO_DIAGNOSIS);
     api.saveSolution.mockResolvedValue({ id: "saved-1" });
-
     render(<DebugSessionPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Run diagnosis" }));
-
     expect(await screen.findByText(ASYNCIO_DIAGNOSIS.rootCause)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Save diagnosis" }));
     await waitFor(() => expect(api.saveSolution).toHaveBeenCalledOnce());
-    expect(navigation.router.replace).toHaveBeenCalledWith(`/?session=${ASYNCIO_DIAGNOSIS.sessionId}`);
+    expect(api.diagnose).not.toHaveBeenCalled();
   });
 
   it("clears the previous result when navigating to a new session", async () => {
@@ -280,13 +278,13 @@ describe("application pages", () => {
     render(<SettingsPage />);
     expect(await screen.findByText("degraded")).toBeDefined();
     expect(screen.getByText(/migration_required/)).toBeDefined();
-    expect(screen.getAllByText("Not configured")).toHaveLength(2);
+    expect(screen.getByText("Parsing only")).toBeDefined();
   });
 
   it("uploads the selected binary document without an editable text preview", async () => {
     api.listKnowledgeSources.mockResolvedValue([]);
     api.addKnowledgeSource.mockResolvedValue({
-      id: "pdf", name: "Guide.pdf", kind: "upload", status: "ready_for_embedding", chunks: 1,
+      id: "pdf", name: "Guide.pdf", kind: "upload", status: "parsed", chunks: 1,
     });
     render(<SourcesPage />);
     fireEvent.click(screen.getByRole("tab", { name: /^Upload a file/i }));
@@ -322,7 +320,7 @@ describe("application pages", () => {
   });
 
   it("keeps both uploaded and existing sources when the initial list arrives late", async () => {
-    const existing = { id: "old", name: "Existing guide", status: "ready_for_embedding", kind: "docs", chunks: 1 };
+    const existing = { id: "old", name: "Existing guide", status: "parsed", kind: "docs", chunks: 1 };
     let finishList: (items: typeof existing[]) => void = () => {};
     api.listKnowledgeSources.mockImplementationOnce(() => new Promise((resolve) => { finishList = resolve; }));
     api.addKnowledgeSource.mockResolvedValue({ ...existing, id: "new", name: "New guide" });
@@ -337,7 +335,7 @@ describe("application pages", () => {
 
   it("submits strict OKF mode, clears previous files, and blocks non-Markdown selection", async () => {
     api.listKnowledgeSources.mockResolvedValue([]);
-    api.addKnowledgeSource.mockResolvedValue({ id: "okf", name: "Concept", kind: "docs", status: "ready_for_embedding", chunks: 1 });
+    api.addKnowledgeSource.mockResolvedValue({ id: "okf", name: "Concept", kind: "docs", status: "parsed", chunks: 1 });
     render(<SourcesPage />);
     fireEvent.change(screen.getByLabelText("Content format"), { target: { value: "okf" } });
     fireEvent.change(screen.getByLabelText("Documentation content"), { target: { value: "---\ntype: Reference\n---\nConcept" } });
@@ -356,30 +354,29 @@ describe("application pages", () => {
     expect(api.addKnowledgeSource).toHaveBeenCalledOnce();
   });
 
-  it("retries failed embeddings and resumes polling without hiding usable chunks", async () => {
-    const source = { id: "embed", name: "Guide", kind: "docs", status: "ready_for_embedding", chunks: 5, document_count: 1, chunk_count: 5, embedding_status: "failed", embedding_error: "Embedding failed" };
-    api.listKnowledgeSources.mockResolvedValueOnce([source]).mockResolvedValue([{ ...source, status: "indexed", embedding_status: "complete", embedding_error: null }]);
-    api.retryEmbedding.mockResolvedValue({ ...source, embedding_status: "pending", embedding_error: null });
+  it("does not offer retired embedding retries or poll their old queue", async () => {
+    const source = { id: "embed", name: "Guide", kind: "docs", status: "ready_for_embedding", document_count: 1,
+      chunk_count: 5, embedding_status: "pending", embedding_error: "Old failure" };
+    api.listKnowledgeSources.mockResolvedValue([source]);
     render(<SourcesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Retry search preparation" }));
-    await waitFor(() => expect(api.retryEmbedding).toHaveBeenCalledWith("embed"));
-    expect(screen.getByText(/5 searchable excerpts/)).toBeDefined();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry search preparation" })).toBeNull(), { timeout: 4000 });
-    expect(screen.getByText("Ready to ask")).toBeDefined();
+    expect(await screen.findByText("Legacy processed")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Retry search preparation" })).toBeNull();
+    expect(screen.getByText(/1 stored documents/)).toBeDefined();
+    expect(api.retryEmbedding).not.toHaveBeenCalled();
   });
 
   it("removes a manual source from search and explicitly restores it", async () => {
-    const source = { id: "manual", name: "Policy", kind: "docs", status: "ready_for_embedding", is_active: true,
+    const source = { id: "manual", name: "Policy", kind: "docs", status: "parsed", is_active: true,
       retrieval_available: true, managed_by_connector: false, document_count: 1, chunk_count: 1 };
     api.listKnowledgeSources.mockResolvedValue([source]);
     api.setSourceAvailability.mockResolvedValueOnce({ ...source, is_active: false, retrieval_available: false })
       .mockResolvedValueOnce(source);
     render(<SourcesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove from search" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate source" }));
     await waitFor(() => expect(api.setSourceAvailability).toHaveBeenCalledWith("manual", false));
     expect(await screen.findByText("Unavailable")).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Restore to search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate source" }));
     await waitFor(() => expect(api.setSourceAvailability).toHaveBeenCalledWith("manual", true));
-    expect(await screen.findByText("Ready to ask")).toBeDefined();
+    expect(await screen.findByText("Parsed")).toBeDefined();
   });
 });

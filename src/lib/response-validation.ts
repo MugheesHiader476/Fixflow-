@@ -40,17 +40,18 @@ function validHealth(value: unknown): boolean {
     && ["revision", "expected_revision"].every((name) => value[name] === null || text(value[name]))
     && ["sources", "documents", "chunks", "embedded_chunks", "pending_sources", "failed_sources"].every((name) => value[name] === null || count(value[name]))
     && typeof value.embedding_configured === "boolean"
-    && (value.answer_service === undefined || ["ready", "unavailable", "not_configured"].includes(String(value.answer_service)));
+    && (value.answer_service === undefined || ["removed", "ready", "unavailable", "not_configured"].includes(String(value.answer_service)));
 }
 
 export function validSource(value: unknown): boolean {
   if (!record(value) || !fields(value, ["id", "source_id", "name", "created_at", "updated", "detail"])) return false;
   return (value.is_active === undefined || typeof value.is_active === "boolean")
     && (value.managed_by_connector === undefined || typeof value.managed_by_connector === "boolean")
+    && (value.access_available === undefined || typeof value.access_available === "boolean")
     && (value.retrieval_available === undefined || typeof value.retrieval_available === "boolean")
     && ["docs", "github", "community", "upload"].includes(String(value.kind))
     && ["docs", "github", "community", "upload"].includes(String(value.source_type))
-    && ["uploaded", "processing", "chunked", "ready_for_embedding", "embedding", "indexed", "failed"].includes(String(value.status))
+    && ["parsed", "uploaded", "processing", "chunked", "ready_for_embedding", "embedding", "indexed", "failed"].includes(String(value.status))
     && ["documents", "document_count", "chunks", "chunk_count"].every((name) => count(value[name]))
     && (value.error_message === null || text(value.error_message))
     && (value.embedding_status === undefined || ["not_configured", "pending", "processing", "complete", "failed"].includes(String(value.embedding_status)))

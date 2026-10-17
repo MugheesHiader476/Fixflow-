@@ -59,7 +59,8 @@ class KnowledgeSource(Owned, Timestamped, Base):
             name="ck_embedding_status",
         ),
         CheckConstraint(
-            "status IN ('uploaded','processing','chunked','ready_for_embedding','embedding','indexed','failed')",
+            "status IN ('parsed','uploaded','processing','chunked',"
+            "'ready_for_embedding','embedding','indexed','failed')",
             name="ck_source_status",
         ),
     )
@@ -110,6 +111,8 @@ class Document(Base):
 
 
 class DocumentChunk(Timestamped, Base):
+    """Legacy storage mapping retained to preserve existing records; no runtime generation/search."""
+
     __tablename__ = "document_chunks"
     __table_args__ = (
         ForeignKeyConstraint(["document_id", "source_id"], ["documents.id", "documents.source_id"], ondelete="CASCADE"),

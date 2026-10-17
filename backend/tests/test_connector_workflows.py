@@ -30,7 +30,7 @@ from backend.db.models import (
     KnowledgeSource,
 )
 from backend.db.session import get_session_factory
-from backend.repositories.retrieval import search_chunks
+from backend.repositories.parsed import parsed_source
 from backend.schemas.connectors import Credentials, Resource
 from backend.services.connector_sources import register
 from backend.services.ingestion import ingest_source
@@ -263,7 +263,7 @@ async def test_native_provider_workflow_through_real_pipeline(
         await ingest_source(source_id)
     async with get_session_factory()() as db:
         db.info["owner_id"] = "user_test"
-        assert await search_chunks(db, "PostgreSQL connection pools")
+        assert all([await parsed_source(db, source.id, "user_test") is not None for source in sources])
         artifacts = list(await db.scalars(select(IngestionArtifact)))
         assert artifacts and all("private-provider-token" not in json.dumps(row.result) for row in artifacts)
     assert (await client.post(f"/api/connectors/{identifier}/sync", json={})).status_code == 202
@@ -277,7 +277,7 @@ async def test_native_provider_workflow_through_real_pipeline(
     await run_jobs(identifier)
     async with get_session_factory()() as db:
         db.info["owner_id"] = "user_test"
-        assert not await search_chunks(db, "PostgreSQL connection pools")
+        assert all([await parsed_source(db, source.id, "user_test") is None for source in sources])
     disconnected = await client.post(f"/api/connectors/{identifier}/disconnect", json={"policy": "purge"})
     assert disconnected.status_code == 200 and disconnected.json()["authentication_status"] == "revoked"
     async with get_session_factory()() as db:

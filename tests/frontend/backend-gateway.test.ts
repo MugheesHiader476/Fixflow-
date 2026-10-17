@@ -15,7 +15,7 @@ describe("trusted backend gateway", () => {
   it.each(["api/ask", "api/chat", "api/debug"])("allows bounded model loading for %s while retaining ordinary request deadlines", async (path) => {
     const deadline = vi.spyOn(AbortSignal, "timeout");
     await proxyBackend(new Request(`http://localhost/api/backend/${path}`, { method: "POST" }), path);
-    expect(deadline).toHaveBeenLastCalledWith(120_000);
+    expect(deadline).toHaveBeenLastCalledWith(60_000);
     await proxyBackend(new Request("http://localhost/api/backend/api/sources"), "api/sources");
     expect(deadline).toHaveBeenLastCalledWith(60_000);
   });
