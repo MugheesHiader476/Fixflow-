@@ -57,6 +57,7 @@ next-env.d.ts
 /backend/uploads/
 
 # Local documentation corpus is intentionally kept out of the GitHub repo.
-# Keep the ingestion instructions and add large documents through releases/LFS.
 /doc/*
-!/doc/README.md
+
+# Ignore README files in any capitalization; other Markdown files remain eligible.
+[Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]
