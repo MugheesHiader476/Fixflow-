@@ -58,6 +58,59 @@ npm run dev:local
 
 The initialized local PostgreSQL helper supports `bash scripts/local_postgres.sh start|status|stop`. It uses a Unix socket and port 55432 and does not initialize a new cluster. Alternatively use configured PostgreSQL or `docker compose up -d --wait db`.
 
+For an opt-in two-replica backend with a private Nginx balancer and a separate
+PostgreSQL runtime login, configure `POSTGRES_RUNTIME_PASSWORD` with a distinct
+random 32–128 character URL-safe password, then use Docker Compose 2.24.4 or later:
+
+```bash
+docker compose -f compose.yaml -f compose.scale.yaml config --quiet
+docker compose -f compose.yaml -f compose.scale.yaml up -d --build
+```
+
+Use this overlay only with a dedicated application database. Migrations retain
+the owner credentials. A subsequent atomic provisioning step grants the runtime
+login application DML and migration-version reads, without schema ownership,
+DDL, truncation, role management or migration writes. It removes public database
+connect/temporary-table privileges and public schema creation in that database;
+other database clients need explicit grants. It refuses to repurpose an unmanaged,
+elevated, member or object-owning login. Provision again after each migration. The native
+administrative command is `myenev/bin/python -m scripts.provision_runtime`
+(preview), or append `--apply` to apply the grants using the configured owner
+connection and `POSTGRES_RUNTIME_USER` / `POSTGRES_RUNTIME_PASSWORD`. Passwords
+reach PostgreSQL only as salted SCRAM verifiers. Database backups, restore tests,
+host/disk security and TLS for remote database connections remain operator work.
+
+The overlay removes database and backend host port bindings, routes the existing
+Next gateway through Nginx, and shares the existing upload volume between both
+backend replicas. Nginx updates Docker DNS addresses and uses least connections;
+it never retries a forwarded request, because replaying a write could repeat an
+external action. A failed in-flight request can return 502 before the failed peer
+is excluded. Logs omit query strings and authorization headers. The default
+two-replica pool allowance is 20 total backend connections, capped at 40 for the
+runtime login; budget database connections before increasing replicas. This adds
+backend balancing on one Docker host, not database/frontend high availability or
+multi-host shared file storage. See the primary [PostgreSQL role guidance](https://www.postgresql.org/docs/current/role-attributes.html),
+[Compose merge rules](https://docs.docker.com/reference/compose-file/merge/) and
+[Nginx upstream documentation](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
+
+For bounded local load proof, use an **empty, separate** PostgreSQL database ending
+in `_test`, reachable on loopback TCP with SCRAM password authentication, and an
+existing Nginx 1.28+ binary. The evaluator migrates this database, creates a
+temporary restricted runtime login, starts two real backend processes and Nginx
+on ports 8021–8023, measures direct/balanced requests at concurrency 1/8/24, tests
+shared quotas, forged authentication, concurrent upload deduplication, parsing,
+owner isolation and replica failure. It stops only its own services, removes its
+temporary login, and retains test data and JSON/log proof under `.local`.
+
+```bash
+# Supply the disposable database URL privately in the environment.
+myenev/bin/python -m scripts.load_test --nginx /absolute/path/to/nginx
+```
+
+It refuses non-loopback/non-test database names, connection query overrides,
+occupied QA ports, and databases with any existing application rows. No provider/model credentials or live external calls are
+used. These bounded measurements do not establish production throughput or an SLA.
+
 For separate processes:
 
 ```bash

@@ -1,12 +1,22 @@
 "use client";
 
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
+import { useEffect } from "react";
+
+function ContextLossHandler({ onUnavailable }: { onUnavailable: () => void }) {
+  const canvas = useThree((state) => state.gl.domElement);
+  useEffect(() => {
+    canvas.addEventListener("webglcontextlost", onUnavailable, { once: true });
+    return () => canvas.removeEventListener("webglcontextlost", onUnavailable);
+  }, [canvas, onUnavailable]);
+  return null;
+}
 
 // Static, on-demand scene. No model files, textures, remote assets or animation loop.
 export default function KnowledgeScene({ onUnavailable }: { onUnavailable: () => void }) {
   return <Canvas orthographic camera={{ position: [5, 4, 7], zoom: 40 }} dpr={[1, 1.5]} frameloop="demand"
-    gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
-    onCreated={({ gl }) => { gl.domElement.addEventListener("webglcontextlost", onUnavailable, { once: true }); }}>
+    gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}>
+    <ContextLossHandler onUnavailable={onUnavailable} />
     <ambientLight intensity={2} />
     <directionalLight position={[3, 5, 4]} intensity={4} color="#fff1df" />
     <directionalLight position={[-3, 1, -2]} intensity={2} color="#87b8a1" />

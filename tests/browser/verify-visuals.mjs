@@ -46,6 +46,15 @@ async function verifyVisuals() {
     assert.ok(rendered, "The real 3D canvas must initialize without GL errors");
     await page.screenshot({ path: resolve(output, "connectors-3d.png"), fullPage: true });
     report.checks.push("Real React Three Fiber canvas initializes and renders without GL errors");
+
+    const detachedCanvas = await page.locator(".ff-knowledge-visual canvas").elementHandle();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator(".ff-knowledge-visual canvas")).toHaveCount(0);
+    // Renderer teardown can report context loss after an intentional unmount.
+    await detachedCanvas.evaluate((canvas) => canvas.dispatchEvent(new Event("webglcontextlost")));
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect(page.locator(".ff-knowledge-visual canvas")).toBeVisible({ timeout: 20000 });
+    report.checks.push("Intentional canvas teardown does not permanently disable later rendering");
   
     await page.getByRole("textbox", { name: "Search connectors" }).fill("drive");
     await expect(page.getByRole("heading", { name: "Google Drive", exact: true })).toBeVisible();
@@ -56,6 +65,9 @@ async function verifyVisuals() {
     await page.getByRole("textbox", { name: "Search connectors" }).fill("");
     await page.getByRole("button", { name: "All apps" }).click();
   
+    // The decorative canvas is intentionally unmounted outside the viewport.
+    await page.locator(".ff-knowledge-visual").scrollIntoViewIfNeeded();
+    await expect(page.locator(".ff-knowledge-visual canvas")).toBeVisible({ timeout: 20000 });
     await page.locator(".ff-knowledge-visual canvas").evaluate((canvas) => canvas.dispatchEvent(new Event("webglcontextlost")));
     await expect(page.locator(".ff-knowledge-visual .ff-visual-fallback")).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect Gmail" })).toBeDisabled();
@@ -76,7 +88,8 @@ async function verifyVisuals() {
           await page.locator(".ff-hero").scrollIntoViewIfNeeded();
           const image = page.locator(".ff-hero-image");
           await expect(image).toBeVisible();
-          assert.ok(await image.evaluate((img) => img.complete && img.naturalWidth > 0), "Hero asset must load");
+          await expect.poll(() => image.evaluate((img) => img.complete && img.naturalWidth > 0),
+            { message: "Hero asset must load after entering the viewport" }).toBe(true);
         }
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.screenshot({ path: resolve(output, "ui-" + (route === "/" ? "home" : "connectors") + "-" + width + ".png"), fullPage: true });
@@ -109,4 +122,7 @@ async function verifyVisuals() {
   for (const check of report.checks) console.log("PASS " + check);
 }
 
-await verifyVisuals();
+await verifyVisuals().catch(async (error) => {
+  await writeFile(resolve(output, "visual-results.json"), JSON.stringify({ ...report, failure: error.message }, null, 2));
+  throw error;
+});

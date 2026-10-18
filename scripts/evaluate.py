@@ -131,6 +131,8 @@ def browser_gates(output: Path, environment: dict[str, str]) -> list[Result]:
                     ("browser-workspace", "verify.mjs"),
                     ("browser-connectors", "verify-connectors.mjs"),
                     ("browser-visuals", "verify-visuals.mjs"),
+                    ("browser-evidence", "verify-evidence.mjs"),
+                    ("browser-agent", "verify-agent.mjs"),
                 )
             ]
             shutil.copytree(ROOT / ".local/browser-evidence", output / "component-browser", dirs_exist_ok=True)

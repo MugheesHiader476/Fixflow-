@@ -17,9 +17,11 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage();
 page.on("pageerror", (error) => report.errors.push(error.message));
 const health = { status: "ok", service: "fixflow-api", api: "ok", database: "connected", pgvector: "available",
-  schema: "ready", revision: "0006", expected_revision: "0006", sources: 1, documents: 1, chunks: 0,
+  schema: "ready", revision: "0010", expected_revision: "0010", sources: 1, documents: 1, chunks: 0,
   embedded_chunks: 0, pending_sources: 0, failed_sources: 0, embedding_configured: false,
-  ai_generation: "removed", answer_service: "removed", retrieval_mode: "removed", processing_mode: "parsing_only" };
+  ai_generation: "removed", answer_service: "removed", retrieval_mode: "removed", processing_mode: "parsing_only",
+  workspace_agent: "not_configured", evidence_search: "project_opt_in", evidence_generation: "not_configured",
+  evidence_semantic: "not_configured" };
 const source = { id: "28d6ce92-c958-4010-b4ba-1784cf82dc10", source_id: "28d6ce92-c958-4010-b4ba-1784cf82dc10",
   name: "Parsing guide.md", kind: "docs", source_type: "docs", status: "uploaded", documents: 0, document_count: 0,
   chunks: 0, chunk_count: 0, error_message: null, embedding_status: "not_configured", created_at: new Date().toISOString(),
@@ -53,12 +55,15 @@ async function noOverflow() {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Unexpected horizontal overflow");
 }
 try {
-  await check("Home provides source composer and keeps AI unavailable", async () => {
+  await check("Home provides parsing composer and requires explicit workflow submission", async () => {
     await page.goto(base, { waitUntil: "networkidle" });
     await expect(page.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Source content" })).toBeEnabled();
     await expect(page.getByRole("button", { name: /Chat/ })).toBeDisabled();
-    await expect(page.getByText(/AI conversations are not enabled yet/)).toBeVisible();
+    const workflow = page.getByRole("region", { name: "Workspace assistant" });
+    await expect(workflow.getByRole("textbox", { name: "Task", exact: true })).toBeEnabled();
+    await expect(workflow.getByRole("button", { name: "Run workflow", exact: true })).toBeDisabled();
+    await expect(workflow.getByRole("checkbox", { name: "Allow email drafts and replies for this request" })).not.toBeChecked();
     await page.getByRole("link", { name: "Open workspace", exact: true }).click();
     await expect(page.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeInViewport();
     await noOverflow();
@@ -100,9 +105,10 @@ try {
     assert.equal(polls, completedPolls, "Terminal parsing status must stop polling");
     await page.screenshot({ path: resolve(output, "parsing-sources.png"), fullPage: true });
   });
-  await check("Settings reports parsing only", async () => {
+  await check("Settings reports canonical parsing, opt-in indexing and unconfigured workflows", async () => {
     await page.goto(`${base}/settings`, { waitUntil: "networkidle" });
-    await expect(page.getByText("Parsing only", { exact: true })).toBeVisible();
+    await expect(page.getByText("Canonical parsing and opt-in evidence indexing", { exact: true })).toBeVisible();
+    await expect(page.getByText("Set the backend API key and model", { exact: true })).toBeVisible();
     await expect(page.getByText("Embedding configuration", { exact: true })).toHaveCount(0);
   });
   await check("320px and 390px home and source layouts stay bounded", async () => {

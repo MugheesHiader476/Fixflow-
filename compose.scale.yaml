@@ -1,0 +1,60 @@
+# Opt-in, dedicated-database deployment. Requires Docker Compose >= 2.24.4.
+# docker compose -f compose.yaml -f compose.scale.yaml up -d --build
+services:
+  db:
+    ports: !reset []
+
+  db-runtime:
+    image: fixflow-backend:local
+    pull_policy: never
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-fixflow}
+      POSTGRES_USER: ${POSTGRES_USER:-fixflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set migration-owner password}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-fixflow_runtime}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?Set a separate random URL-safe runtime password}
+    command: ["python", "-m", "scripts.provision_runtime", "--apply"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+
+  backend:
+    ports: !reset []
+    environment:
+      POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-fixflow_runtime}
+      POSTGRES_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?Set a separate random URL-safe runtime password}
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "5"
+    deploy:
+      replicas: 2
+    depends_on:
+      db-runtime:
+        condition: service_completed_successfully
+    security_opt: ["no-new-privileges:true"]
+
+  balancer:
+    image: nginx:1.28-alpine
+    user: "101:101"
+    command: ["nginx", "-c", "/etc/nginx/fixflow.conf", "-g", "daemon off;"]
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/fixflow.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  frontend:
+    environment:
+      INTERNAL_API_URL: http://balancer:8000
+    depends_on:
+      balancer:
+        condition: service_started
+    security_opt: ["no-new-privileges:true"]
