@@ -78,11 +78,11 @@ async function verify() {
     });
     let sourceId;
     await check("Real composer persists a source and worker reaches validated parsed output", async () => {
-      await page.goto(base, { waitUntil: "networkidle" });
-      await page.getByRole("textbox", { name: "Source content" }).fill("# Audit runbook\n\nRestart the worker only after checking the queue.\n\n## Ownership\nThis source belongs to account A.");
-      await page.getByRole("textbox", { name: "Source title" }).fill("Audit runbook");
+      await page.goto(base + "/sources", { waitUntil: "networkidle" });
+      await page.getByRole("textbox", { name: "Documentation content" }).fill("# Audit runbook\n\nRestart the worker only after checking the queue.\n\n## Ownership\nThis source belongs to account A.");
+      await page.getByRole("textbox", { name: "Document title" }).fill("Audit runbook");
       const accepted = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/documents"));
-      await page.getByRole("button", { name: "Add content for parsing" }).click();
+      await page.getByRole("button", { name: "Add to knowledge base" }).click();
       const response = await accepted; assert.equal(response.status(), 202);
       const source = await response.json(); sourceId = source.id;
       assert.equal(source.retrieval_available, false);
@@ -143,10 +143,10 @@ async function verify() {
     });
     await check("Duplicate upload reuses identity and source access changes remain owner-scoped", async () => {
       const original = "# Audit runbook\n\nRestart the worker only after checking the queue.\n\n## Ownership\nThis source belongs to account A.";
-      await page.goto(base);
-      await page.getByRole("textbox", { name: "Source content" }).fill(original);
+      await page.goto(base + "/sources");
+      await page.getByRole("textbox", { name: "Documentation content" }).fill(original);
       const duplicate = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/documents"));
-      await page.getByRole("button", { name: "Add content for parsing" }).click();
+      await page.getByRole("button", { name: "Add to knowledge base" }).click();
       const result = await duplicate;
       assert.equal(result.status(), 202); assert.equal((await result.json()).id, sourceId);
       const inactive = await owner.request.post(base + "/api/backend/api/sources/" + sourceId + "/availability", { data: { active: false } });
@@ -199,6 +199,18 @@ async function verify() {
       const event = await signedOut.request.post(base + "/api/connectors/events/github", { data: {} });
       assert.equal(event.status(), 503);
       await body(event);
+    });
+    await check("Simple chat gateway preserves authentication, strict read-only input and safe model-unavailable errors", async () => {
+      const route = base + "/api/backend/api/chat/messages";
+      assert.equal((await signedOut.request.post(route, { data: { question: "Hello" } })).status(), 401);
+      const forbidden = await owner.request.post(route, { data: { question: "Hello", allow_email_actions: true } });
+      assert.equal(forbidden.status(), 422); await body(forbidden);
+      const unavailable = await owner.request.post(route, { data: { question: "Hello" } });
+      assert.equal(unavailable.status(), 503); await body(unavailable);
+      assert.deepEqual(await (await owner.request.get(route)).json(), []);
+      await page.goto(base, { waitUntil: "networkidle" });
+      await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
+      await expect(page.getByText("Run workflow", { exact: true })).toHaveCount(0);
     });
     await Promise.all(responses); assert.deepEqual(report.errors, []);
     report.checks.push("Browser HTML, JavaScript and API payloads contain none of four private canaries; no uncaught page errors");

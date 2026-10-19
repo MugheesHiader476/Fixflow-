@@ -29,6 +29,7 @@ export interface WorkflowRun {
   usage: Record<string, number | null>;
   error: string | null;
   created_at: string;
+  parent_run_id?: string | null;
 }
 export interface WorkflowRequest {
   question: string;

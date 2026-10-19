@@ -60,6 +60,7 @@ class World:
     cancel_on_profile: UUID | None = None
     drive_version: str = "1"
     model_error: bool = False
+    model_error_status: int = 503
     encrypted_reasoning: bool = True
     send_receipt: str = "sent_one"
     on_media: Callable[[], Awaitable[None]] | None = None
@@ -119,7 +120,7 @@ class World:
             assert all(tool["type"] == "function" for tool in body["tools"])
             assert "private-provider-token" not in request.content.decode()
             if self.model_error:
-                return httpx.Response(503, json={"private": "must never reach clients"})
+                return httpx.Response(self.model_error_status, json={"private": "must never reach clients"})
             if self.revoke_on_model:
                 async with get_session_factory().begin() as db:
                     await db.execute(update(ConnectorAccount).values(status="revoked"))
@@ -674,6 +675,96 @@ async def test_google_document_private_pdf_export(client: httpx.AsyncClient, wor
     assert response.status_code == 200 and response.content == PDF
 
 
+async def test_chat_automatically_reads_connected_apps_without_action_authority(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    slack_id = await slack_connection()
+    world.plan = [
+        ("read_resource", {"account_id": str(world.accounts["google_drive"]), "resource_id": "file:srs"}),
+        ("read_resource", {"account_id": str(world.accounts["gmail"]), "resource_id": "manager_mail"}),
+        ("github_status", {"account_id": str(world.accounts["github"]), "resource_id": "123"}),
+        ("search_provider", {"account_id": str(slack_id), "resource_id": "C123"}),
+        ("finish", finish_with(THOUGHTS)),
+    ]
+    accepted = await client.post("/api/chat/messages", json={
+        "question": "Compare the SRS, manager feedback, GitHub and Slack.",
+    })
+    assert accepted.status_code == 202, accepted.text
+    identifier = UUID(accepted.json()["id"])
+    result = await complete(client, identifier)
+    assert result.status == "completed" and len(result.materials) == 4
+    assert not result.actions and not world.sent
+    for call in world.model_calls:
+        assert "draft_email" not in [tool["name"] for tool in records(call["tools"])]
+    async with get_session_factory()() as db:
+        run = await db.get(AgentRun, identifier)
+        assert run and len(records(run.scope["accounts"])) == 4
+        assert run.request["include_connections"] is True and run.request["allow_email_actions"] is False
+    response = await client.get(f"/api/chat/messages/{identifier}")
+    assert response.status_code == 200 and response.json()["answer"]["claims"]
+    foreign = {"X-FixFlow-User-Id": "user_other"}
+    assert (await client.get(f"/api/chat/messages/{identifier}/thread", headers=foreign)).status_code == 404
+    assert (await client.get("/api/chat/messages", headers=foreign)).json() == []
+    assert (await client.post(f"/api/chat/messages/{identifier}/cancel", headers=foreign)).status_code == 404
+    forbidden = await client.post("/api/chat/messages", json={"question": "Send mail", "allow_email_actions": True})
+    assert forbidden.status_code == 422
+
+
+async def test_chat_followups_retain_multiple_turns_and_reopen_in_order(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    world.encrypted_reasoning = False
+    world.plan = [("finish", {"answer": answer}) for answer in [
+        "Alpha is the project.", "The deadline is Friday.", "Alpha, Friday.",
+    ]]
+    parent: str | None = None
+    identifiers: list[str] = []
+    for question in ["Call the project Alpha.", "The deadline is Friday.", "What project and deadline did I give you?"]:
+        response = await client.post("/api/chat/messages", json={"question": question, "parent_message_id": parent})
+        assert response.status_code == 202, response.text
+        parent = response.json()["id"]
+        assert isinstance(parent, str)
+        identifiers.append(parent)
+        result = await complete(client, UUID(parent))
+        assert result.status == "completed", result
+    final_input = world.model_calls[-1]["input"]
+    assert "Call the project Alpha." in str(final_input) and "The deadline is Friday." in str(final_input)
+    thread = await client.get(f"/api/chat/messages/{parent}/thread")
+    assert [entry["id"] for entry in thread.json()] == identifiers
+    assert thread.json()[-1]["parent_run_id"] == identifiers[-2]
+    assert (await client.post("/api/chat/messages", json={
+        "question": "Continue", "parent_message_id": parent,
+    }, headers={"X-FixFlow-User-Id": "user_other"})).status_code == 404
+
+
+async def test_chat_cancel_and_access_revocation_hide_private_results(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    world.plan = [("finish", {"answer": "Stopped before model use."})]
+    accepted = await client.post("/api/chat/messages", json={"question": "Summarize my workspace"})
+    identifier = accepted.json()["id"]
+    assert (await client.post(f"/api/chat/messages/{identifier}/cancel")).json()["status"] == "cancelled"
+    await process_step(UUID(identifier))
+    assert not world.model_calls
+    accepted = await client.post("/api/chat/messages", json={"question": "Workspace summary"})
+    identifier = accepted.json()["id"]
+    async with get_session_factory().begin() as db:
+        await db.execute(update(ConnectorAccount).values(status="revoked"))
+    hidden = (await client.get(f"/api/chat/messages/{identifier}")).json()
+    assert hidden["status"] == "cancelled" and hidden["answer"] is None and not hidden["materials"]
+    assert (await client.post("/api/chat/messages", content=b"x" * 32769)).status_code == 413
+
+
+async def test_chat_explains_provider_account_failure_without_leaking_response_or_retrying(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    world.model_error, world.model_error_status = True, 403
+    accepted = await client.post("/api/chat/messages", json={"question": "Explain the release blockers"})
+    result = await complete(client, UUID(accepted.json()["id"]))
+    assert result.status == "failed" and "credits" in str(result.error)
+    assert "private" not in str(result.error) and len(world.model_calls) == 1
+
+
 @pytest.mark.parametrize("receipt", ["", "invalid\nreceipt"])
 async def test_invalid_send_receipt_remains_uncertain_without_resending(
     client: httpx.AsyncClient, world: World, receipt: str
@@ -725,9 +816,7 @@ async def test_disconnect_invalidates_runs_and_purge_erases_new_private_artifact
             assert run.messages and run.answer is not None
 
 
-async def test_slack_channel_messages_remain_usable_after_native_reference_recheck(
-    client: httpx.AsyncClient, world: World
-) -> None:
+async def slack_connection() -> UUID:
     async with get_session_factory().begin() as db:
         reference = await TokenVault(get_settings().connectors).store(
             db, "user_test", Credentials(access_token=SecretStr("private-provider-token")),
@@ -738,7 +827,13 @@ async def test_slack_channel_messages_remain_usable_after_native_reference_reche
         )
         db.add(account)
         await db.flush()
-        identifier = account.id
+        return account.id
+
+
+async def test_slack_channel_messages_remain_usable_after_native_reference_recheck(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    identifier = await slack_connection()
     world.plan = [
         ("search_provider", {"account_id": str(identifier), "resource_id": "C123"}),
         ("finish", finish_with(THOUGHTS)),

@@ -15,8 +15,8 @@ const env = { ...process.env };
 assert.ok(env.TEST_DATABASE_URL, "Explicit disposable TEST_DATABASE_URL is required.");
 assert.ok(env.FIXFLOW_BROWSER_TOOLS, "Set FIXFLOW_BROWSER_TOOLS to the installed Playwright directory.");
 const origins = { frontend: "http://localhost:3012", backend: "http://127.0.0.1:8012" };
-// Clear every connector credential/config value rather than inheriting operator credentials.
-for (const key of Object.keys(env)) if (key.startsWith("CONNECTORS__") || key.startsWith("CLERK_") || key.startsWith("NEXT_PUBLIC_")) delete env[key];
+// External identity/provider calls are simulated; never inherit operator model credentials.
+for (const key of Object.keys(env)) if (["CONNECTORS__", "CLERK_", "NEXT_PUBLIC_", "GROK__", "GEMINI__", "EVIDENCE__"].some((prefix) => key.startsWith(prefix))) delete env[key];
 Object.assign(env, {
   DATABASE_URL: env.TEST_DATABASE_URL, FIXFLOW_DATA_DIR: resolve(output, "uploads"),
   FIXFLOW_API_TOKEN: "evaluation-private-gateway-" + randomBytes(24).toString("hex"),
@@ -25,6 +25,7 @@ Object.assign(env, {
   INTERNAL_API_URL: origins.backend, CONNECTORS__EVENTS_ENABLED: "false",
   CONNECTORS__VAULT_KEY: randomBytes(32).toString("base64url") + "=",
   AUDIT_PROVIDER_TOKEN: "evaluation-private-provider-" + randomBytes(24).toString("hex"),
+  GROK__API_KEY: "", GROK__MODEL: "", GEMINI__API_KEY: "", EVIDENCE__API_KEY: "",
 });
 for (const name of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET", "SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET"]) env["CONNECTORS__" + name] = "";
 env.CONNECTORS = JSON.stringify({ public_url: origins.frontend, vault_key: env.CONNECTORS__VAULT_KEY, events_enabled: false });

@@ -197,7 +197,7 @@ export default function SourcesPage() {
     <AppShell sessionTitle="Knowledge Sources">
       <div className="ff-page">
         <PageHeading eyebrow="YOUR KNOWLEDGE, CONNECTED" title="Good context starts here." action={<span className="ff-source-count"><Database size={16} />{sources.length} sources</span>}>
-          Upload documents, data, policies, or code. Processing stops after validated parsing.
+          Upload documents, data, policies, or code. Parsed sources become available to your workspace chat.
         </PageHeading>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">

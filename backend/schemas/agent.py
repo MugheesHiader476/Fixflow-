@@ -70,6 +70,16 @@ class RunRequest(Contract):
         return self.allow_email_actions or self.action_mode == "auto"
 
 
+class ChatRequest(Contract):
+    question: str = Field(min_length=1, max_length=4000)
+    parent_message_id: UUID | None = None
+
+    @field_validator("question")
+    @classmethod
+    def valid_question(cls, value: str) -> str:
+        return validate_text(value)
+
+
 class ToolArgs(Contract):
     account_id: UUID
 
@@ -167,3 +177,4 @@ class RunView(Contract):
     usage: dict[str, int | None]
     error: str | None
     created_at: datetime
+    parent_run_id: UUID | None = None

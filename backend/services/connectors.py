@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import get_settings
 from backend.connectors.core import ConnectorError
 from backend.connectors.github import GitHubConnector
-from backend.connectors.registry import adapter, configured, verify_selection
+from backend.connectors.registry import ADAPTERS, adapter, configured, missing_configuration, verify_selection
 from backend.connectors.vault import TokenVault
 from backend.db.models import (
     ConnectorAccount,
@@ -106,6 +106,9 @@ async def providers(db: AsyncSession) -> list[ProviderResponse]:
                 accounts=[await response(db, account) for account in accounts if account.provider == provider],
                 install_url=install_url,
                 gmail_send_enabled=provider == "gmail" and config.gmail_send_enabled,
+                callback_url=config.public_url + f"/api/connectors/{provider}/callback",
+                required_scopes=list(ADAPTERS[provider](config, None).authorization_scopes),
+                missing_configuration=missing_configuration(provider, config),
             )
         )
     return result
@@ -149,7 +152,12 @@ async def callback(db: AsyncSession, provider: Provider, state: str, code: str) 
     row.consumed_at, row.verifier_encrypted = datetime.now(UTC), ""
     # Consume once before contacting a provider, including failed/exchanged callbacks.
     await db.commit()
-    credentials, external, name, metadata = await connector.handle_callback(code, verifier)
+    try:
+        credentials, external, name, metadata = await connector.handle_callback(code, verifier)
+    except ConnectorError as error:
+        audit(db, owner_id(db), "authorization_failed", provider=provider, code=error.code)
+        await db.commit()
+        raise
     identity = f"{owner_id(db)}:{provider}:{external}".encode()
     lock_key = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big", signed=True)
     await db.execute(select(func.pg_advisory_xact_lock(lock_key)))

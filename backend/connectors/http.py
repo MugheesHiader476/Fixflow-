@@ -147,6 +147,15 @@ class ProviderHttp:
                                 )
                             if isinstance(provider_error, dict):
                                 reasons = [item.get("reason") for item in records(provider_error.get("errors", []))]
+                                details = [item.get("reason") for item in records(provider_error.get("details", []))]
+                                if target.hostname in {"www.googleapis.com", "gmail.googleapis.com"} and (
+                                    "accessNotConfigured" in reasons or "SERVICE_DISABLED" in details
+                                ):
+                                    raise ConnectorError(
+                                        "api_disabled",
+                                        "Enable the requested Google API in the OAuth app's Cloud project, "
+                                        "then reconnect",
+                                    )
                                 if any(
                                     reason in {"rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded"}
                                     for reason in reasons

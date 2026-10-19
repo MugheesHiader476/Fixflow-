@@ -713,3 +713,16 @@ async def test_github_secondary_limit_without_retry_header(isolated: ConnectorCo
     with pytest.raises(ConnectorError) as error:
         await http.request("GET", "https://api.github.com/user")
     assert error.value.code == "rate_limited" and error.value.retry_after == 60
+
+
+@pytest.mark.parametrize("detail", [
+    {"errors": [{"reason": "accessNotConfigured"}]},
+    {"details": [{"reason": "SERVICE_DISABLED", "metadata": {"private": "do-not-expose"}}]},
+])
+async def test_google_disabled_api_is_actionable_without_exposing_provider_payload(
+    isolated: ConnectorConfig, detail: dict[str, object]
+) -> None:
+    http = ProviderHttp(isolated, httpx.MockTransport(lambda request: httpx.Response(403, json={"error": detail})))
+    with pytest.raises(ConnectorError) as error:
+        await http.request("GET", "https://www.googleapis.com/drive/v3/about")
+    assert error.value.code == "api_disabled" and "do-not-expose" not in str(error.value)

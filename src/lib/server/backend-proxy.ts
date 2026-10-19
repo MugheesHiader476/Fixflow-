@@ -5,8 +5,8 @@ import { requestTimeoutMs } from "../request-timeout";
 
 const UUID = "[0-9a-fA-F-]{36}";
 const PROVIDER = "(gmail|github|google_drive|slack)";
-const GET_PATH = new RegExp(`^(health|api/(readiness|sessions|sources|saved|connectors)|api/sessions/${UUID}(/messages)?|api/sources/${UUID}(/status)?|api/connectors/${UUID}/(resources|status)|api/evidence/sources/${UUID}/embedding-status|api/agent/(runs(/${UUID})?|files/${UUID}/download)|api/connectors/${PROVIDER}/callback)$`);
-const POST_PATH = new RegExp(`^api/(agent/(runs|runs/${UUID}/cancel|actions/${UUID}/execute)|ask|debug|chat|saved|documents|sources/${UUID}/(retry-embedding|availability)|evidence/(search|answer|sources/${UUID}/(index|remove-index|embed))|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
+const GET_PATH = new RegExp(`^(health|api/(readiness|sessions|sources|saved|connectors)|api/chat/messages(/${UUID}(/thread)?)?|api/sessions/${UUID}(/messages)?|api/sources/${UUID}(/status)?|api/connectors/${UUID}/(resources|status)|api/evidence/sources/${UUID}/embedding-status|api/agent/(runs(/${UUID})?|files/${UUID}/download)|api/connectors/${PROVIDER}/callback)$`);
+const POST_PATH = new RegExp(`^api/(chat/messages(/${UUID}/cancel)?|agent/(runs|runs/${UUID}/cancel|actions/${UUID}/execute)|ask|debug|chat|saved|documents|sources/${UUID}/(retry-embedding|availability)|evidence/(search|answer|sources/${UUID}/(index|remove-index|embed))|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
 
 function connectorQuery(request: Request, path: string): string | null {
   if (!path.startsWith("api/connectors/")) return "";

@@ -197,3 +197,6 @@ class ProviderResponse(Contract):
     accounts: list[AccountResponse]
     install_url: str | None = None
     gmail_send_enabled: bool = False
+    callback_url: str
+    required_scopes: list[str]
+    missing_configuration: list[str]

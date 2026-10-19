@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.api.agent import router as agent_router
+from backend.api.chat import router as chat_router
 from backend.api.connectors import events_router
 from backend.api.connectors import router as connector_router
 from backend.api.evidence import router as evidence_router
@@ -147,6 +148,7 @@ app.include_router(router, prefix="/api")
 app.include_router(connector_router, prefix="/api")
 app.include_router(evidence_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 app.include_router(events_router)
 
 

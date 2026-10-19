@@ -7,15 +7,21 @@ import { Bookmark, Database, History, PanelLeftClose, Plug, Plus, Settings, Shie
 import { timeAgo } from "@/lib/utils";
 import { listSessions } from "@/lib/api";
 import type { DebugSession } from "@/lib/types";
+import { chatHistory, type ChatMessage } from "@/lib/chat";
 import { Brand } from "./brand";
 
 const NAV = [
-  { href: "/", label: "New workspace", icon: Plus },
+  { href: "/", label: "New chat", icon: Plus },
   { href: "/sources", label: "Knowledge Sources", icon: Database },
   { href: "/connectors", label: "Connected Apps", icon: Plug },
   { href: "/history", label: "Conversation History", icon: History },
   { href: "/saved", label: "Saved findings", icon: Bookmark },
 ];
+
+function recentChats(messages: ChatMessage[]) {
+  const parents = new Set(messages.map((message) => message.parent_run_id).filter(Boolean));
+  return messages.filter((message) => !parents.has(message.id)).slice(0, 8);
+}
 
 export function Sidebar({ open, collapsed, onClose, onCollapse }: {
   open: boolean; collapsed: boolean; onClose: () => void; onCollapse: () => void;
@@ -24,6 +30,21 @@ export function Sidebar({ open, collapsed, onClose, onCollapse }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const [sessions, setSessions] = useState<DebugSession[]>([]);
   const [loadError, setLoadError] = useState(false);
+  const [chats, setChats] = useState<ChatMessage[]>([]);
+  const [chatError, setChatError] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refresh = () => {
+      void chatHistory(controller.signal).then((messages) => {
+        if (!controller.signal.aborted) {
+          setChats(recentChats(messages)); setChatError(false);
+        }
+      }).catch(() => { if (!controller.signal.aborted) setChatError(true); });
+    };
+    refresh(); window.addEventListener("fixflow:chats-changed", refresh);
+    return () => { controller.abort(); window.removeEventListener("fixflow:chats-changed", refresh); };
+  }, []);
 
   useEffect(() => {
     if (open) dialog.current?.showModal();
@@ -60,11 +81,12 @@ export function Sidebar({ open, collapsed, onClose, onCollapse }: {
     </nav>
     <div className="ff-sidebar-history">
       <div className="ff-sidebar-label"><span>Recent conversations</span><Link href="/history" aria-label="View all conversations"><History size={14} /></Link></div>
+      {chats.map((message) => <Link key={message.id} href={`/?chat=${encodeURIComponent(message.id)}`} onClick={mobile ? onClose : undefined} title={message.question}><span className="ff-session-dot" /><span>{message.question}</span><small>{timeAgo(message.created_at)}</small></Link>)}
       {sessions.map((session) => <Link key={session.id} href={"/?session=" + encodeURIComponent(session.id)} onClick={mobile ? onClose : undefined}
         title={session.title}>
         <span className="ff-session-dot" /><span>{session.title}</span><small>{timeAgo(session.createdAt)}</small>
       </Link>)}
-      {!sessions.length && <p>{loadError ? "Could not load conversations. Open history to retry." : "Your past conversations will appear here."}</p>}
+      {!sessions.length && !chats.length && <p>{loadError || chatError ? "Could not load conversations. Open history to retry." : "Your past conversations will appear here."}</p>}
     </div>
     <div className="ff-sidebar-bottom">
       <Link href="/settings" onClick={mobile ? onClose : undefined} aria-current={pathname === "/settings" ? "page" : undefined}><Settings size={18} />Settings</Link>

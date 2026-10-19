@@ -17,7 +17,7 @@ async def failed_gateway_authentication(peer: str) -> None:
 
 async def api_request(owner: str, path: str, method: str) -> None:
     config = get_settings().security
-    if method == "POST" and path.startswith("/api/agent/runs/") and path.endswith("/cancel"):
+    if method == "POST" and path.startswith(("/api/agent/runs/", "/api/chat/messages/")) and path.endswith("/cancel"):
         # A spent write budget must not prevent stopping an in-flight external action.
         await reserve("security:cancel:" + owner, 60, config.sensitive_requests_per_minute)
         return

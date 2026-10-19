@@ -9,8 +9,8 @@ export function WorkspaceHero() {
       <div className="ff-hero-shade" />
       <div className="ff-hero-content">
         <p className="ff-eyebrow"><span aria-hidden="true" />A little context. A lot of clarity.</p>
-        <h2 id="hero-title">Your knowledge.<br />Structured content.</h2>
-        <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Inspect and parse content for your next workflow.</p>
+        <h2 id="hero-title">Your apps.<br />One conversation.</h2>
+        <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Ask a question and follow the sources behind the answer.</p>
         <div className="ff-hero-actions">
           <a className="ff-pill ff-pill-white" href="#workspace">Open workspace <ArrowUpRight size={18} /></a>
           <Link className="ff-hero-link" href="/sources">Explore your knowledge <ArrowUpRight size={16} /></Link>
@@ -35,7 +35,7 @@ export function WorkspaceGuide() {
   );
 }
 
-const WORKFLOWS = [
+const FEATURES = [
   { number: "01", icon: BookOpen, title: "Your knowledge, together.", description: "Bring your documentation into one place. Parse content while preserving its structure.", href: "/sources", action: "Knowledge sources" },
   { number: "02", icon: History, title: "Pick up the thread.", description: "Revisit your earlier conversations and their original references, all in one place.", href: "/history", action: "Debug history" },
   { number: "03", icon: Bookmark, title: "Keep what works.", description: "Save useful findings and references. Keep the useful details close at hand.", href: "/saved", action: "Saved solutions" },
@@ -44,7 +44,7 @@ const WORKFLOWS = [
 export function WorkspaceFeatures() {
   return (
     <section className="ff-features" aria-label="Explore your workspace">
-      {WORKFLOWS.map((item) => (
+      {FEATURES.map((item) => (
         <Link key={item.number} href={item.href} className="ff-feature">
           <div className="ff-feature-top"><item.icon size={24} strokeWidth={1.4} /><span>{item.number}</span></div>
           <h3>{item.title}</h3><p>{item.description}</p>

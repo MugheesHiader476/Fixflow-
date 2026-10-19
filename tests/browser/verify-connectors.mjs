@@ -77,7 +77,7 @@ try {
     await page.goto("http://127.0.0.1:4173/connectors?connected=gmail", { waitUntil: "networkidle" });
     for (const name of ["Gmail", "GitHub", "Google Drive", "Slack"]) await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect Slack" })).toBeDisabled();
-    await expect(page.getByText("Account connected. Select resources to start synchronization.")).toBeVisible();
+    await expect(page.getByText("Account connected. Choose the resources your chat can use; synchronization starts when you save.")).toBeVisible();
     await expect(page.getByText("person@example.test", { exact: true })).toBeVisible();
     await noOverflow();
     await capture({ path: resolve(output, "connectors-desktop.png"), fullPage: true });

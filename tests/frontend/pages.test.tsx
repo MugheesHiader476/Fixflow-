@@ -21,6 +21,8 @@ const api = vi.hoisted(() => ({
   setSourceAvailability: vi.fn(),
 }));
 const toast = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/chat", () => ({ chatHistory: vi.fn().mockResolvedValue([]) }));
+vi.mock("@/components/workspace/agent-panel", () => ({ AgentPanel: () => <section aria-label="Workspace assistant">Workspace chat</section> }));
 const navigation = vi.hoisted(() => ({ session: null as string | null, router: { replace: vi.fn() } }));
 
 vi.mock("@/lib/api", () => api);
@@ -95,9 +97,9 @@ describe("application pages", () => {
     expect(screen.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeDefined();
     expect(screen.getByRole("link", { name: "Open workspace" }).getAttribute("href")).toBe("#workspace");
     expect(screen.getByRole("link", { name: "Explore your knowledge" }).getAttribute("href")).toBe("/sources");
-    expect(screen.getByRole("textbox", { name: "Source content" })).toBeDefined();
+    expect(screen.getByText("Workspace chat")).toBeDefined();
     expect(screen.getByRole("region", { name: "Workspace assistant" })).toBeDefined();
-    expect(screen.getByText(/run authorized workspace workflows/)).toBeDefined();
+    expect(screen.getByText(/selected app data, together in one conversation/)).toBeDefined();
     expect(api.diagnose).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: /Pick up the thread/ }).getAttribute("href")).toBe("/history");
     expect(screen.getByRole("link", { name: /Keep what works/ }).getAttribute("href")).toBe("/saved");
@@ -263,7 +265,7 @@ describe("application pages", () => {
     navigation.session = null;
     view.rerender(<DebugSessionPage />);
     expect(screen.queryByText(ASYNCIO_DIAGNOSIS.rootCause)).toBeNull();
-    expect(screen.getByRole("textbox", { name: "Source content" })).toBeDefined();
+    expect(screen.getByText("Workspace chat")).toBeDefined();
   });
 
   it("lets users retry a failed history load", async () => {

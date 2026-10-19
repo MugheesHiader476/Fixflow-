@@ -63,7 +63,7 @@ export function ResourceSelection({ account, onSaved, onClose }: {
 
   return <dialog ref={dialog} onCancel={onClose} className="m-auto max-h-[85vh] w-full max-w-2xl overflow-auto rounded-2xl border border-border bg-panel p-6 text-foreground backdrop:bg-black/60" aria-labelledby="resource-title">
     <h2 id="resource-title" className="text-xl font-semibold">Select resources for {account.display_name}</h2>
-    <p className="mt-2 text-sm text-muted">Only resources authorized by your provider account can be synchronized. Changing selection disables existing content until it is synchronized again.</p>
+    <p className="mt-2 text-sm text-muted">Choose what chat can read. Saving starts synchronization automatically. Changing selection disables previous snapshots until they are synchronized again.</p>
     {error && <p role="alert" className="mt-3 text-danger">{error}</p>}
     <fieldset disabled={busy} className="my-5 space-y-3">
       <legend className="mb-2 font-medium">Authorized resources ({selection.resource_ids.length}/200 selected)</legend>

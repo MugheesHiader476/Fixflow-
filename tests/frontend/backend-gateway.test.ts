@@ -12,6 +12,19 @@ describe("trusted backend gateway", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+  it("allows only the supported chat message, thread, and cancellation routes", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    for (const path of ["api/chat/messages", `api/chat/messages/${id}`, `api/chat/messages/${id}/thread`]) {
+      expect((await proxyBackend(new Request(`http://localhost/api/backend/${path}`), path)).status).toBe(200);
+    }
+    for (const path of ["api/chat/messages", `api/chat/messages/${id}/cancel`]) {
+      expect((await proxyBackend(new Request(`http://localhost/api/backend/${path}`, { method: "POST" }), path)).status).toBe(200);
+    }
+    vi.mocked(fetch).mockClear();
+    expect((await proxyBackend(new Request(`http://localhost/api/backend/api/chat/messages/${id}/execute`, { method: "POST" }), `api/chat/messages/${id}/execute`)).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("forwards owner-authenticated embedding job status", async () => {
     const response = await proxyBackend(new Request("http://localhost/api/backend/api/evidence/sources/11111111-1111-4111-8111-111111111111/embedding-status"), "api/evidence/sources/11111111-1111-4111-8111-111111111111/embedding-status");
     expect(response.status).toBe(200);

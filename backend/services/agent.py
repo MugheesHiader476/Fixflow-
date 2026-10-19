@@ -77,6 +77,22 @@ async def owned(db: AsyncSession, identifier: UUID) -> AgentRun:
     return run
 
 
+async def ancestors(db: AsyncSession, latest: AgentRun, *, limit: int = 8) -> list[AgentRun]:
+    """Bounded conversation context; every ancestor is resolved through owner isolation."""
+    messages = [latest]
+    seen = {latest.id}
+    while len(messages) < limit:
+        identifier = messages[-1].request.get("parent_run_id")
+        if not identifier:
+            break
+        parent_id = UUID(string(identifier))
+        if parent_id in seen:
+            raise HTTPException(409, "Conversation context is invalid; start a new chat")
+        seen.add(parent_id)
+        messages.append(await owned(db, parent_id))
+    return list(reversed(messages))
+
+
 async def create(db: AsyncSession, request: RunRequest) -> AgentRun:
     config = get_settings().grok
     await reserve("agent-run:" + owner_id(db), 60, config.requests_per_minute)
@@ -86,7 +102,7 @@ async def create(db: AsyncSession, request: RunRequest) -> AgentRun:
     except PolicyViolation as error:
         raise HTTPException(403, str(error)) from error
     if not config.configured or config.model is None:
-        raise HTTPException(503, "Set backend GROK__API_KEY and GROK__MODEL before starting a workflow")
+        raise HTTPException(503, "Set backend GROK__API_KEY and GROK__MODEL to enable chat")
     accounts = list(
         await db.scalars(
             select(ConnectorAccount).where(
@@ -137,10 +153,17 @@ async def create(db: AsyncSession, request: RunRequest) -> AgentRun:
             for value in parent_materials
         ):
             raise HTTPException(409, "Follow-up scope excludes a previous source; start a new request")
-        messages += [
-            {"role": "user", "content": string(parent.request["question"])},
-            {"role": "assistant", "content": json.dumps(parent.answer, ensure_ascii=False)},
-        ]
+        for previous in await ancestors(db, parent):
+            try:
+                request_policy(string(previous.request["question"]))
+                validate_disclosure(previous.answer, configured_secrets())
+            except PolicyViolation as error:
+                raise HTTPException(403, "Previous content does not pass current policy; start a new chat") from error
+            await authorize(context(previous))
+            messages += [
+                {"role": "user", "content": string(previous.request["question"])},
+                {"role": "assistant", "content": json.dumps(previous.answer, ensure_ascii=False)},
+            ]
         materials = list(parent.materials)
         try:
             validate_disclosure([materials, parent.answer], configured_secrets())
@@ -217,6 +240,7 @@ async def view(db: AsyncSession, run: AgentRun) -> RunView:
             usage=run.usage,
             error="Workspace access or selection changed; private results are unavailable",
             created_at=run.created_at,
+            parent_run_id=RunRequest.model_validate(run.request).parent_run_id,
         )
     actions = list(
         await db.scalars(
@@ -253,6 +277,7 @@ async def view(db: AsyncSession, run: AgentRun) -> RunView:
         usage=run.usage,
         error=run.error,
         created_at=run.created_at,
+        parent_run_id=RunRequest.model_validate(run.request).parent_run_id,
     )
 
 
@@ -425,6 +450,15 @@ async def process_step(identifier: UUID) -> None:
             result = {"error": "tool_unavailable", "message": str(error.detail)}
         else:
             failure = "Workflow request could not be completed"
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code in {401, 403}:
+            failure = (
+                "Chat provider denied access. Check the xAI API key, credits, spending limit and model permissions."
+            )
+        elif error.response.status_code == 429:
+            failure = "Chat provider rate limit reached. Try again later."
+        else:
+            failure = "Chat provider is unavailable. Try again later; no automatic paid retry."
     except (
         httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError
     ):

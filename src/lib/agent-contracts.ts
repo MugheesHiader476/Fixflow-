@@ -39,6 +39,7 @@ function validAnswer(value: unknown, materials: WorkflowMaterial[]): boolean {
 }
 function run(value: unknown): boolean {
   if (!record(value) || typeof value.id !== "string" || typeof value.question !== "string" || !count(value.steps)
+    || (value.parent_run_id !== undefined && !optionalText(value.parent_run_id))
     || !["queued", "running", "completed", "failed", "cancelled"].includes(String(value.status))
     || typeof value.created_at !== "string" || !optionalText(value.error) || !record(value.usage)
     || !Object.values(value.usage).every((entry) => entry === null || count(entry))) return false;
@@ -49,5 +50,6 @@ function run(value: unknown): boolean {
 }
 export function validWorkflowResponse(path: string, value: unknown): boolean {
   if (path.includes("/actions/")) return action(value);
-  return path === "/api/agent/runs" && Array.isArray(value) ? value.every(run) : run(value);
+  const collection = path === "/api/agent/runs" || path === "/api/chat/messages" || path.endsWith("/thread");
+  return collection && Array.isArray(value) ? value.length <= 20 && value.every(run) : run(value);
 }

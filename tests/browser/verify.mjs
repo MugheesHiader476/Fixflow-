@@ -55,32 +55,23 @@ async function noOverflow() {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Unexpected horizontal overflow");
 }
 try {
-  await check("Home provides parsing composer and requires explicit workflow submission", async () => {
+  await check("Home provides one chat composer with automatic app access and no workflow controls", async () => {
     await page.goto(base, { waitUntil: "networkidle" });
     await expect(page.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Source content" })).toBeEnabled();
-    await expect(page.getByRole("button", { name: /Chat/ })).toBeDisabled();
-    const workflow = page.getByRole("region", { name: "Workspace assistant" });
-    await expect(workflow.getByRole("textbox", { name: "Task", exact: true })).toBeEnabled();
-    await expect(workflow.getByRole("button", { name: "Run workflow", exact: true })).toBeDisabled();
-    await expect(workflow.getByRole("checkbox", { name: "Allow email drafts and replies for this request" })).not.toBeChecked();
+    const chat = page.getByRole("region", { name: "Workspace assistant" });
+    await expect(chat.getByRole("textbox", { name: "Message", exact: true })).toBeEnabled();
+    await expect(chat.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(chat.getByRole("checkbox")).toHaveCount(0);
+    await expect(chat.getByRole("button", { name: "Run workflow", exact: true })).toHaveCount(0);
     await page.getByRole("link", { name: "Open workspace", exact: true }).click();
     await expect(page.getByRole("heading", { level: 1, name: /Your knowledge/ })).toBeInViewport();
     await noOverflow();
     await page.screenshot({ path: resolve(output, "parsing-home.png"), fullPage: true });
   });
-  await check("Composer accepts content, preserves source status semantics and dismisses menus", async () => {
-    await page.getByRole("button", { name: "Add a source", exact: true }).click();
-    await expect(page.getByRole("link", { name: /Upload a document/ })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("link", { name: /Upload a document/ })).toHaveCount(0);
-    await page.getByRole("button", { name: "Parsing only", exact: true }).click();
-    await expect(page.getByText("Not enabled in this workspace")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await page.getByRole("textbox", { name: "Source content" }).fill("# Parsing guide\nPreserve original evidence.");
-    await page.getByRole("button", { name: "Add content for parsing" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Parsing is queued" })).toBeVisible();
-    assert.ok(report.requests.some((request) => request.method === "POST" && request.path.endsWith("/documents")));
+  await check("Chat offers source upload and app connections without exposing runtime settings", async () => {
+    await expect(page.getByRole("link", { name: "Add sources", exact: true })).toHaveAttribute("href", "/sources");
+    await expect(page.getByRole("link", { name: "Connect apps", exact: true })).toHaveAttribute("href", "/connectors");
+    await expect(page.getByText("Parsing only", { exact: true })).toHaveCount(0);
   });
   await check("Desktop sidebar collapse and theme controls work", async () => {
     await page.locator("aside.ff-sidebar").getByRole("button", { name: "Collapse sidebar" }).click();
@@ -105,7 +96,7 @@ try {
     assert.equal(polls, completedPolls, "Terminal parsing status must stop polling");
     await page.screenshot({ path: resolve(output, "parsing-sources.png"), fullPage: true });
   });
-  await check("Settings reports canonical parsing, opt-in indexing and unconfigured workflows", async () => {
+  await check("Settings reports canonical parsing, opt-in indexing and chat configuration", async () => {
     await page.goto(`${base}/settings`, { waitUntil: "networkidle" });
     await expect(page.getByText("Canonical parsing and opt-in evidence indexing", { exact: true })).toBeVisible();
     await expect(page.getByText("Set the backend API key and model", { exact: true })).toBeVisible();

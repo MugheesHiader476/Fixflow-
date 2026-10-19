@@ -45,6 +45,22 @@ def configured(provider: Provider, config: ConnectorConfig) -> bool:
     return bool(config.slack_client_id and config.slack_client_secret)
 
 
+def missing_configuration(provider: Provider, config: ConnectorConfig) -> list[str]:
+    fields = ["vault_key"]
+    fields += (
+        ["google_client_id", "google_client_secret"] if provider in {"gmail", "google_drive"}
+        else ["github_client_id", "github_client_secret", "github_app_id", "github_private_key"]
+        if provider == "github" else ["slack_client_id", "slack_client_secret"]
+    )
+    missing = ["CONNECTORS__" + name.upper() for name in fields if not getattr(config, name)]
+    if config.vault_key:
+        try:
+            TokenVault(config)
+        except ConnectorError:
+            missing.append("CONNECTORS__VAULT_KEY (invalid encryption key)")
+    return missing
+
+
 async def verify_selection(connector: Connector, selection: Selection) -> None:
     """Resolve browser selections with provider authorization before saving or renewing access."""
     if isinstance(connector, GmailConnector):

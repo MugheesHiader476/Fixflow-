@@ -85,7 +85,7 @@ export default function SettingsPage() {
           </div>
           {backend === "offline" && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-danger">
-              <CircleAlert size={13} /> Start FastAPI to enable parsing and history.
+              <CircleAlert size={13} /> Start FastAPI to enable chat, sources, and history.
             </p>
           )}
           {backend === "online" && (
@@ -100,7 +100,7 @@ export default function SettingsPage() {
               <dt className="text-muted">Schema</dt><dd>{health.data.schema} (revision {health.data.revision ?? "unknown"})</dd>
               <dt className="text-muted">Stored documents</dt><dd>{health.data.documents ?? "—"}</dd>
               <dt className="text-muted">Processing</dt><dd>Canonical parsing and opt-in evidence indexing</dd>
-              {health.data.workspace_agent && <><dt className="text-muted">Grok workspace workflows</dt><dd>{health.data.workspace_agent === "configured" ? "Configured" : "Set the backend API key and model"}</dd></>}
+              {health.data.workspace_agent && <><dt className="text-muted">Workspace chat</dt><dd>{health.data.workspace_agent === "configured" ? "Configured" : "Set the backend API key and model"}</dd></>}
               {health.data.evidence_search && <><dt className="text-muted">Project evidence</dt><dd>Opt-in source search</dd></>}
               {health.data.evidence_generation && <><dt className="text-muted">Cited synthesis</dt><dd>{health.data.evidence_generation === "configured" ? "Configured" : "Not configured"}</dd></>}
               {health.data.evidence_semantic && <><dt className="text-muted">Gemini semantic search</dt><dd>{health.data.evidence_semantic === "configured" ? "Configured; prepare sources explicitly" : "Not configured"}</dd></>}

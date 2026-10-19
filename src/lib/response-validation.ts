@@ -97,7 +97,7 @@ function validSession(value: unknown): boolean {
 }
 
 export function validResponse(path: string, value: unknown, method = "GET"): boolean {
-  if (path.startsWith("/api/agent/")) return validWorkflowResponse(path, value);
+  if (path.startsWith("/api/agent/") || path.startsWith("/api/chat/messages")) return validWorkflowResponse(path, value);
   if (path.startsWith("/api/evidence/")) return validEvidenceResponse(path, value);
   if (path.startsWith("/api/connectors")) return validConnectorResponse(path, value);
   if (path === "/health" || path === "/api/readiness") return validHealth(value);

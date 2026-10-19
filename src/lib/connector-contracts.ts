@@ -35,6 +35,9 @@ export interface ConnectorCard {
   gmail_send_enabled?: boolean;
   accounts: ConnectorAccount[];
   install_url: string | null;
+  callback_url?: string;
+  required_scopes?: string[];
+  missing_configuration?: string[];
 }
 export interface ConnectorResource {
   id: string;
@@ -101,6 +104,9 @@ export function validConnectorResponse(path: string, value: unknown): boolean {
   if (route === "/api/connectors") return Array.isArray(value) && value.every((v) => record(v) && provider(v.provider)
     && typeof v.configured === "boolean" && optional(v.setup_message)
     && (v.gmail_send_enabled === undefined || typeof v.gmail_send_enabled === "boolean")
+    && (v.callback_url === undefined || text(v.callback_url))
+    && (v.required_scopes === undefined || strings(v.required_scopes))
+    && (v.missing_configuration === undefined || strings(v.missing_configuration))
     && (v.install_url === null || (text(v.install_url) && /^https:\/\/github\.com\/apps\/[a-zA-Z0-9-]+\/installations\/new$/.test(v.install_url)))
     && Array.isArray(v.accounts) && v.accounts.every(validAccount));
   if (route.endsWith("/connect")) return record(value) && authorizationUrl(value.authorization_url);

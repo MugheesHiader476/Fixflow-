@@ -7,16 +7,14 @@ import { WorkspaceHero, WorkspaceFeatures } from "@/components/layout/workspace-
 import { RightPanel } from "@/components/layout/right-panel";
 import { DebugInput } from "@/components/debug/debug-input";
 import { DiagnosisResult } from "@/components/debug/diagnosis-result";
-import { SourceComposer } from "@/components/workspace/source-composer";
 import { AgentPanel } from "@/components/workspace/agent-panel";
-import { EvidencePanel } from "@/components/workspace/evidence-panel";
 import { ArrowUpRight, BookOpen, Plug, Upload } from "lucide-react";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
 import { getSession, saveSolution as saveSolutionApi } from "@/lib/api";
 import type { Diagnosis } from "@/lib/types";
 
-function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
+function DebugSessionContent({ sessionId, chatId }: { sessionId: string | null; chatId: string | null }) {
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
   const [loadingSession, setLoadingSession] = useState(Boolean(sessionId));
   const [saving, setSaving] = useState(false);
@@ -78,7 +76,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
 
   return (
     <AppShell
-      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Knowledge"} session` : "Parsing workspace"}
+      sessionTitle={diagnosis ? `${diagnosis.detected.slice(0, 2).join(" · ") || "Knowledge"} session` : "Workspace chat"}
       techs={techs.length ? techs : (diagnosis?.detected ?? [])}
       rightPanel={
         <RightPanel
@@ -97,16 +95,14 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
         {!sessionId && <section id="workspace" className="ff-start" aria-labelledby="workspace-title">
           <div className="ff-workspace-status"><span />Your private knowledge workspace</div>
           <div className="ff-start-heading"><span className="ff-greeting-mark" aria-hidden="true"><ArrowUpRight size={27} /></span><h1 id="workspace-title">Your knowledge, together.</h1></div>
-          <p className="ff-start-description">A little context. A clearer next step.</p>
-          <SourceComposer />
-          <AgentPanel />
-          <EvidencePanel />
+          <p className="ff-start-description">Ask once. Find answers across your apps.</p>
+          <AgentPanel initialMessageId={chatId} onMessageChange={(id) => router.replace(id ? `/?chat=${encodeURIComponent(id)}` : "/", { scroll: false })} />
           <nav className="ff-starter-actions" aria-label="Get started">
             <Link href="/sources"><Upload size={15} />Upload a file</Link>
             <Link href="/connectors"><Plug size={15} />Connect an app</Link>
             <Link href="/sources"><BookOpen size={15} />Explore your sources</Link>
           </nav>
-          <p className="ff-current-capability">Parse sources, search project evidence, and run authorized workspace workflows.</p>
+          <p className="ff-current-capability">Your uploads and selected app data, together in one conversation.</p>
         </section>}
         {sessionId && <section className="ff-workspace-section" aria-labelledby="session-heading">
           <div className="ff-section-heading"><div><p className="ff-eyebrow">YOUR CONVERSATION</p><h1 id="session-heading">Review the conversation.</h1></div></div>
@@ -120,7 +116,7 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
             } : undefined}
             onClear={() => { setDiagnosis(null); setError(null); setSaved(false); router.replace("/"); }}
           />}
-          <p className="ff-input-note">This is a historical conversation. New AI answers are not enabled.</p>
+          <p className="ff-input-note">This historical conversation is preserved. <Link href="/">Start a new chat</Link> to ask about your workspace.</p>
         <div className="ff-results">
 
           {error && (
@@ -155,8 +151,10 @@ function DebugSessionContent({ sessionId }: { sessionId: string | null }) {
 }
 
 function SessionRoute() {
-  const sessionId = useSearchParams().get("session");
-  return <DebugSessionContent key={sessionId ?? "new"} sessionId={sessionId} />;
+  const parameters = useSearchParams();
+  const sessionId = parameters.get("session");
+  const chatId = parameters.get("chat");
+  return <DebugSessionContent key={sessionId ?? chatId ?? "new"} sessionId={sessionId} chatId={chatId} />;
 }
 
 export default function DebugSessionPage() {

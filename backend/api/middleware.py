@@ -36,7 +36,7 @@ class RequestGuardMiddleware:
                 raise
             await api_request(owner, scope["path"], scope["method"])
             maximum = (52 if scope["path"] == "/api/documents" else 8) * 1024 * 1024
-            if scope["path"].startswith("/api/agent/"):
+            if scope["path"].startswith(("/api/agent/", "/api/chat/messages")):
                 maximum = 32 * 1024
             declared = headers.get(b"content-length")
             if declared is not None:

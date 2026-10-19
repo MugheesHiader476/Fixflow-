@@ -39,6 +39,12 @@ describe("connector gateway", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("returns a fixed actionable error code without reflecting provider messages or codes", async () => {
+    vi.mocked(fetch).mockResolvedValue(Response.json({ error: { code: "MISSING_SCOPE", message: "private-provider-response" } }, { status: 422 }));
+    const response = await GET(new Request("http://localhost/api/connectors/google_drive/callback?state=state&code=private-code"), { params: Promise.resolve({ provider: "google_drive" }) });
+    expect(response.headers.get("Location")).toBe("http://localhost/connectors?connection_error=missing_scope");
+  });
+
   it("returns OAuth callbacks to the configured public origin behind Docker", async () => {
     vi.stubEnv("CONNECTORS__PUBLIC_URL", "https://app.example.test/");
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- Reproduce Next's local Docker HTTP bind URL.

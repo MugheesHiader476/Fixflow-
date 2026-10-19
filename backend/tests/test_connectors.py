@@ -26,9 +26,11 @@ from backend.connectors.events import signed
 from backend.connectors.gmail import GmailConnector
 from backend.connectors.http import ProviderHttp
 from backend.connectors.rates import reserve
+from backend.connectors.registry import missing_configuration
 from backend.connectors.vault import TokenVault
 from backend.db.models import (
     ConnectorAccount,
+    ConnectorAudit,
     ConnectorCredential,
     ConnectorEvent,
     ConnectorOAuthState,
@@ -229,6 +231,38 @@ async def test_oauth_state_is_owned_one_time_and_encrypted(
     )
 
 
+async def test_oauth_cards_explain_setup_without_exposing_configured_credentials(
+    client: httpx.AsyncClient, connector_environment: None, config: ConnectorConfig
+) -> None:
+    result = await client.get("/api/connectors")
+    assert result.status_code == 200
+    for card in result.json():
+        assert card["callback_url"] == config.public_url + "/api/connectors/" + card["provider"] + "/callback"
+        assert not card["missing_configuration"] and isinstance(card["required_scopes"], list)
+    assert "test-google-secret" not in result.text and VAULT_KEY not in result.text
+    assert missing_configuration("slack", ConnectorConfig()) == [
+        "CONNECTORS__VAULT_KEY", "CONNECTORS__SLACK_CLIENT_ID", "CONNECTORS__SLACK_CLIENT_SECRET",
+    ]
+
+
+async def test_oauth_failed_exchange_is_consumed_and_audited_with_a_fixed_code(
+    client: httpx.AsyncClient, connector_environment: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def failed(self: GmailConnector, code: str, verifier: str) -> None:
+        raise ConnectorError("missing_scope", "Required read permissions were not granted")
+
+    monkeypatch.setattr(GmailConnector, "handle_callback", failed)
+    start = await client.post("/api/connectors/gmail/connect")
+    state = parse_qs(urlsplit(start.json()["authorization_url"]).query)["state"][0]
+    result = await client.get("/api/connectors/gmail/callback", params={"state": state, "code": "private-code"})
+    assert result.status_code == 422 and result.json()["error"]["code"] == "MISSING_SCOPE"
+    async with get_session_factory()() as db:
+        audit = await db.scalar(select(ConnectorAudit).where(ConnectorAudit.event == "authorization_failed"))
+        assert audit and audit.details == {"provider": "gmail", "code": "missing_scope"}
+    replay = await client.get("/api/connectors/gmail/callback", params={"state": state, "code": "private-code"})
+    assert replay.status_code == 422 and replay.json()["error"]["code"] == "INVALID_STATE"
+
+
 async def test_connection_selection_sync_ingestion_acl_and_disconnect(
     client: httpx.AsyncClient, connector_environment: None, gmail_http: list[httpx.Request]
 ) -> None:
@@ -243,6 +277,8 @@ async def test_connection_selection_sync_ingestion_acl_and_disconnect(
     assert (
         await client.post(f"/api/connectors/{identifier}/configure", json={"resource_ids": ["INBOX"]})
     ).status_code == 200
+    status = await client.get(f"/api/connectors/{identifier}/status")
+    assert status.json()["sync_status"] == "pending"  # Saving a selection starts synchronization.
     for _ in range(2):
         assert (await client.post(f"/api/connectors/{identifier}/sync", json={})).status_code == 202
     async with get_session_factory()() as db:

@@ -1,4 +1,4 @@
-/** Actual React UI; mocked Clerk/gateway. No provider, model or mail calls. */
+/** Actual React chat; mocked Clerk/gateway/model receipts. No live answer-quality claim. */
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -15,57 +15,66 @@ const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 const id = "11111111-1111-4111-8111-111111111111";
+const nextId = "22222222-2222-4222-8222-222222222222";
 const evidence = "e-" + "a".repeat(32);
-const action = { id, account_id: id, status: "draft", payload: { recipient: "manager@example.com", subject: "Release update", body: "Payment tests are failing." }, payload_hash: "b".repeat(64), provider_message_id: null, error: null };
-const completed = { id, question: "Review project status and prepare a reply", status: "completed", steps: 4, usage: { model_calls: 4, input_tokens: 400, output_tokens: 120 }, error: null, created_at: "2026-10-17T10:00:00Z", answer: { answer: "Here is the observed status.", claims: [{ text: "Payment tests are failing.", citations: [{ evidence_id: evidence, quote: "Payment tests are failing." }] }], limitations: ["Selected sources only."] }, materials: [{ id: evidence, title: "Manager feedback", text: "Payment tests are failing.", reference: { source_id: id }, observed_at: "2026-10-17T10:00:00Z", warning: null }], actions: [action], files: [{ id, filename: "SRS.pdf", mime_type: "application/pdf", download_path: `/api/agent/files/${id}/download` }] };
+const completed = {
+  id, parent_run_id: null, question: "What is blocking the release?", status: "completed", steps: 4,
+  usage: { model_calls: 4, input_tokens: 400, output_tokens: 120 }, error: null, created_at: "2026-10-19T10:00:00Z",
+  answer: { answer: "The release is waiting on payment integration tests.", claims: [{ text: "The team reported that payment tests are failing.", citations: [{ evidence_id: evidence, quote: "Payment tests are failing." }] }], limitations: ["Based on the selected sources. Deployment status has not been verified."] },
+  materials: [{ id: evidence, title: "Release discussion · Slack", text: "Payment tests are failing.", reference: { source_id: id }, observed_at: "2026-10-19T10:00:00Z", warning: null }],
+  actions: [], files: [],
+};
 const submissions = [];
-let sends = 0;
+const followed = { ...completed, id: nextId, parent_run_id: id, question: "What should we do next?" };
+const cards = ["gmail", "github", "google_drive", "slack"].map((provider) => ({ provider, configured: true, setup_message: null, install_url: null, accounts: [] }));
 await page.route("**/api/backend/**", async (route) => {
   const path = new URL(route.request().url()).pathname;
-  if (path.endsWith("/execute")) {
-    assert.deepEqual(route.request().postDataJSON(), { expected_hash: action.payload_hash });
-    sends++;
-    return route.fulfill({ json: { ...action, status: "sent", provider_message_id: "mock-receipt" } });
+  if (path.endsWith("/connectors")) return route.fulfill({ json: cards });
+  if (path.endsWith("/chat/messages") && route.request().method() === "POST") {
+    const request = route.request().postDataJSON(); submissions.push(request);
+    assert.deepEqual(Object.keys(request).sort(), ["parent_message_id", "question"]);
+    const response = request.parent_message_id ? followed : completed;
+    return route.fulfill({ status: 202, json: response });
   }
-  if (path.endsWith("/agent/runs") && route.request().method() === "POST") {
-    submissions.push(route.request().postDataJSON());
-    return route.fulfill({ status: 202, json: completed });
-  }
-  if (path.endsWith("/agent/runs")) return route.fulfill({ json: [completed] });
-  if (path.includes("/agent/runs/")) return route.fulfill({ json: completed });
+  if (path.endsWith("/thread")) return route.fulfill({ json: path.includes(nextId) ? [completed, followed] : [completed] });
+  if (path.endsWith("/chat/messages")) return route.fulfill({ json: [completed] });
+  if (path.includes("/chat/messages/")) return route.fulfill({ json: completed });
   return route.fulfill({ json: [] });
 });
 const checks = [];
 async function check(name, run) {
-  await run();
-  checks.push(name);
+  await run(); checks.push(name);
 }
 try {
   for (const width of [320, 390, 1280]) {
-    await check(`Draft review, exact send, citations, private file and no overflow at ${width}px`, async () => {
+    await check(`Prompt, citations, automatic follow-up, new chat and bounded layout at ${width}px`, async () => {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto("http://127.0.0.1:4173/", { waitUntil: "networkidle" });
     const panel = page.getByRole("region", { name: "Workspace assistant" });
-    await panel.getByRole("checkbox", { name: "Allow email drafts and replies for this request" }).check();
-    await panel.getByRole("textbox", { name: "Task", exact: true }).fill(completed.question);
-    await panel.getByRole("button", { name: "Run workflow", exact: true }).click();
+    await expect(panel.getByRole("checkbox")).toHaveCount(0);
+    await expect(panel.getByText("Run workflow", { exact: true })).toHaveCount(0);
+    await panel.getByRole("textbox", { name: "Message", exact: true }).fill(completed.question);
+    await panel.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(panel.getByText(completed.answer.answer)).toBeVisible();
-    assert.equal(submissions.at(-1).action_mode, "draft");
-    assert.deepEqual(submissions.at(-1).allowed_recipients, []);
-    assert.equal(sends, checks.length);
-    await panel.locator(`#${evidence} summary`).click();
-    await expect(panel.getByRole("link", { name: "[1]", exact: true })).toHaveAttribute("href", `#${evidence}`);
-    await expect(panel.getByRole("link", { name: "SRS.pdf" })).toHaveAttribute("href", `/api/backend/api/agent/files/${id}/download`);
-    await panel.getByRole("button", { name: "Send this exact email" }).click();
-    await expect(panel.getByText("Gmail receipt: mock-receipt")).toBeVisible();
+    assert.equal(submissions.at(-1).parent_message_id, null);
+    await expect(panel.getByRole("link", { name: "[1]", exact: true })).toHaveAttribute("href", `#source-${id}-${evidence}`);
+    await panel.getByText("1 consulted source", { exact: true }).click();
+    await panel.locator(`#source-${id}-${evidence} summary`).click();
+    await expect(panel.getByText(completed.materials[0].text, { exact: true })).toBeVisible();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Overflow at ${width}px`);
-    await page.screenshot({ path: resolve(output, `agent-${width}.png`), fullPage: true });
+    await page.screenshot({ path: resolve(output, `chat-${width}.png`), fullPage: true });
+    if (width === 1280) await page.screenshot({ path: resolve(output, "chat-preview.png"), fullPage: false });
+    await panel.getByRole("textbox", { name: "Message", exact: true }).fill("What should we do next?");
+    await panel.getByRole("textbox", { name: "Message", exact: true }).press("Enter");
+    await expect(panel.getByRole("article", { name: "Chat message" })).toHaveCount(2);
+    assert.equal(submissions.at(-1).parent_message_id, id);
+    await panel.getByRole("button", { name: "New chat", exact: true }).click();
+    await expect(panel.getByRole("article", { name: "Chat message" })).toHaveCount(0);
     });
   }
-  assert.equal(sends, 3);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ boundary: "Actual React UI with mocked Clerk/gateway; no live send", checks }));
+  console.log(JSON.stringify({ boundary: "Actual React chat with mocked gateway/model receipts", checks }));
 } finally {
-  await writeFile(resolve(output, "agent-report.json"), JSON.stringify({ checks, errors }, null, 2));
+  await writeFile(resolve(output, "chat-report.json"), JSON.stringify({ checks, errors }, null, 2));
   await browser.close();
 }

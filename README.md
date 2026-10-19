@@ -1,8 +1,8 @@
 # FixFlow
 
-FixFlow is a private workspace assistant with validated document parsing, project evidence search, and Grok workflows across selected connected apps. Upload or paste supported content, or synchronize owner-selected resources through Gmail, Google Drive, GitHub, and Slack. Parsing produces validated canonical output; selected sources can then be indexed as structure-aware passages.
+FixFlow is a private chat assistant for your uploads and selected Gmail, Google Drive, GitHub and Slack content. Connect apps once, choose the resources chat can read, then ask questions in the main prompt box. The assistant chooses relevant searches and reads automatically and returns answers with inspectable source quotations. Follow-ups continue the conversation; there is no workflow configuration or run button.
 
-The previous OKF/concept, legacy embedding and local inference stages remain removed. Existing conversations and saved findings remain readable. The new evidence stage defaults to PostgreSQL lexical search, with explicit optional Gemini hybrid search and single-call cited synthesis; it does not revive the historical chunk/vector runtime. See [evidence/vector setup](backend/README.md) and [Grok workflow setup, tools and limits](docs/workspace-agents.md).
+The previous OKF/concept, legacy embedding and local inference stages remain removed. Existing conversations and saved findings remain readable. The evidence stage supports PostgreSQL lexical search and optional Gemini hybrid search; it does not revive the historical chunk/vector runtime. See [evidence/vector setup](backend/README.md) and [assistant tools and limits](docs/workspace-agents.md).
 
 See [the module and data-flow audit](docs/product-reset.md), [the file inventory](docs/project-file-inventory.md), and [the parsing contract](docs/ingestion-pipeline.md).
 
@@ -34,13 +34,25 @@ flowchart LR
 
 Account ownership, connector permissions/leases, raw uploads, persistent parsing jobs, PostgreSQL, Clerk authentication, theme/layout, history, and saved snapshots remain. Historical database tables/columns and migrations remain to preserve existing data; they are not active processing features.
 
-## Workspace workflows
+## Workspace chat
 
-Use **Work with your workspace** on the home page. Ask a question, investigate connected evidence, request files or ask for an email draft/reply. The agent chooses among typed tools rather than a fixed sequence. [Setup and examples](docs/workspace-agents.md) explain the Grok key/model, migration `0010`, selected-resource scope and Gmail send consent. Backend placeholders are in `backend/.env`; secrets stay server-side.
+Use **Ask your workspace** on the home page. Enter a question and press Enter or Send. Shift+Enter adds a newline. Authorized app selections and parsed uploads are included automatically; there is no per-message project or app switch. Open **Conversation History** to resume a chat, or **New chat** to start another. Questions and consulted source excerpts are sent to xAI. Selected resources, bounded search pages and last verified permissions determine coverage; an answer is not proof that every account item was reviewed.
 
-The [prompt and security policy](docs/agent-security.md) adds versioned instructions, credential-egress checks, continuous tool/output validation and shared PostgreSQL quotas. Email tools require explicit permission for each run. Failed password/MFA lockout is handled by Clerk and must be verified in the deployed Clerk Dashboard.
+Set backend-only `GROK__API_KEY` and `GROK__MODEL` to a function-capable model available to a funded xAI account. Missing keys, provider denials and limits produce an explicit failure without automatic paid retries or an alternate provider. Optional Gemini settings remain embeddings. The [prompt and security policy](docs/agent-security.md) retains versioned instructions, credential-egress checks, continuous tool/output validation and PostgreSQL quotas. Clerk handles sign-in and credential lockout.
 
-Email defaults to a reviewable draft. Automatic sending requires an explicit per-request recipient policy and separately granted Gmail send scope. Uncertain delivery is never blindly retried. Google Workspace PDF exports and existing Drive/GitHub PDFs use private version-bound downloads. Existing lexical/hybrid search, source parsing and historical records remain available. Developer workflow guidance is in [SKILL.md](SKILL.md).
+New chat messages have no email action authority. Existing run/action APIs and historical email receipts remain compatible; previously prepared emails require their exact stored approval. Drive/GitHub file requests use private version-bound downloads. Durable assistant work continues internally across restarts so closing a tab does not discard a question. PostgreSQL stores chats; the browser is not their database. The model receives at most eight previous turns; the UI reopens the most recent twenty. Existing source parsing, optional lexical/hybrid indexes and historical saved records remain available.
+
+### Connect and manually verify your apps
+
+1. Start the configured local stack with `npm run dev:local`, then open `http://localhost:3000` and sign in.
+2. Open **Connected Apps**. Expand **OAuth connection setup** on a card to see its exact callback URL, requested scopes and missing backend settings. Register that callback in the provider's developer console. Google needs the Gmail/Drive APIs and consent/test users; GitHub needs a read-only GitHub App installation; Slack needs user OAuth read scopes. [Provider setup](docs/connectors.md) lists the native requirements.
+3. Connect the app, approve the provider consent, then **Configure resources**. Save the labels, folders/files, repositories or channels that chat can read. Saving starts durable synchronization automatically. Empty selections grant chat no account content. **Reconnect** refreshes authorization; **Check connection** tests native access.
+4. Check **Knowledge Sources** for parsed snapshots. Ask a question about selected data in chat, open the cited sources, then ask a follow-up. Native reads can fetch selected resources while background synchronization continues. Slack limits may delay large histories.
+5. For a repeatable check, upload a small note containing a distinctive fact, wait for **Parsed**, ask about that fact and inspect the quotation. A disconnected or unselected app must not contribute fresh evidence.
+
+The local preflight checks configuration and schema only: `myenev/bin/python -m scripts.check_launch`. A successful preflight does not establish live consent, credits, model answer quality or commercial launch approval. A commercial launch still needs production Clerk keys, provider consent/publication approvals for the advertised audience, domain/TLS, privacy/retention terms and backup/restore verification. Google test-mode consent is not production verification.
+
+Chat uses `POST/GET /api/chat/messages`, `GET /api/chat/messages/{id}` and `/{id}/thread`, and `POST /api/chat/messages/{id}/cancel`. Creation returns 202 after durable acceptance; the UI polls for the answer, stops after three refresh failures and offers manual refresh. Gateway authentication, owner filtering, source/native ACL checks and model/context/time budgets are retained. The older `/api/chat` remains retired.
 
 ## Native setup
 
@@ -126,7 +138,7 @@ Configure root `.env` from `.env.example` without overwriting existing credentia
 
 Migration `0006` adds the `parsed` terminal state and preserves all records. Existing application databases must be upgraded before this checkout processes uploads. No automatic bulk reprocessing occurs. Re-upload/update explicitly to replace an older artifact with the current parsing contract. Older chunk/vector rows remain stored and unused.
 
-Migrations `0007`–`0009` add separate opt-in passage/index tables, source-scoped Gemini vectors and durable embedding jobs. Migration `0010` adds workspace runs, email actions and private file tickets. Review the migrations and apply through `head` before using this checkout; there is no automatic corpus backfill. Lexical search works without an API key. Optional hybrid search requires backend-only `GEMINI__API_KEY`, explicit preparation of source batches and selection of Hybrid mode. Evidence-only synthesis uses `EVIDENCE__API_KEY`/`EVIDENCE__MODEL`; workspace workflows use `GROK__API_KEY`/`GROK__MODEL`. Exact/latest/live facts require authorized native tools; unsupported operations are reported explicitly.
+Migrations `0007`–`0009` add separate opt-in passage/index tables, source-scoped Gemini vectors and durable embedding jobs. Migration `0010` adds durable assistant messages, historical email actions and private file tickets. Review the migrations and apply through `head` before using this checkout; there is no automatic corpus backfill. Lexical search works without an embedding key. Optional hybrid search requires backend-only `GEMINI__API_KEY` and explicit preparation of source batches. Chat chooses available retrieval automatically; Grok generation requires `GROK__API_KEY`/`GROK__MODEL`. The separate evidence-only API remains compatible with `EVIDENCE__API_KEY`/`EVIDENCE__MODEL`. Exact/latest/live facts require authorized native tools; unsupported operations are reported explicitly.
 
 ## Supported parsing
 
@@ -162,4 +174,8 @@ For the complete frontend/backend/security evaluation, install Playwright separa
 myenev/bin/python scripts/evaluate.py
 ```
 
-The evaluator saves command results, JUnit, dependency audits, secret scans, browser screenshots/traces and real-stack database proof in `.local/evaluation/report.html`. It builds the application and uses test ports 4173, 3012 and 8012; it does not start or stop the normal application services. External Clerk identities are simulated only in the isolated browser build. See [the security evaluation and reproduction steps](docs/security-evaluation-2026-10-17.md) for the tested boundaries, findings and remaining limitations.
+The evaluator saves command results, JUnit, dependency audits, secret scans, browser screenshots/traces and real-stack database proof in `.local/evaluation/report.html`. It builds the application and uses test ports 4173, 3012 and 8012; it does not start or stop the normal application services. The root production-build gate rewrites `.next`, so run the complete evaluator before starting the normal production frontend. External Clerk identities are simulated only in the isolated browser build. See [the security evaluation and reproduction steps](docs/security-evaluation-2026-10-17.md) for the tested boundaries, findings and remaining limitations.
+
+This runner checks software behavior and security. Its mocked provider/model responses do not measure live answer quality. Before evaluating the LLM, manually verify a real cited answer from each app you intend to use, a follow-up, history restoration and exclusion after removing access. Model credits, consent, resource selections and parsed data must work first.
+
+Then freeze a small, approved test corpus and record reference questions, expected facts, source identities/versions and exact supporting quotations. Include questions requiring multiple apps, missing or conflicting evidence, follow-ups, revoked access and instructions embedded in source content. Score factual correctness, quotation/citation support, retrieval coverage and appropriate uncertainty separately; record end-to-end latency, model calls and token usage. Keep permission or credential failures as release blockers rather than averaging them into a quality score. A representative gold corpus and live answer-quality runner have not yet been supplied; no live accuracy score is claimed.

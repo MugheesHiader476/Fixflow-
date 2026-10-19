@@ -204,6 +204,27 @@ button:disabled { cursor: not-allowed; }
 .ff-greeting-mark svg { transform: rotate(8deg); }
 .ff-start-description { margin-top: 13px; margin-bottom: 33px; font-size: 13px; color: var(--muted); }
 .ff-composer-wrap { width: 100%; text-align: left; }
+.ff-chat { width: 100%; min-width: 0; text-align: left; }
+.ff-chat-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.ff-chat-heading h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+.ff-chat-apps { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 18px; color: var(--muted); font-size: 11px; }
+.ff-chat-apps > span { margin-right: 3px; }
+.ff-chat-apps a { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 20px; }
+.ff-chat-apps a:hover { border-color: var(--muted); color: var(--foreground); }
+.ff-chat-apps .ff-chat-app-ready { color: var(--success); }
+.ff-chat-messages { display: grid; gap: 28px; }
+.ff-chat-turn { min-width: 0; }
+.ff-chat-question { width: fit-content; max-width: 90%; margin: 0 0 18px auto; padding: 12px 18px; border-radius: 18px 18px 4px 18px; background: var(--panel-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.ff-chat-answer { min-width: 0; line-height: 1.8; margin-bottom: 25px; }
+.ff-chat-author { display: block; color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.ff-chat-thinking { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
+.ff-chat-citation { display: inline-block; color: var(--accent); font-size: 11px; font-weight: 500; padding-inline: 2px; text-decoration: underline; }
+.ff-chat-sources { margin-top: 14px; color: var(--muted); font-size: 12px; }
+.ff-chat-sources summary { cursor: pointer; }
+.ff-chat-sources details { scroll-margin-top: 90px; }
+.ff-chat-add { display: inline-flex; align-items: center; gap: 5px; padding: 6px; color: var(--muted); font-size: 11px; }
+.ff-chat-add:hover { color: var(--foreground); }
+.ff-chat-history-link { display: inline-block; margin-top: 10px; font-size: 11px; color: var(--muted); }
 .ff-composer { position: relative; border: 1px solid var(--border-strong); border-radius: 19px; background: var(--panel); padding: 16px 17px 12px; box-shadow: 0 5px 24px #0000000a; }
 .ff-composer:focus-within { border-color: var(--muted); box-shadow: 0 0 0 1px var(--border-strong), 0 7px 28px #00000012; }
 .ff-composer textarea { display: block; width: 100%; resize: vertical; min-height: 83px; max-height: 320px; padding: 3px 3px 12px; border: 0; background: transparent; color: var(--foreground); font-size: 15px; line-height: 1.7; }

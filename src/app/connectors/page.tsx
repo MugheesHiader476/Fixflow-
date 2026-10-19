@@ -14,6 +14,22 @@ import { useResource } from "@/lib/use-resource";
 
 const NAMES = { gmail: "Gmail", github: "GitHub", google_drive: "Google Drive", slack: "Slack" };
 const DETAIL = { gmail: "Selected labels, messages and optional attachments.", github: "Installed repositories, files, issues and pull requests.", google_drive: "Selected files, folders and shared drives.", slack: "Authorized channels, messages and thread replies." };
+const SETUP = {
+  gmail: "https://console.cloud.google.com/apis/credentials",
+  google_drive: "https://console.cloud.google.com/apis/credentials",
+  github: "https://github.com/settings/apps",
+  slack: "https://api.slack.com/apps",
+};
+const CONNECTION_ERRORS: Record<string, string> = {
+  api_disabled: "The Google API is disabled in your OAuth app's Cloud project. Enable Google Drive API or Gmail API in Google Cloud, then reconnect.",
+  missing_scope: "Required provider permissions were not granted. Reconnect and approve the listed read permissions.",
+  reauth_required: "The provider rejected the authorization exchange. Check your app client credentials and reconnect.",
+  invalid_state: "This authorization link expired or was already used. Start a new connection in the signed-in account.",
+  sign_in: "Your sign-in expired during authorization. Sign in to FixFlow and connect again.",
+  provider_unavailable: "The provider is temporarily unavailable. Try connecting again later.",
+  rate_limited: "The provider is rate limited. Try connecting again later.",
+  inaccessible: "The provider denied data access. Check API enablement, app permissions and your organization's access policy, then reconnect.",
+};
 
 function accountLabel(count: number) {
   if (!count) return "Not connected";
@@ -23,8 +39,9 @@ function accountLabel(count: number) {
 function subscribeLocation(callback: () => void) { window.addEventListener("popstate", callback); return () => window.removeEventListener("popstate", callback); }
 function connectionNotice() {
   const query = new URL(window.location.href).searchParams;
-  if (query.has("connection_error")) return "Authorization did not complete. Start connection again and check provider permissions.";
-  return query.has("connected") ? "Account connected. Select resources to start synchronization." : null;
+  const failure = query.get("connection_error");
+  if (failure) return Object.hasOwn(CONNECTION_ERRORS, failure) ? CONNECTION_ERRORS[failure] : "Authorization did not complete. Check the provider app, registered callback URL and required permissions, then reconnect.";
+  return query.has("connected") ? "Account connected. Choose the resources your chat can use; synchronization starts when you save." : null;
 }
 
 export default function ConnectorsPage() {
@@ -65,9 +82,14 @@ export default function ConnectorsPage() {
     {data && visible?.length === 0 && <p role="status" className="ff-connector-empty">No apps match this view. Try another search or choose All apps.</p>}
     {data && <div className="ff-connector-grid">{visible?.map((card) => <section key={card.provider} aria-label={NAMES[card.provider]} className="ff-connector-card">
       <div className="ff-connector-card-title"><ProviderIcon provider={card.provider} /><div><h3>{NAMES[card.provider]}</h3><span>{accountLabel(card.accounts.length)}</span></div><span className={card.configured ? "ff-connection-tag" : "ff-connection-tag ff-needs-setup"}>{card.configured ? "Available" : "Setup needed"}</span></div><p className="ff-connector-detail">{DETAIL[card.provider]}</p>
-      {card.gmail_send_enabled && <p className="mt-3 text-xs text-muted">Gmail sending is enabled on this server. Connecting also requests send permission; reconnect existing accounts to grant it. Workflow recipient authorization is still required.</p>}
+      {card.gmail_send_enabled && <p className="mt-3 text-xs text-muted">This server requests Gmail send permission. Chat uses read access; previously prepared emails still require exact approval.</p>}
       {!card.configured && <p className="mt-3 text-sm text-muted">{card.setup_message}</p>}
       {!card.accounts.length && <p className="mt-3 text-sm text-muted">No account connected.</p>}
+      {card.callback_url && <details className="mt-3 min-w-0 text-xs text-muted"><summary className="cursor-pointer">OAuth connection setup</summary><p className="mt-2">Register this exact redirect URL in your provider app:</p><code className="mt-2 block break-all select-all">{card.callback_url}</code>
+        {!!card.missing_configuration?.length && <p className="mt-2 break-words">Missing backend settings: {card.missing_configuration.join(", ")}</p>}
+        {!!card.required_scopes?.length && <p className="mt-2 break-all">Requested permissions: {card.required_scopes.join(", ")}</p>}
+        {card.provider === "github" && <p className="mt-2">Install your GitHub App with read permissions for Metadata, Contents, Issues and Pull requests, then select repositories here.</p>}
+        <a className="mt-2 inline-block underline" href={SETUP[card.provider]} target="_blank" rel="noopener noreferrer">Open provider app settings</a><p className="mt-2">Local credentials do not verify provider approval. Connect, grant consent, and select resources to test access.</p></details>}
       <div className="mt-4 flex items-center gap-3"><Button variant="primary" disabled={!card.configured || busy !== null} loading={busy === card.provider} onClick={() => void connect(card.provider)}>Connect {NAMES[card.provider]}</Button>
         {card.install_url && <a href={card.install_url} target="_blank" rel="noopener noreferrer" className="text-sm underline">Install GitHub App</a>}
       </div>

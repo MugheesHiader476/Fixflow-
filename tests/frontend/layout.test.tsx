@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/layout/app-shell";
+vi.mock("@/lib/chat", () => ({ chatHistory: vi.fn().mockResolvedValue([]) }));
 import { RightPanel } from "@/components/layout/right-panel";
 import { ThemeProvider, useTheme } from "@/components/layout/theme-provider";
 import { ASYNCIO_DIAGNOSIS } from "./fixtures/diagnosis";

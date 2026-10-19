@@ -18,9 +18,9 @@ function connectionDetails(online: boolean | null) {
     return { label: "Checking backend", text: "Checking" };
   }
   if (online) {
-    return { label: "Connected to parsing backend", text: "Connected" };
+    return { label: "Connected to workspace backend", text: "Connected" };
   }
-  return { label: "Parsing backend unavailable", text: "Offline" };
+  return { label: "Workspace backend unavailable", text: "Offline" };
 }
 
 export function TopBar({

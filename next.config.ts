@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // OAuth callback queries contain single-use credentials. Keep ordinary request logs.
+  logging: { incomingRequests: { ignore: [/\/api\/connectors\/[^/]+\/callback(?:\?|$)/] } },
   headers() {
     return [{
       source: "/:path*",

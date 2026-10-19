@@ -83,6 +83,10 @@ async def configure(account_id: UUID, payload: Selection, db: Database) -> Accou
     await connectors.owned_account(db, account_id)
     try:
         account = await connectors.configure(db, account_id, payload)
+        if payload.resource_ids:
+            account = await connectors.owned_account(db, account_id, lock=True)
+            await connectors.enqueue(db, account)
+            await db.commit()
     except ConnectorError as error:
         await db.rollback()
         await connectors.failure(account_id, error)

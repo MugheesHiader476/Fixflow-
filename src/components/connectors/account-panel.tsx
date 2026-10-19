@@ -62,10 +62,10 @@ export function AccountPanel({ account, onChanged, onReconnect }: {
         <Button size="sm" disabled={busy || syncing || !account.configuration.resource_ids.length} onClick={() => void run(() => syncConnector(account.id, "reconcile"))}>Reconcile</Button>
         <Button size="sm" disabled={busy} onClick={() => void run(() => checkConnector(account.id))}>Check connection</Button>
       </>}
-      {!authorized && <Button size="sm" onClick={onReconnect}>Reconnect</Button>}
+      <Button size="sm" disabled={busy} onClick={onReconnect}>Reconnect</Button>
       {account.status !== "disconnected" && <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirming(true)}>Disconnect</Button>}
     </div>
-    <p className="mt-3 text-xs text-muted">Sync completion means resources were fetched and queued. Check parsing status in <Link href="/sources" className="underline">Knowledge Sources</Link>.</p>
+    <p className="mt-3 text-xs text-muted">Selected resources are available to chat. Synced snapshots become searchable after parsing; check progress in <Link href="/sources" className="underline">Knowledge Sources</Link>.</p>
     {selecting && <ResourceSelection account={account} onClose={() => setSelecting(false)} onSaved={() => { setSelecting(false); onChanged(); }} />}
     {confirming && <DisconnectConfirmation account={account} busy={busy} onClose={() => setConfirming(false)} onConfirm={(policy) => void run(() => disconnectConnector(account.id, policy))} />}
   </div>;
