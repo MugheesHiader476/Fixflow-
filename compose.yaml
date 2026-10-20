@@ -145,13 +145,53 @@ services:
       NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_URL:-/sign-up}
       NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL:-/}
       NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL:-/}
-    ports:
-      - "127.0.0.1:3000:3000"
+    expose:
+      - "3000"
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
 
+  gateway-init:
+    <<: *backend-image
+    user: "0:0"
+    command: ["python", "-m", "scripts.docker_gateway"]
+    environment:
+      CONNECTORS__PUBLIC_URL: ${CONNECTORS__PUBLIC_URL:-http://localhost:3000}
+    volumes:
+      - fixflow_gateway:/gateway
+    network_mode: none
+    read_only: true
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+
+  gateway:
+    image: nginx:1.30.5-alpine3.24@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35
+    user: "101:101"
+    entrypoint: ["nginx"]
+    command: ["-c", "/gateway/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - fixflow_gateway:/gateway:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      gateway-init:
+        condition: service_completed_successfully
+        restart: true
+      frontend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
 volumes:
   fixflow_postgres:
   fixflow_uploads:
+  fixflow_gateway:

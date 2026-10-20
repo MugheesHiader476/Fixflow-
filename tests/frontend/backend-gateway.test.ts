@@ -70,6 +70,17 @@ describe("trusted backend gateway", () => {
   });
 
   it.each([
+    "http://localhost:3000", "https://attacker.example",
+  ])("rejects %s even when forwarded headers claim the configured HTTPS origin", async (origin) => {
+    vi.stubEnv("CONNECTORS__PUBLIC_URL", "https://localhost:3000");
+    const response = await proxyBackend(new Request("https://localhost:3000/api/backend/api/connectors/gmail/connect", {
+      method: "POST", headers: { Origin: origin, "X-Forwarded-Host": "localhost:3000", "X-Forwarded-Proto": "https" },
+    }), "api/connectors/gmail/connect");
+    expect(response.status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
     new Headers({ Origin: "https://attacker.example", Host: "attacker.example", "X-Forwarded-Host": "attacker.example" }),
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- The internal Docker bind address must never be accepted as a browser origin.
     new Headers({ Origin: "http://0.0.0.0:3000" }),

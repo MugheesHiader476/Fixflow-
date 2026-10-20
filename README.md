@@ -87,7 +87,7 @@ URLs shown in Connected Apps for Google/GitHub too if using them on this origin.
 An HTTP origin leaves Slack marked **Setup needed** and cannot start Slack OAuth.
 Localhost supports browser OAuth redirects; external webhook delivery still
 requires a reachable public HTTPS origin. Production HTTPS uses a TLS reverse
-proxy; the development certificate is only for the native development launcher.
+proxy; localhost development certificates are supported by the native development launcher and Docker gateway.
 
 Gmail and Google Drive use the same Google OAuth project grant. Disconnecting one
 immediately marks the matching connection for the same Google account and FixFlow
@@ -174,7 +174,19 @@ Production native startup uses `npm run build` followed by `npm run start:local`
 
 ## Docker
 
-Configure root `.env` from `.env.example` without overwriting existing credentials, then run `docker compose up -d`. The order remains healthy database → migration → backend → frontend. No model overlay/relay remains. Preserve existing DB/upload volumes; never use `docker compose down -v` unless deliberately erasing them.
+Configure root `.env` from `.env.example` without overwriting existing credentials, then run `docker compose up -d`. The order remains healthy database → migration → backend → frontend → public gateway. No model overlay/relay remains. Preserve existing DB/upload volumes; never use `docker compose down -v` unless deliberately erasing them.
+
+For local Slack OAuth, set `CONNECTORS__PUBLIC_URL=https://localhost:3000` and include
+`https://localhost:3000` in `FRONTEND_ORIGINS`, then run `docker compose up -d`.
+The gateway automatically serves real HTTPS on port 3000, using a reusable private
+localhost certificate in the `fixflow_gateway` volume. Open **https://localhost:3000/connectors**,
+accept the development certificate, and sign in on that origin before connecting.
+Old HTTP bookmarks redirect to the HTTPS Connected Apps page without replaying writes
+or callback query strings. The internal Next server stays private HTTP, and its
+fixed-origin write protection remains enabled. HTTP-only localhost setups still work
+when the configured public origin is HTTP; Slack then requires setup. For a public
+deployment, keep a trusted TLS reverse proxy in front of the gateway; it never
+generates a development certificate for a public hostname.
 
 Migration `0006` adds the `parsed` terminal state and preserves all records. Existing application databases must be upgraded before this checkout processes uploads. No automatic bulk reprocessing occurs. Re-upload/update explicitly to replace an older artifact with the current parsing contract. Older chunk/vector rows remain stored and unused.
 
