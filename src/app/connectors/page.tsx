@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { connectProvider, listConnectors } from "@/lib/connectors";
 import type { ConnectorProvider } from "@/lib/connector-contracts";
 import { useResource } from "@/lib/use-resource";
+import { CONNECTION_ERRORS, knownOAuthFailure } from "@/lib/oauth-errors";
 
 const NAMES = { gmail: "Gmail", github: "GitHub", google_drive: "Google Drive", slack: "Slack" };
 const DETAIL = { gmail: "Selected labels, messages and optional attachments.", github: "Installed repositories, files, issues and pull requests.", google_drive: "Selected files, folders and shared drives.", slack: "Authorized channels, messages and thread replies." };
@@ -19,16 +20,6 @@ const SETUP = {
   google_drive: "https://console.cloud.google.com/apis/credentials",
   github: "https://github.com/settings/apps",
   slack: "https://api.slack.com/apps",
-};
-const CONNECTION_ERRORS: Record<string, string> = {
-  api_disabled: "The Google API is disabled in your OAuth app's Cloud project. Enable Google Drive API or Gmail API in Google Cloud, then reconnect.",
-  missing_scope: "Required provider permissions were not granted. Reconnect and approve the listed read permissions.",
-  reauth_required: "The provider rejected the authorization exchange. Check your app client credentials and reconnect.",
-  invalid_state: "This authorization link expired or was already used. Start a new connection in the signed-in account.",
-  sign_in: "Your sign-in expired during authorization. Sign in to FixFlow and connect again.",
-  provider_unavailable: "The provider is temporarily unavailable. Try connecting again later.",
-  rate_limited: "The provider is rate limited. Try connecting again later.",
-  inaccessible: "The provider denied data access. Check API enablement, app permissions and your organization's access policy, then reconnect.",
 };
 
 function accountLabel(count: number) {
@@ -40,7 +31,7 @@ function subscribeLocation(callback: () => void) { window.addEventListener("pops
 function connectionNotice() {
   const query = new URL(window.location.href).searchParams;
   const failure = query.get("connection_error");
-  if (failure) return Object.hasOwn(CONNECTION_ERRORS, failure) ? CONNECTION_ERRORS[failure] : "Authorization did not complete. Check the provider app, registered callback URL and required permissions, then reconnect.";
+  if (failure) return CONNECTION_ERRORS[knownOAuthFailure(failure) ?? "authorization"];
   return query.has("connected") ? "Account connected. Choose the resources your chat can use; synchronization starts when you save." : null;
 }
 

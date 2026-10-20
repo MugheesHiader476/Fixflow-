@@ -102,7 +102,13 @@ async def providers(db: AsyncSession) -> list[ProviderResponse]:
             ProviderResponse(
                 provider=provider,
                 configured=enabled,
-                setup_message=None if enabled else "Server OAuth credentials and encryption key are required",
+                setup_message=(
+                    None if enabled else
+                    "Slack requires HTTPS. Set CONNECTORS__PUBLIC_URL=https://localhost:3000 on both servers "
+                    "for local development, then register the HTTPS callback in Slack."
+                    if provider == "slack" and not config.public_url.startswith("https://") else
+                    "Server OAuth credentials and encryption key are required"
+                ),
                 accounts=[await response(db, account) for account in accounts if account.provider == provider],
                 install_url=install_url,
                 gmail_send_enabled=provider == "gmail" and config.gmail_send_enabled,
@@ -281,7 +287,7 @@ async def failure(identifier: UUID, error: ConnectorError) -> None:
         if account is None or account.status == "disconnected":
             return
         account.error_message = str(error)[:500]
-        if error.code in {"reauth_required", "missing_scope", "credential_unavailable"}:
+        if error.code in {"reauth_required", "missing_scope", "credential_unavailable", "oauth_refresh_uncertain"}:
             account.status, account.authentication_status = "reauth_required", "invalid"
             await db.execute(
                 update(KnowledgeSource)
@@ -299,8 +305,59 @@ async def failure(identifier: UUID, error: ConnectorError) -> None:
         audit(db, account.owner_id, "connector_failure", account.id, code=error.code)
 
 
+async def invalidate_google_companions(db: AsyncSession, account: ConnectorAccount) -> None:
+    """Google revokes the project grant, including the owner's matching Gmail/Drive connection."""
+    companions = list(await db.scalars(
+        select(ConnectorAccount)
+        .where(
+            ConnectorAccount.owner_id == account.owner_id,
+            ConnectorAccount.external_account_id == account.external_account_id,
+            ConnectorAccount.provider.in_(("gmail", "google_drive")),
+            ConnectorAccount.id != account.id,
+            ConnectorAccount.status != "disconnected",
+        )
+        .order_by(ConnectorAccount.id)
+        .with_for_update()
+    ))
+    vault = TokenVault(get_settings().connectors)
+    for companion in companions:
+        if companion.credential_reference:
+            await vault.revoke(db, companion.owner_id, companion.credential_reference)
+        companion.credential_reference = None
+        companion.status, companion.authentication_status = "reauth_required", "revoked"
+        companion.sync_status, companion.provider_health = "cancelled", "unavailable"
+        companion.error_message = (
+            "A related Google app was disconnected. Gmail and Google Drive share authorization for this Google "
+            "account; reconnect this app to continue. Stored content has been kept."
+        )
+        companion.meta = {k: v for k, v in companion.meta.items() if k not in {"pending_events", "failed_refs"}}
+        await disable_agent_workflows(db, companion.id)
+        await db.execute(
+            update(KnowledgeSource)
+            .where(KnowledgeSource.connector_account_id == companion.id)
+            .values(is_active=False, access_expires_at=datetime.now(UTC))
+        )
+        await db.execute(
+            update(ConnectorSyncJob)
+            .where(ConnectorSyncJob.account_id == companion.id, ConnectorSyncJob.status.in_(PENDING))
+            .values(status="cancelled")
+        )
+        await db.execute(delete(ConnectorSubscription).where(ConnectorSubscription.account_id == companion.id))
+        audit(
+            db, companion.owner_id, "shared_google_authorization_disabled", companion.id,
+            disconnected_account_id=str(account.id),
+        )
+
+
 async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> ConnectorAccount:
-    account = await owned_account(db, identifier, lock=True)
+    account = await owned_account(db, identifier)
+    if account.provider in {"gmail", "google_drive"}:
+        # Acquire the group lock before any account row lock, so simultaneous
+        # Gmail/Drive disconnects cannot deadlock while invalidating each other.
+        identity = f"google-disconnect:{account.owner_id}:{account.external_account_id}".encode()
+        key = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big", signed=True)
+        await db.execute(select(func.pg_advisory_xact_lock(key)))
+    await db.refresh(account, with_for_update=True)
     warning = None
     connector = None
     token = None
@@ -368,6 +425,10 @@ async def disconnect(db: AsyncSession, identifier: UUID, policy: str) -> Connect
                 .values(removed_at=datetime.now(UTC))
             )
     audit(db, account.owner_id, "connection_revoked", account.id, policy=policy, local_access_disabled=True)
+    if account.provider in {"gmail", "google_drive"} and connector and token:
+        # Commit all affected access/credential changes before the provider can
+        # revoke the shared grant, even if its response later fails or is lost.
+        await invalidate_google_companions(db, account)
     await db.commit()
     for path in paths:
         if not path.is_symlink() and path.resolve().is_relative_to(get_settings().upload_dir.resolve()):

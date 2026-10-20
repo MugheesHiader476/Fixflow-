@@ -5,10 +5,12 @@ import json
 from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import SecretStr
 
 from backend.config import get_settings
@@ -19,12 +21,57 @@ from backend.connectors.drive import GoogleDriveConnector
 from backend.connectors.github import GitHubConnector
 from backend.connectors.gmail import GmailConnector
 from backend.connectors.http import ProviderHttp
+from backend.connectors.registry import adapter, configured, missing_configuration
 from backend.connectors.slack import SlackConnector
 from backend.db.models import ConnectorAccount
 from backend.schemas.connectors import QuerySpec, Resource, Selection
 from backend.services.connector_sources import asset_path
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_slack_http_callback_is_unavailable_before_authorization() -> None:
+    config = ConnectorConfig(
+        vault_key=SecretStr(Fernet.generate_key().decode()),
+        google_client_id="google-client", google_client_secret=SecretStr("google-secret"),
+        slack_client_id="slack-client", slack_client_secret=SecretStr("slack-secret"),
+    )
+    assert not configured("slack", config)
+    assert configured("gmail", config) and configured("google_drive", config)
+    assert missing_configuration("slack", config) == ["CONNECTORS__PUBLIC_URL (HTTPS required for Slack)"]
+    with pytest.raises(ConnectorError, match="HTTPS required for Slack"):
+        adapter("slack", config)
+    with pytest.raises(ConnectorError, match="Slack requires an HTTPS") as error:
+        await SlackConnector(config).get_authorization_url("state", "verifier")
+    assert error.value.code == "not_configured"
+
+
+@pytest.mark.parametrize("origin", ["https://localhost:3000", "https://app.example.test"])
+async def test_slack_https_callback_matches_authorization_and_exchange(origin: str) -> None:
+    config = ConnectorConfig(
+        public_url=origin, vault_key=SecretStr(Fernet.generate_key().decode()),
+        slack_client_id="slack-client", slack_client_secret=SecretStr("slack-secret"),
+    )
+    callback = origin + "/api/connectors/slack/callback"
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert parse_qs(request.content.decode())["redirect_uri"] == [callback]
+        return httpx.Response(200, json={
+            "ok": True,
+            "authed_user": {"access_token": "private-test-token", "scope": ",".join(SlackConnector.scopes)},
+        })
+
+    assert configured("slack", config) and not missing_configuration("slack", config)
+    connector = SlackConnector(config, http=ProviderHttp(config, httpx.MockTransport(respond)))
+    url = await connector.get_authorization_url("owner-bound-state", "verifier")
+    query = parse_qs(urlsplit(url).query)
+    assert query["redirect_uri"] == [callback]
+    assert query["state"] == ["owner-bound-state"]
+    assert query["user_scope"] == [",".join(SlackConnector.scopes)] and "scope" not in query
+    await connector.exchange("code", "verifier")
+    assert len(requests) == 1
 
 
 @pytest.fixture

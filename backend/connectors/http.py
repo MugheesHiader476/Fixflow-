@@ -13,6 +13,7 @@ import httpx
 
 from backend.connectors.config import ConnectorConfig
 from backend.connectors.core import ConnectorError, record, records
+from backend.connectors.oauth import TOKEN_ENDPOINTS, OAuthOperation, oauth_failure, uncertain_token
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,26 @@ class ProviderHttp:
     def __init__(self, config: ConnectorConfig, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.config, self.transport = config, transport
 
+    async def oauth_response(self, response: httpx.Response, operation: OAuthOperation) -> dict[str, object]:
+        if response.status_code == 429:
+            raise ConnectorError(
+                "rate_limited", "Provider authorization is rate limited; retry later", retry_seconds(response)
+            )
+        if response.status_code >= 500 or 300 <= response.status_code < 400:
+            raise uncertain_token(operation)
+        body = bytearray()
+        async for block in response.aiter_bytes():
+            body.extend(block)
+            if len(body) > min(self.config.max_response_bytes, 65536):
+                raise uncertain_token(operation)
+        try:
+            result = record(json.loads(body, parse_constant=reject_nonfinite))
+        except (ValueError, RecursionError, ConnectorError):
+            raise uncertain_token(operation) from None
+        if result.get("error") or result.get("ok") is False or not 200 <= response.status_code < 300:
+            raise oauth_failure(result.get("error"), operation)
+        return result
+
     async def request(
         self,
         method: str,
@@ -70,6 +91,7 @@ class ProviderHttp:
         basic: tuple[str, str] | None = None,
         raw: bool = False,
         retry: bool = True,
+        oauth_operation: OAuthOperation | None = None,
         _redirects: int = 0,
     ) -> bytes | dict[str, object] | list[dict[str, object]]:
         try:
@@ -86,10 +108,12 @@ class ProviderHttp:
             or port not in {None, 443}
         ):
             raise ConnectorError("unsafe_url", "Provider URL is not authorized")
+        if oauth_operation is not None and (method != "POST" or url not in TOKEN_ENDPOINTS):
+            raise ConnectorError("unsafe_url", "OAuth token endpoint is not authorized")
         request_headers = {"Accept": "application/json", **(headers or {})}
         if token:
             request_headers["Authorization"] = "Bearer " + token
-        attempts = 3 if retry else 1
+        attempts = 1 if url in TOKEN_ENDPOINTS or not retry else 3
         for attempt in range(attempts):
             try:
                 async with (
@@ -100,6 +124,8 @@ class ProviderHttp:
                         method, url, headers=request_headers, params=params, data=data, json=payload, auth=basic
                     ) as response,
                 ):
+                    if oauth_operation is not None:
+                        return await self.oauth_response(response, oauth_operation)
                     if response.status_code in {301, 302, 303, 307, 308} and method == "GET":
                         try:
                             destination = urljoin(url, response.headers.get("Location", ""))
@@ -214,7 +240,9 @@ class ProviderHttp:
                         return records(decoded) if isinstance(decoded, list) else record(decoded)
                     except (ValueError, RecursionError) as error:
                         raise ConnectorError("invalid_response", "Provider returned invalid JSON") from error
-            except (httpx.TimeoutException, httpx.NetworkError) as error:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError, httpx.DecodingError) as error:
+                if oauth_operation is not None:
+                    raise uncertain_token(oauth_operation) from None
                 if attempt == attempts - 1:
                     raise ConnectorError(
                         "provider_unavailable", "Provider request failed; synchronization can retry", 30

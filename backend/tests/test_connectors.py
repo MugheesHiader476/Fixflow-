@@ -68,6 +68,7 @@ BODY = (
 @pytest.fixture
 def config() -> ConnectorConfig:
     return ConnectorConfig(
+        public_url="https://localhost:3000",
         vault_key=SecretStr(VAULT_KEY),
         google_client_id="test-google-client",
         google_client_secret=SecretStr("test-google-secret"),
@@ -242,7 +243,22 @@ async def test_oauth_cards_explain_setup_without_exposing_configured_credentials
     assert "test-google-secret" not in result.text and VAULT_KEY not in result.text
     assert missing_configuration("slack", ConnectorConfig()) == [
         "CONNECTORS__VAULT_KEY", "CONNECTORS__SLACK_CLIENT_ID", "CONNECTORS__SLACK_CLIENT_SECRET",
+        "CONNECTORS__PUBLIC_URL (HTTPS required for Slack)",
     ]
+
+
+async def test_slack_http_origin_returns_actionable_setup_without_creating_oauth_state(
+    client: httpx.AsyncClient, db: AsyncSession, connector_environment: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CONNECTORS__PUBLIC_URL", "http://localhost:3000")
+    get_settings.cache_clear()
+    result = await client.get("/api/connectors")
+    cards = {card["provider"]: card for card in result.json()}
+    assert cards["gmail"]["configured"] and cards["google_drive"]["configured"]
+    assert not cards["slack"]["configured"] and "Slack requires HTTPS" in cards["slack"]["setup_message"]
+    start = await client.post("/api/connectors/slack/connect")
+    assert start.status_code == 503 and "HTTPS required for Slack" in start.json()["error"]["message"]
+    assert await db.scalar(select(func.count()).select_from(ConnectorOAuthState)) == 0
 
 
 async def test_oauth_failed_exchange_is_consumed_and_audited_with_a_fixed_code(

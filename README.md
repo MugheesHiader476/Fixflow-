@@ -70,6 +70,46 @@ npm run dev:local
 
 The initialized local PostgreSQL helper supports `bash scripts/local_postgres.sh start|status|stop`. It uses a Unix socket and port 55432 and does not initialize a new cluster. Alternatively use configured PostgreSQL or `docker compose up -d --wait db`.
 
+Slack requires an HTTPS OAuth callback, including during local development. Set
+`CONNECTORS__PUBLIC_URL=https://localhost:3000` in the backend configuration and
+the Next environment (`.env.local` overrides root `.env`), then run
+`npm run dev:local`. Running `npm run dev` separately also detects this origin
+and serves HTTPS. The backend gateway remains private HTTP on port 8000.
+Add `https://localhost:3000` to `FRONTEND_ORIGINS` if using explicit CORS origins.
+
+The development launcher creates and reuses a private certificate under
+`.local/https/`; it does not install a system certificate authority or disable
+TLS verification. Accept the localhost development certificate in your browser, then
+open `https://localhost:3000` and sign in there. In your Slack app's
+**OAuth & Permissions → Redirect URLs**, register exactly
+`https://localhost:3000/api/connectors/slack/callback`. Register the HTTPS callback
+URLs shown in Connected Apps for Google/GitHub too if using them on this origin.
+An HTTP origin leaves Slack marked **Setup needed** and cannot start Slack OAuth.
+Localhost supports browser OAuth redirects; external webhook delivery still
+requires a reachable public HTTPS origin. Production HTTPS uses a TLS reverse
+proxy; the development certificate is only for the native development launcher.
+
+Gmail and Google Drive use the same Google OAuth project grant. Disconnecting one
+immediately marks the matching connection for the same Google account and FixFlow
+owner as requiring reconnection, wipes its credentials, cancels its active work,
+and disables source access before remote revocation. That companion connection's
+stored content is retained even if the selected connection is purged. Other Google
+accounts and other FixFlow owners are not changed by the local disconnect action.
+
+If a FixFlow session expires during provider consent, the callback redirects to
+the prebuilt sign-in page without carrying its code or state. After signing in,
+Connected Apps explains that a new connection must be started; an old callback
+is never replayed under a different session. Normal signed-out API requests
+still return 401, and callbacks still require an authenticated, matching owner.
+
+OAuth failures use fixed categories for rejected client credentials, invalid or
+expired codes, callback mismatches, scopes and denied access. Provider descriptions
+and unknown error strings are never reflected in redirects, public errors or audit
+details. Token exchanges and refresh requests use one HTTP attempt and never follow
+redirects. A lost, malformed or ambiguous refresh response durably disables the old
+credential and its source/workflow access until reconnection. Explicit rate-limit
+rejections retain credentials for a later retry; ordinary reads keep bounded retries.
+
 For an opt-in two-replica backend with a private Nginx balancer and a separate
 PostgreSQL runtime login, configure `POSTGRES_RUNTIME_PASSWORD` with a distinct
 random 32–128 character URL-safe password, then use Docker Compose 2.24.4 or later:

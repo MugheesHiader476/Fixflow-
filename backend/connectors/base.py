@@ -8,14 +8,16 @@ from urllib.parse import urlencode
 
 from fastapi import UploadFile
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from backend.connectors.config import ConnectorConfig
 from backend.connectors.core import ConnectorError, EnvelopeFactory, number, record, string
 from backend.connectors.http import ProviderHttp
+from backend.connectors.oauth import oauth_failure, uncertain_token
 from backend.connectors.vault import TokenVault
-from backend.db.models import ConnectorAccount, ConnectorAudit
+from backend.db.models import ConnectorAccount, ConnectorAudit, ConnectorSyncJob, KnowledgeSource
 from backend.db.session import get_session_factory
+from backend.repositories.agent_lifecycle import disable as disable_agent_workflows
 from backend.schemas.connectors import Credentials, Provider, RawSourceEnvelope, Resource
 from backend.services.uploads import discard_upload, safe_filename, save_upload
 
@@ -70,6 +72,8 @@ class OAuthConnector:
         return EnvelopeFactory(self.account.id, self.account.owner_id, self.provider, self.account.external_account_id)
 
     async def get_authorization_url(self, state: str, verifier: str) -> str:
+        if self.provider == "slack" and not self.config.public_url.startswith("https://"):
+            raise ConnectorError("not_configured", "Slack requires an HTTPS CONNECTORS__PUBLIC_URL and callback URL")
         parameters = {
             "client_id": self.client_id,
             "redirect_uri": self.callback_url,
@@ -91,10 +95,20 @@ class OAuthConnector:
 
     def token_result(self, result: dict[str, object], previous: Credentials | None = None) -> Credentials:
         if result.get("error") or result.get("ok") is False:
-            raise ConnectorError(
-                "reauth_required", "Provider authorization failed; reconnect and grant the required read permissions"
-            )
+            raise oauth_failure(result.get("error"), "refresh" if previous else "exchange")
+        try:
+            return self.token_credentials(result, previous)
+        except ConnectorError as error:
+            if error.code != "invalid_response":
+                raise
+            raise uncertain_token("refresh" if previous else "exchange") from None
+        except (KeyError, ValueError, TypeError, OverflowError):
+            raise uncertain_token("refresh" if previous else "exchange") from None
+
+    def token_credentials(self, result: dict[str, object], previous: Credentials | None = None) -> Credentials:
         payload = record(result["authed_user"]) if self.provider == "slack" and "authed_user" in result else result
+        if not string(payload.get("access_token", "")):
+            raise ConnectorError("invalid_response", "Provider returned no access token")
         scopes = string(payload.get("scope", "")).replace(",", " ").split()
         if not scopes and previous:
             scopes = previous.scopes
@@ -122,7 +136,9 @@ class OAuthConnector:
         }
         if self.provider != "slack":
             values.update(grant_type="authorization_code", code_verifier=verifier)
-        return self.token_result(record(await self.http.request("POST", self.exchange_endpoint, data=values)))
+        return self.token_result(record(await self.http.request(
+            "POST", self.exchange_endpoint, data=values, retry=False, oauth_operation="exchange"
+        )))
 
     async def refresh(self, credentials: Credentials) -> Credentials:
         if credentials.refresh_token is None:
@@ -131,6 +147,8 @@ class OAuthConnector:
             await self.http.request(
                 "POST",
                 self.exchange_endpoint,
+                retry=False,
+                oauth_operation="refresh",
                 data={
                     "grant_type": "refresh_token",
                     "client_id": self.client_id,
@@ -145,6 +163,7 @@ class OAuthConnector:
         if self.account is None:
             raise ConnectorError("not_connected", "Connect a provider account first")
         vault = TokenVault(self.config)
+        refresh_failure: ConnectorError | None = None
         async with get_session_factory().begin() as db:
             account = await db.scalar(
                 select(ConnectorAccount).where(ConnectorAccount.id == self.account.id).with_for_update()
@@ -157,14 +176,42 @@ class OAuthConnector:
                 raise ConnectorError("reauth_required", "Connection is not authorized; reconnect this account")
             credentials = await vault.retrieve(db, account.owner_id, account.credential_reference, lock=True)
             if credentials.expires_at and credentials.expires_at <= datetime.now(UTC) + timedelta(seconds=60):
-                credentials = await self.refresh(credentials)
-                await vault.rotate(db, account.owner_id, account.credential_reference, credentials)
-                db.add(
-                    ConnectorAudit(
-                        owner_id=account.owner_id, account_id=account.id, event="token_refreshed", details={}
+                try:
+                    credentials = await self.refresh(credentials)
+                except ConnectorError as error:
+                    if error.code == "rate_limited":
+                        raise
+                    refresh_failure = error
+                    # Commit terminal refresh failure before raising. Otherwise a
+                    # later worker could reuse the possibly consumed refresh token.
+                    await vault.revoke(db, account.owner_id, account.credential_reference)
+                    account.credential_reference = None
+                    account.status, account.authentication_status = "reauth_required", "invalid"
+                    account.sync_status, account.provider_health = "failed", "unavailable"
+                    account.error_message = str(error)
+                    await disable_agent_workflows(db, account.id, reason="Connector authorization must be renewed")
+                    await db.execute(update(KnowledgeSource).where(
+                        KnowledgeSource.connector_account_id == account.id
+                    ).values(is_active=False, access_expires_at=datetime.now(UTC)))
+                    await db.execute(update(ConnectorSyncJob).where(
+                        ConnectorSyncJob.account_id == account.id,
+                        ConnectorSyncJob.status.in_(("pending", "running", "waiting")),
+                    ).values(status="failed"))
+                    db.add(ConnectorAudit(
+                        owner_id=account.owner_id, account_id=account.id, event="token_refresh_failed",
+                        details={"code": error.code},
+                    ))
+                else:
+                    await vault.rotate(db, account.owner_id, account.credential_reference, credentials)
+                    db.add(
+                        ConnectorAudit(
+                            owner_id=account.owner_id, account_id=account.id, event="token_refreshed", details={}
+                        )
                     )
-                )
-            return credentials.access_token.get_secret_value()
+            token = credentials.access_token.get_secret_value()
+        if refresh_failure:
+            raise refresh_failure
+        return token
 
     async def get(
         self, path: str, params: dict[str, str | int] | None = None, *, token: str | None = None

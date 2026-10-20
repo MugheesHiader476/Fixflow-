@@ -59,7 +59,7 @@ describe("trusted backend gateway", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each(["http://localhost:3000", "https://app.example.test"])("accepts %s behind a Docker bind address", async (origin) => {
+  it.each(["http://localhost:3000", "https://localhost:3000", "https://app.example.test"])("accepts %s behind a Docker bind address", async (origin) => {
     vi.stubEnv("CONNECTORS__PUBLIC_URL", origin);
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- Reproduce Next's local Docker HTTP bind URL.
     const response = await proxyBackend(new Request("http://0.0.0.0:3000/api/backend/api/connectors/gmail/connect", {

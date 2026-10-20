@@ -22,7 +22,10 @@ ADAPTERS: dict[str, Callable[[ConnectorConfig, ConnectorAccount | None], Connect
 
 def adapter(provider: Provider, config: ConnectorConfig, account: ConnectorAccount | None = None) -> Connector:
     if not configured(provider, config):
-        raise ConnectorError("not_configured", "Configure this provider's server credentials and token vault first")
+        raise ConnectorError(
+            "not_configured",
+            "Complete this provider's server setup: " + ", ".join(missing_configuration(provider, config)),
+        )
     return ADAPTERS[provider](config, account)
 
 
@@ -42,7 +45,7 @@ def configured(provider: Provider, config: ConnectorConfig) -> bool:
             and config.github_app_id
             and config.github_private_key
         )
-    return bool(config.slack_client_id and config.slack_client_secret)
+    return bool(config.slack_client_id and config.slack_client_secret and config.public_url.startswith("https://"))
 
 
 def missing_configuration(provider: Provider, config: ConnectorConfig) -> list[str]:
@@ -53,6 +56,8 @@ def missing_configuration(provider: Provider, config: ConnectorConfig) -> list[s
         if provider == "github" else ["slack_client_id", "slack_client_secret"]
     )
     missing = ["CONNECTORS__" + name.upper() for name in fields if not getattr(config, name)]
+    if provider == "slack" and not config.public_url.startswith("https://"):
+        missing.append("CONNECTORS__PUBLIC_URL (HTTPS required for Slack)")
     if config.vault_key:
         try:
             TokenVault(config)

@@ -1,5 +1,6 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { oauthSignInRedirect } from "@/lib/server/oauth-redirect";
 
 function isAccountRoute(pathname: string): boolean {
   return ["/sign-in", "/sign-up", "/__clerk"].some(
@@ -14,6 +15,10 @@ export default clerkMiddleware(async (auth, request) => {
 
   const { userId } = await auth();
   if (userId) return;
+
+  if (request.method === "GET" && /^\/api\/connectors\/(gmail|github|google_drive|slack)\/callback$/.test(pathname)) {
+    return oauthSignInRedirect(request);
+  }
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Sign in to use FixFlow." }, { status: 401 });

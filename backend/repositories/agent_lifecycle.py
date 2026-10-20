@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.models import AgentAction, AgentFile, AgentRun
 
 
-async def disable(db: AsyncSession, account_id: UUID, *, purge: bool = False) -> None:
+async def disable(
+    db: AsyncSession, account_id: UUID, *, purge: bool = False,
+    reason: str = "A connected source was disconnected or purged",
+) -> None:
     rows = list(
         await db.scalars(
             select(AgentRun).where(AgentRun.scope["accounts"].contains([{"id": str(account_id)}])).with_for_update()
@@ -17,7 +20,7 @@ async def disable(db: AsyncSession, account_id: UUID, *, purge: bool = False) ->
     for run in rows:
         if run.status in {"queued", "running"} or purge:
             run.status, run.run_token, run.pending_calls = "cancelled", None, []
-            run.error = "A connected source was disconnected or purged"
+            run.error = reason
         if purge:
             run.messages, run.materials, run.answer = [], [], None
             await db.execute(delete(AgentFile).where(AgentFile.run_id == run.id))

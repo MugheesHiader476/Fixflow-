@@ -84,6 +84,7 @@ describe("Connected Apps", () => {
     render(<ConnectorsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
     expect(api.disconnectConnector).not.toHaveBeenCalled();
+    expect(screen.getByText(/Google shares authorization between Gmail and Google Drive/)).toBeDefined();
     fireEvent.click(screen.getByLabelText("Permanently purge connected sources and artifacts"));
     expect(screen.getByText("Purging cannot be undone.")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Confirm disconnect" }));
@@ -97,6 +98,16 @@ describe("Connected Apps", () => {
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeDefined();
     expect(screen.getByText(/Queued for ingestion: 2/)).toBeDefined();
     expect(screen.queryByText("Indexed")).toBeNull();
+  });
+
+  it.each(["google_drive", "slack"] as const)("shows the shared Google disconnect notice only for Google apps: %s", async (provider) => {
+    const account = { ...ACCOUNT, provider };
+    api.listConnectors.mockResolvedValue([{ ...CARDS.find((card) => card.provider === provider), accounts: [account] }]);
+    render(<ConnectorsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    expect(Boolean(screen.queryByText(/Google shares authorization between Gmail and Google Drive/))).toBe(provider === "google_drive");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(api.disconnectConnector).not.toHaveBeenCalled();
   });
 
   it("preserves a resource discovery error and supports cancellation", async () => {

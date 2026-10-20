@@ -16,6 +16,7 @@ function DisconnectConfirmation({ account, busy, onClose, onConfirm }: {
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="disconnect-title" className="m-auto max-w-lg rounded-2xl border border-border bg-panel p-6 text-foreground backdrop:bg-black/60">
     <h2 id="disconnect-title" className="text-xl font-semibold">Disconnect {account.display_name}?</h2>
     <p className="my-3 text-sm text-muted">Synchronization stops and connected content becomes unavailable for content access with every option.</p>
+    {(account.provider === "gmail" || account.provider === "google_drive") && <p className="my-3 text-sm text-muted">Google shares authorization between Gmail and Google Drive. Disconnecting also requires reconnecting any linked app for this Google account. The linked app&apos;s stored content is kept.</p>}
     <fieldset disabled={busy} className="space-y-3">
       <label className="block"><input type="radio" name="policy" checked={policy === "retain"} onChange={() => setPolicy("retain")} /> Retain content for an authorized reconnect</label>
       <label className="block"><input type="radio" name="policy" checked={policy === "soft_delete"} onChange={() => setPolicy("soft_delete")} /> Mark content removed</label>

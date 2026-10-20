@@ -2,7 +2,8 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
+import { get as httpsGet } from "node:https";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import nextEnvironment from "@next/env";
@@ -25,14 +26,32 @@ function backendCommand(code) {
   }
 }
 
-function loopbackOrigin(value, label) {
+function loopbackOrigin(value, label, allowHttps = false) {
   let url;
-  try { url = new URL(value); } catch { throw new Error(`${label} requires a configured HTTP loopback origin.`); }
-  if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+  try { url = new URL(value); } catch { throw new Error(`${label} requires a configured loopback origin.`); }
+  if (!(url.protocol === "http:" || (allowHttps && url.protocol === "https:")) || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
       || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error(`${label} requires an HTTP loopback origin without credentials or a path.`);
+    throw new Error(`${label} requires an ${allowHttps ? "HTTP(S)" : "HTTP"} loopback origin without credentials or a path.`);
   }
   return url;
+}
+
+async function frontendReady(origin) {
+  try {
+    const url = `${origin}/sign-up`;
+    if (!origin.startsWith("https://")) {
+      return (await fetch(url, { signal: AbortSignal.timeout(2000), redirect: "manual" })).status === 200;
+    }
+    const ca = await readFile(resolve(root, ".local/https/localhost.pem"));
+    return await new Promise((done) => {
+      const request = httpsGet(url, { ca }, (response) => {
+        response.resume();
+        done(response.statusCode === 200);
+      });
+      request.setTimeout(2000, () => request.destroy());
+      request.on("error", () => done(false));
+    });
+  } catch { return false; }
 }
 
 function start(name, executable, args, environment = nativeEnvironment) {
@@ -116,11 +135,12 @@ print(json.dumps({
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !process.env.CLERK_SECRET_KEY) {
     throw new Error("Configure both Clerk keys in the native frontend environment.");
   }
-  const frontend = loopbackOrigin(configuration.public_origin, "CONNECTORS__PUBLIC_URL");
+  const frontend = loopbackOrigin(configuration.public_origin, "CONNECTORS__PUBLIC_URL", development);
   const backend = loopbackOrigin(process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL, "INTERNAL_API_URL");
   if (process.env.CONNECTORS__PUBLIC_URL && new URL(process.env.CONNECTORS__PUBLIC_URL).origin !== frontend.origin) {
     throw new Error("Frontend and backend CONNECTORS__PUBLIC_URL must match.");
   }
+  process.env.CONNECTORS__PUBLIC_URL = frontend.origin;
   if (!development) {
     try { await access(resolve(root, ".next/standalone/server.js")); }
     catch { throw new Error("Production build is missing. Run npm run build, or use npm run dev:local."); }
@@ -152,13 +172,10 @@ asyncio.run(check())
   });
   if (!authenticated.ok) throw new Error("The running backend rejected the configured gateway. Restart it with the current native environment.");
   start("frontend", process.execPath, development
-    ? [resolve(root, "node_modules/next/dist/bin/next"), "dev", "--hostname", frontend.hostname, "--port", frontend.port || "80"]
+    ? [resolve(root, "scripts/start-development.mjs"), "--hostname", frontend.hostname, "--port", frontend.port || (frontend.protocol === "https:" ? "443" : "80")]
     : [resolve(root, "scripts/start-production.mjs"), "--hostname", frontend.hostname, "--port", frontend.port || "80"],
   { ...process.env });
-  await waitFor(async () => {
-    try { return (await fetch(`${frontend.origin}/sign-up`, { signal: AbortSignal.timeout(2000), redirect: "manual" })).status === 200; }
-    catch { return false; }
-  }, "Frontend", 60);
+  await waitFor(() => frontendReady(frontend.origin), "Frontend", 60);
   console.log(`FixFlow is ready at ${frontend.origin}. Ctrl+C stops processes started by this command; PostgreSQL stays running.`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : "Local startup failed.");
