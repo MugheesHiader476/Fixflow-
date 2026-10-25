@@ -23,6 +23,7 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `backend/security/rates.py`
 - `backend/services/acceptance_package.py`
 - `backend/services/agent.py`
+- `backend/services/grok.py`
 - `backend/services/proofos.py`
 - `backend/services/proofos_access.py`
 - `backend/services/proofos_extraction.py`
@@ -35,6 +36,7 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `backend/tests/fixtures/proofos/website-contract.txt`
 - `backend/tests/test_acceptance_package.py`
 - `backend/tests/test_api.py`
+- `backend/tests/test_connectors.py`
 - `backend/tests/test_database.py`
 - `backend/tests/test_github_evidence.py`
 - `backend/tests/test_proofos.py`

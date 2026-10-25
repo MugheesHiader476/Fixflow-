@@ -30,6 +30,9 @@ from backend.schemas.pipeline import digest
 from backend.services import proofos as domain
 from backend.services.ingestion import ingest_source
 from backend.services.proofos_jobs import process_job
+from backend.tests.test_connectors import config, connector_environment
+
+__all__ = ["config", "connector_environment"]
 
 pytestmark = pytest.mark.anyio
 BASE = "/api/proofos"
@@ -88,7 +91,7 @@ class World:
 
 
 @pytest.fixture
-async def proof_world(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> World:
+async def proof_world(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, connector_environment: None) -> World:
     selection = Selection(resource_ids=["42"], branches={"42": "main"}, categories=["actions", "checks", "deployments"])
     async with get_session_factory().begin() as db:
         credential = ConnectorCredential(owner_id=OWNER, ciphertext="synthetic-unused-encrypted-credential")

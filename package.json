@@ -9,7 +9,7 @@
     "start:local": "node scripts/start-local.mjs",
     "dev:local": "node scripts/start-local.mjs --dev",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },

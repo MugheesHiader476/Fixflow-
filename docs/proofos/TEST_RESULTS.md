@@ -41,3 +41,18 @@ No live Clerk/OAuth/provider/model calls, external writes or application databas
 Backend increase: 552 → 695 passed; frontend: 184 → 202 passed. The same two native OCR tests skip for missing adapters. Early iterations caught fixture drift, selection/policy/verification tampering and decision freshness defects; those were corrected and the final full suite rerun. Logs/JUnit/coverage/browser evidence remain ignored under .local and coverage. PostgreSQL test fixtures used separate *_test databases only, with mocked provider/model HTTP.
 
 The complete evaluator was extended with the ProofOS browser gate. Browser total: 46 checks across component and real-stack boundaries. Remote CI results are recorded in PROGRESS.md. Both dependency audit failures remain release blockers; no gate was disabled. No production application migration/deployment, live sign-in/provider consent, paid model request or customer communication is implied.
+
+## Clean-environment CI follow-up
+
+GitHub Actions run 40169231185 on 1abf2d2 completed with FAILURE. Its evaluation artifact confirms frontend lint/coverage, mypy, Bandit, migration comparison, production build, client-secret scan, all five component browser scripts and the real full-stack harness passed. SonarQube Scan was skipped after the evaluator failed; no Sonar result is claimed.
+
+Besides the inherited dependency audit failures, this run exposed three portability defects: typecheck used generated LayoutProps before Next generated them on a clean checkout; pinned Ruff rejected nested async context managers in the existing Grok transport; and ProofOS connector fixtures relied on local provider configuration. The follow-up generates route types before tsc, combines equivalent bounded async contexts, and makes the shared connector fixture override all synthetic IDs/credentials/origin explicitly. No real provider or .env setting is changed.
+
+| Follow-up validation | Executed outcome |
+| --- | --- |
+| npm run typecheck (next typegen && tsc --noEmit) | PASS: route types generated before TypeScript |
+| myenev/bin/python -m ruff check backend scripts | PASS locally with Ruff 0.16.7; remote uses pinned 0.16.9 |
+| myenev/bin/python -m mypy backend scripts | PASS: 161 source files |
+| ProofOS, agent and connector pytest modules, --no-cov, disposable proofos_final_test with provider settings explicitly blank in the command environment | PASS: 92 tests, 165.70 seconds |
+
+The 92-test portability run is finished and is not rerun for the user follow-up. Empty command-level settings were test-only overrides, not new application configuration. The previous full 695-test run precedes these CI portability changes; newest remote results must be checked separately.

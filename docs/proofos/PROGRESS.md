@@ -27,5 +27,13 @@ The real isolated Next/FastAPI/PostgreSQL/worker browser harness passed 16 check
 - Pushed `feat/proofos-transformation` to the explicitly chosen `MugheesHiader476/Fixflow-` repository; original origin unchanged. No force push, merge, production deployment or repository rename.
 - Draft PR: https://github.com/MugheesHiader476/Fixflow-/pull/1 (also attached to the Codex chat).
 - Initial complete delivery commit: `6bc70702ef9005bded22c7cb4d971ef6f52dacac`; includes backend/frontend slices and versioned audit/results.
-- Observed GitHub Actions run `40169166207`, SonarQube Analysis, IN_PROGRESS for that commit. This is a timestamped observation, not CI success. Documentation follow-ups can create a newer run; consult the PR checks for the current head. Actual final check status is also reported in the PR description/chat.
+- GitHub Actions run `40169166207` was cancelled after a newer documentation commit superseded it. Run `40169231185` on `1abf2d2` completed with FAILURE; Sonar scan was skipped. The downloaded evaluation artifact passed build, lint/coverage, mypy, Bandit, migration comparison, client-secret scan and every browser/full-stack script. In addition to inherited dependency audit failures, it exposed clean-checkout type generation, pinned Ruff async-context style and synthetic connector fixture isolation defects.
 - Both inherited dependency audits are local release blockers. The PR remains a draft; optional missing implementations are explicitly tracked and no all-features completion is claimed.
+
+## CI portability follow-up
+
+- Generate Next route types before tsc using the installed Next documentation's recommended typecheck sequence. Preserve route contracts and the generated agent warning.
+- Flatten equivalent bounded Grok HTTP contexts for pinned Ruff without changing timeouts, credential handling, response bounds or requests.
+- Bind ProofOS tests to the existing synthetic connector environment and override plain IDs/origin as well as secrets; operator .env files remain untouched. This removes a dependency on real provider configuration in CI.
+- Local follow-up: typecheck, Ruff and mypy pass; ProofOS/agent/connector modules pass 92 tests in 165.70 seconds against disposable proofos_final_test with explicitly blank inherited provider settings. The completed command is left alone as requested. Full earlier counts remain historical, not a claim of a second full run after this follow-up.
+- Push this focused fix to the same feature branch and inspect the new actual CI run. Do not disable inherited dependency audit gates or describe pending checks as successful.
