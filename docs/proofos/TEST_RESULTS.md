@@ -80,3 +80,18 @@ The complete local evaluator finished successfully against the new separate disp
 - Locked Python, production npm and complete npm dependency audits all pass with no known vulnerabilities. No audit ignore, changed gate, suppressed coverage or skipped workflow is introduced.
 
 Pushed-head GitHub Actions and Sonar outcomes are recorded in the PR after dispatch; successful local evaluation is not a remote success claim. No application database migration, deployment, live external consent or customer action is implied.
+
+## Sonar quality-gate remediation
+
+Completed Actions run 40175520732 on b7972d1 passes all 19 evaluator gates with zero warnings: 695 backend tests/two OCR skips (153.07 seconds), 202 frontend tests, browser/static/build/migration/secret checks and all dependency audits. Sonar scan upload passes, but the separate SonarCloud check fails new-code coverage 76.6% (requires 80%) and reliability E (requires A).
+
+The follow-up adds meaningful frontend client/UI behavior coverage and sender-parsing security regressions, and replaces a same-expression demo assertion with independent results and mutation isolation. Strict sender parsing is required, not disabled. No rule, exclusion, threshold, workflow or coverage configuration is weakened. Focused sender/workflow/demo run: 51 passed in 27.46 seconds.
+
+Final local reruns after this quality follow-up:
+
+- Full backend pytest with JUnit on disposable proofos_pr1_test: 702 passed, two OCR skips, 257.17 seconds, 82% combined coverage.
+- Full frontend coverage: 234 passed / 23 files; 88.76% line coverage, 76.69% branch coverage. All 32 additional client/UI regressions pass; two initial test-selector expectations were corrected to match actual accessible labels/error content, then the complete suite rerun.
+- ESLint, Next route-type generation/TypeScript, Ruff 0.16.9, mypy (162 files), Bandit and git diff --check pass.
+- Dependency versions/locks and the CI/coverage/Sonar configurations are unchanged from the verified zero-vulnerability security commit.
+
+New-code coverage must still be evaluated by the actual pushed-head Sonar analysis; local aggregate line coverage is not substituted for its 80% new-code threshold. Actual remote results are maintained in the PR after this follow-up push.

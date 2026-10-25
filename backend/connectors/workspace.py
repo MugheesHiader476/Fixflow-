@@ -6,9 +6,9 @@ import mimetypes
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from email import utils
 from email.message import EmailMessage
 from email.policy import SMTP
-from email.utils import parseaddr
 from pathlib import PurePosixPath
 from urllib.parse import quote
 from uuid import UUID
@@ -24,6 +24,12 @@ from backend.schemas.github_evidence import GitHubEvidenceRequest, GitHubEvidenc
 from backend.services.uploads import safe_filename
 
 SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
+
+def sender_address(value: str) -> str:
+    if not getattr(utils, "supports_strict_parsing", False):
+        raise ConnectorError("unsupported", "Email replies require a supported strict address parser")
+    return email_address(utils.parseaddr(value)[1])
 
 
 def headers(message: dict[str, object]) -> dict[str, str]:
@@ -415,7 +421,7 @@ class NativeWorkspace:
         if draft.reply_message_id:
             original = await self.gmail_message(draft.reply_message_id)
             values = headers(original)
-            recipient = email_address(parseaddr(values.get("from", ""), strict=True)[1])
+            recipient = sender_address(values.get("from", ""))
             if draft.recipient != recipient:
                 raise ConnectorError("inaccessible", "A reply must target the verified original sender")
             message_id = values.get("message-id", "")

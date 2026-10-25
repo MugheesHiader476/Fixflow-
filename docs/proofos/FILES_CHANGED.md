@@ -45,6 +45,7 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `backend/tests/test_proofos_tools.py`
 - `backend/tests/test_runtime_database.py`
 - `backend/tests/test_verification.py`
+- `backend/tests/test_workspace_senders.py`
 - `docs/proofos/DEMO.md`
 - `docs/proofos/DEPLOYMENT_GUIDE.md`
 - `docs/proofos/FILES_CHANGED.md`
@@ -110,3 +111,6 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `tests/frontend/diagnosis.test.ts`
 - `tests/frontend/fixtures/proofos.ts`
 - `tests/frontend/proofos.test.tsx`
+- `tests/frontend/proofos-client.test.ts`
+- `tests/frontend/proofos-interactions.test.tsx`
+- `tests/frontend/proofos-projects.test.tsx`

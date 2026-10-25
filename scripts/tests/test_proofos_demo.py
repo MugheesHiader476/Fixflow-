@@ -26,7 +26,12 @@ def test_synthetic_demo_distinguishes_failure_pending_acceptance_and_simulated_e
 
 
 def test_synthetic_input_hashes_and_customer_packages_are_reproducible() -> None:
-    assert scenario("B") == scenario("B")
+    first = scenario("B")
+    second = scenario("B")
+    assert first == second
+    assert first is not second
+    first["customer_hash"] = "modified fixture"
+    assert second["customer_hash"] != first["customer_hash"]
 
 
 def test_demo_cli_rejects_output_outside_ignored_private_directory(
