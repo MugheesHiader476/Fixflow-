@@ -20,6 +20,7 @@ from backend.connectors.gmail import GmailConnector
 from backend.connectors.slack import SlackConnector
 from backend.schemas.agent import DraftEmail, PrepareFile, ReadProvider, SearchProvider, email_address
 from backend.schemas.connectors import FetchResult, QuerySpec, Resource, Selection
+from backend.schemas.github_evidence import GitHubEvidenceRequest, GitHubEvidenceSnapshot
 from backend.services.uploads import safe_filename
 
 SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
@@ -190,6 +191,11 @@ class NativeWorkspace:
             QuerySpec(resource_id=args.resource_id, limit=args.limit, cursor=args.cursor), self.selection
         )
         return page.model_dump(mode="json")
+
+    async def github_evidence(self, args: GitHubEvidenceRequest) -> GitHubEvidenceSnapshot:
+        if not isinstance(self.connector, GitHubConnector):
+            raise ConnectorError("unsupported", "Use a GitHub account for milestone evidence")
+        return await self.connector.github_evidence(args, self.selection)
 
     async def github_status(self, args: ReadProvider) -> dict[str, object]:
         connector = self.connector

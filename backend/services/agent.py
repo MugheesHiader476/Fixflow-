@@ -35,7 +35,7 @@ from backend.schemas.pipeline import digest
 from backend.security.policy import POLICY_VERSION, PolicyViolation, redact, serialized_size, validate_disclosure
 from backend.security.prompt import SYSTEM_PROMPT
 from backend.security.runtime import configured_secrets, request_policy
-from backend.services import agent_actions, agent_files, grok
+from backend.services import agent_actions, agent_files, grok, proofos_tools
 from backend.services.access import owner_id
 from backend.services.workspace_tools import (
     ACTIVE,
@@ -294,6 +294,8 @@ async def dispatch(ctx: Context, call: dict[str, object]) -> dict[str, object]:
         raise PolicyViolation("Email actions were not authorized for this workflow")
     args = TOOL_MODELS[name][0].model_validate_json(string(call["arguments"]))
     validate_disclosure(args.model_dump(mode="json"), configured_secrets())
+    if name in proofos_tools.PROOF_TOOL_MODELS:
+        return await proofos_tools.dispatch(ctx, name, args, material)
     if call.get("waiting_source_id"):
         return await read_canonical(
             ctx,

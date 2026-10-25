@@ -1,0 +1,14 @@
+SYNTHETIC PROOFOS DEMONSTRATION CONTRACT
+Fictional parties: Example Studio and Example Customer.
+This fixture is not a customer agreement, invoice, real approval or payment record.
+
+Milestone: authenticated customer website delivery.
+Repository fixture: example/website, repository ID 42, branch main.
+Commit fixture: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.
+
+REQ-AUTH: The website must pass login and tenant isolation tests in the authentication suite of the approved GitHub workflow.
+REQ-DEPLOY: The approved website commit must have a successful production deployment.
+REQ-GUIDE: The supplier shall provide a versioned delivery guide for operating the website.
+REQ-ACCEPT: A separately authenticated customer must accept the exact reviewed package before invoice eligibility.
+
+Commercial conditions are fictional fixture inputs. No invoice is issued, sent or recorded by this demonstration.

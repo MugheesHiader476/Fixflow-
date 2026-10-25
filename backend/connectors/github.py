@@ -9,9 +9,11 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 import jwt
+from pydantic import ValidationError
 
 from backend.connectors.base import OAuthConnector
 from backend.connectors.core import ConnectorError, cursor_record, number, record, records, string, unbase64
+from backend.connectors.github_evidence import MAX_ARCHIVE_BYTES, fields, junit_archive
 from backend.processing.pipeline.inspection import CODE_LANGUAGES, EXTENSIONS
 from backend.schemas.connectors import (
     Credentials,
@@ -23,6 +25,17 @@ from backend.schemas.connectors import (
     ResourcePage,
     Selection,
     SyncPage,
+)
+from backend.schemas.github_evidence import (
+    GitHubArtifact,
+    GitHubCheckRun,
+    GitHubDeployment,
+    GitHubDeploymentStatus,
+    GitHubEvidenceCoverage,
+    GitHubEvidenceRequest,
+    GitHubEvidenceSnapshot,
+    GitHubJob,
+    GitHubWorkflowRun,
 )
 from backend.schemas.pipeline import digest
 
@@ -154,12 +167,15 @@ class GitHubConnector(OAuthConnector):
             str(number(repo["id"])): number(installation["id"]),
         }
         permissions: dict[str, object] = {"metadata": "read"}
-        if set(selection.categories) & {"code", "commits", "releases"}:
+        if set(selection.categories) & {"code", "commits", "releases", "actions"}:
             permissions["contents"] = "read"
         if "issues" in selection.categories:
             permissions["issues"] = "read"
         if "pull_requests" in selection.categories:
             permissions["pull_requests"] = "read"
+        for category in ("actions", "checks", "deployments"):
+            if category in selection.categories:
+                permissions[category] = "read"
         result = record(
             await self.http.request(
                 "POST",
@@ -170,6 +186,215 @@ class GitHubConnector(OAuthConnector):
             )
         )
         return string(result["token"])
+
+    async def evidence_pages(
+        self, path: str, key: str, token: str, args: GitHubEvidenceRequest,
+        params: dict[str, str | int] | None = None,
+    ) -> tuple[list[dict[str, object]], bool]:
+        output: list[dict[str, object]] = []
+        for page in range(1, args.max_pages + 1):
+            result = await self.get(
+                path, {**(params or {}), "per_page": 100, "page": page}, token=token
+            )
+            items = records(result[key])
+            total = number(result["total_count"])
+            if len(items) > 100 or total < len(output) + len(items):
+                raise ConnectorError("invalid_response", "GitHub evidence pagination is inconsistent")
+            output.extend(items)
+            if len(output) >= total:
+                return output, True
+            if len(items) < 100:
+                return output, False
+        return output, False
+
+    async def github_evidence(
+        self, args: GitHubEvidenceRequest, selection: Selection
+    ) -> GitHubEvidenceSnapshot:
+        try:
+            return await self.collect_evidence(args, selection)
+        except (ValidationError, KeyError, TypeError, ValueError) as error:
+            raise ConnectorError("invalid_response", "GitHub returned invalid evidence identities or fields") from error
+
+    async def collect_evidence(
+        self, args: GitHubEvidenceRequest, selection: Selection
+    ) -> GitHubEvidenceSnapshot:
+        if args.repository_id not in selection.resource_ids or "actions" not in selection.categories:
+            raise ConnectorError("inaccessible", "Select this repository and read-only Actions evidence first")
+        repo = await self.repository(args.repository_id)
+        if str(number(repo["id"])) != args.repository_id:
+            raise ConnectorError("invalid_response", "GitHub returned a different repository")
+        name = string(repo["full_name"])
+        branch = selection.branches.get(args.repository_id) or string(repo.get("default_branch", "main"))
+        if args.branch != branch:
+            raise ConnectorError("inaccessible", "Evidence must use the selected repository branch")
+        token = await self.installation_token(repo, selection)
+        head = await self.get(f"/repos/{name}/branches/{quote(branch, safe='')}", token=token)
+        if string(record(head["commit"])["sha"]) != args.sha:
+            raise ConnectorError("inaccessible", "Evidence must use the current selected branch commit")
+        path = f"/repos/{name}/actions/runs/{args.run_id}"
+        raw_run = await self.get(path, token=token)
+        if (
+            str(number(record(raw_run["repository"])["id"])) != args.repository_id
+            or number(raw_run["id"]) != args.run_id or number(raw_run["workflow_id"]) != args.workflow_id
+            or raw_run.get("head_sha") != args.sha or raw_run.get("head_branch") != branch
+            or (raw_run.get("head_repository") is not None and
+                str(number(record(raw_run["head_repository"])["id"])) != args.repository_id)
+        ):
+            raise ConnectorError("invalid_response", "Workflow run does not match the required repository and commit")
+        run = GitHubWorkflowRun.model_validate({
+            **fields(raw_run, (
+                "id", "workflow_id", "run_attempt", "check_suite_id", "head_sha", "head_branch", "status", "conclusion",
+                "created_at", "updated_at", "run_started_at",
+            )),
+            "html_url": f"https://github.com/{name}/actions/runs/{args.run_id}",
+        })
+        raw_jobs, jobs_complete = await self.evidence_pages(
+            path + f"/attempts/{run.run_attempt}/jobs", "jobs", token, args
+        )
+        jobs: list[GitHubJob] = []
+        for item in raw_jobs:
+            if (
+                number(item["run_id"]) != run.id or item.get("head_sha") != args.sha
+                or number(item.get("run_attempt", run.run_attempt)) != run.run_attempt
+                or item.get("head_branch", branch) != branch
+            ):
+                raise ConnectorError("invalid_response", "Workflow job does not match the required run attempt")
+            jobs.append(GitHubJob.model_validate({
+                **fields(item, (
+                    "id", "run_id", "head_sha", "name", "status", "conclusion", "started_at", "completed_at",
+                )),
+                "run_attempt": run.run_attempt,
+                "steps": [fields(step, ("number", "name", "status", "conclusion")) for step in records(item["steps"])],
+            }))
+        coverage = GitHubEvidenceCoverage(jobs=jobs_complete)
+        limitations = [
+            "Observations use the current selected branch head; historical release association is unsupported.",
+            "Successful workflows, jobs and check summaries do not prove a required test suite or case executed.",
+        ]
+        checks: list[GitHubCheckRun] = []
+        if "checks" in selection.categories:
+            raw_checks, coverage.checks = await self.evidence_pages(
+                f"/repos/{name}/commits/{args.sha}/check-runs", "check_runs", token, args, {"filter": "latest"}
+            )
+            for item in raw_checks:
+                if item.get("head_sha") != args.sha:
+                    raise ConnectorError("invalid_response", "Check run does not match the required commit")
+                checks.append(GitHubCheckRun.model_validate({
+                    **fields(item, ("id", "name", "head_sha", "status", "conclusion", "completed_at")),
+                    "check_suite_id": number(record(item["check_suite"])["id"]),
+                }))
+        else:
+            limitations.append("Checks evidence was not selected for this connection.")
+        deployments: list[GitHubDeployment] = []
+        if "deployments" in selection.categories:
+            raw_deployments = await self.array(
+                f"/repos/{name}/deployments", {"sha": args.sha, "per_page": 10, "page": 1}, token=token
+            )
+            if len(raw_deployments) > 10:
+                raise ConnectorError("invalid_response", "GitHub deployment page exceeds its requested bound")
+            coverage.deployments = len(raw_deployments) < 10
+            for item in raw_deployments:
+                if item.get("sha") != args.sha:
+                    raise ConnectorError("invalid_response", "Deployment does not match the required commit")
+                identifier = number(item["id"])
+                statuses = await self.array(
+                    f"/repos/{name}/deployments/{identifier}/statuses", {"per_page": 100, "page": 1}, token=token
+                )
+                deployment = GitHubDeployment.model_validate({
+                    **fields(item, ("id", "sha", "ref", "environment", "created_at")),
+                    "statuses": [GitHubDeploymentStatus.model_validate(fields(
+                        status, ("id", "state", "created_at", "environment_url")
+                    )) for status in statuses],
+                    "statuses_complete": len(statuses) < 100,
+                })
+                coverage.deployments = coverage.deployments and deployment.statuses_complete
+                deployments.append(deployment)
+        else:
+            limitations.append("Deployment evidence was not selected for this connection.")
+        raw_artifacts, coverage.artifacts = await self.evidence_pages(path + "/artifacts", "artifacts", token, args)
+        artifacts: list[GitHubArtifact] = []
+        test_results = []
+        attempted_reports = 0
+        parsed_reports = 0
+        for item in raw_artifacts:
+            associated = record(item["workflow_run"])
+            if (
+                number(associated["id"]) != run.id or associated.get("head_sha") != args.sha
+                or str(number(associated.get("repository_id", args.repository_id))) != args.repository_id
+                or str(number(associated.get("head_repository_id", args.repository_id))) != args.repository_id
+                or associated.get("head_branch", branch) != branch
+            ):
+                raise ConnectorError("invalid_response", "Artifact does not match the required workflow run and commit")
+            artifact = GitHubArtifact.model_validate({
+                **fields(item, ("id", "name", "size_in_bytes", "expired", "digest")),
+                "workflow_run_id": run.id,
+                "head_sha": args.sha,
+            })
+            if artifact.name in args.artifact_names:
+                attempted_reports += 1
+                artifact.report_status = "unavailable"
+                if artifact.expired or not artifact.digest or artifact.size_in_bytes > MAX_ARCHIVE_BYTES:
+                    limitations.append("A requested artifact is expired, oversized or lacks a SHA-256 digest.")
+                elif run.run_attempt != 1:
+                    limitations.append("Artifact manifests do not bind rerun attempts; test reports remain unverified.")
+                elif attempted_reports > 5:
+                    limitations.append(
+                        "Requested artifact names matched too many archives; remaining reports were not read."
+                    )
+                else:
+                    try:
+                        data = await self.http.request(
+                            "GET", f"{self.api_root}/repos/{name}/actions/artifacts/{artifact.id}/zip",
+                            token=token, headers=self.api_headers(), raw=True,
+                        )
+                        if not isinstance(data, bytes):
+                            raise ConnectorError("invalid_response", "Test artifact download was not binary")
+                        test_results.extend(junit_archive(data, artifact.id, artifact.digest))
+                        parsed_reports += 1
+                        artifact.report_status = "parsed"
+                    except ConnectorError as error:
+                        if error.code in {"reauth_required", "rate_limited", "provider_unavailable", "inaccessible"}:
+                            raise
+                        limitations.append(
+                            "A test artifact could not be verified within the fixed-host and safe archive boundary."
+                        )
+            artifacts.append(artifact)
+        identities = [(case.suite, case.name) for case in test_results]
+        if len(test_results) > 5000 or len(identities) != len(set(identities)):
+            raise ConnectorError("invalid_response", "Collected artifacts contain ambiguous test identities")
+        report_status = "not_requested"
+        if args.artifact_names or args.expected_suites or args.expected_cases:
+            report_status = "unavailable"
+            found_names = {artifact.name for artifact in artifacts if artifact.report_status == "parsed"}
+            if parsed_reports:
+                report_status = (
+                    "parsed" if set(args.artifact_names) <= found_names and coverage.artifacts else "partial"
+                )
+            limitations.append(
+                "Artifact redirects to other hosts are unavailable; credentials never leave the fixed provider host."
+            )
+        current_run = await self.get(path, token=token)
+        if any(current_run.get(key) != raw_run.get(key) for key in (
+            "id", "workflow_id", "run_attempt", "head_sha", "head_branch", "status", "conclusion", "updated_at",
+        )):
+            raise ConnectorError("processing", "Workflow run changed during evidence collection; collect it again")
+        await self.installation_token(await self.repository(args.repository_id), selection)
+        final_head = await self.get(f"/repos/{name}/branches/{quote(branch, safe='')}", token=token)
+        if string(record(final_head["commit"])["sha"]) != args.sha:
+            raise ConnectorError("processing", "Selected branch changed during evidence collection; collect it again")
+        present_suites = {case.suite for case in test_results}
+        present_cases = {(case.suite, case.name) for case in test_results}
+        if not all((coverage.jobs, coverage.checks, coverage.deployments, coverage.artifacts)):
+            limitations.append("Unavailable or bounded pages mean evidence is not a complete repository inventory.")
+        return GitHubEvidenceSnapshot.model_validate({
+            "repository_id": args.repository_id, "repository_name": name, "branch": branch, "sha": args.sha,
+            "observed_at": datetime.now(UTC), "selection_hash": digest(selection.model_dump(mode="json")),
+            "run": run, "jobs": jobs, "checks": checks, "deployments": deployments, "artifacts": artifacts,
+            "test_results": test_results, "test_report_status": report_status,
+            "missing_suites": [suite for suite in args.expected_suites if suite not in present_suites],
+            "missing_cases": [case for case in args.expected_cases if (case.suite, case.name) not in present_cases],
+            "coverage": coverage, "limitations": list(dict.fromkeys(limitations)),
+        })
 
     async def code_inventory(
         self, name: str, head: str, state: dict[str, object]
@@ -243,7 +468,10 @@ class GitHubConnector(OAuthConnector):
                 if await self.array(f"/repos/{name}/branches", {"per_page": 1}):
                     raise
                 head = ""  # Empty repositories still have metadata, issues and releases.
-        categories = ["repository", *selection.categories]
+        categories = ["repository", *[
+            category for category in selection.categories
+            if category in {"code", "issues", "pull_requests", "commits", "releases"}
+        ]]
         stage = number(state.get("stage", 0))
         category = categories[stage]
         page = number(state.get("page", 1))

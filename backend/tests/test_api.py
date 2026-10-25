@@ -12,6 +12,7 @@ from backend.db.models import DocumentChunk
 from backend.db.session import close_database, get_session_factory
 from backend.main import app
 from backend.services.ingestion import ingest_source
+from backend.services.readiness import expected_revision
 
 pytestmark = pytest.mark.anyio
 
@@ -24,7 +25,7 @@ async def test_health(client: httpx.AsyncClient) -> None:
     assert health["database"] == "connected"
     assert health["pgvector"] == "available"
     assert health["schema"] == "ready"
-    assert health["revision"] == health["expected_revision"] == "0010"
+    assert health["revision"] == health["expected_revision"] == expected_revision()
     assert health["sources"] == health["documents"] == health["chunks"] == health["embedded_chunks"] == 0
     assert health["ai_generation"] == "removed"
 
@@ -228,5 +229,7 @@ async def test_health_detects_migration_mismatch(client: httpx.AsyncClient) -> N
         assert response.json()["schema"] == "migration_required"
     finally:
         async with get_session_factory()() as db:
-            await db.execute(text("UPDATE alembic_version SET version_num='0010'"))
+            await db.execute(
+                text("UPDATE alembic_version SET version_num=:revision"), {"revision": expected_revision()}
+            )
             await db.commit()
