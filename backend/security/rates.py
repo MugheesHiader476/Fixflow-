@@ -17,7 +17,11 @@ async def failed_gateway_authentication(peer: str) -> None:
 
 async def api_request(owner: str, path: str, method: str) -> None:
     config = get_settings().security
-    if method == "POST" and path.startswith(("/api/agent/runs/", "/api/chat/messages/")) and path.endswith("/cancel"):
+    if (
+        method == "POST"
+        and path.startswith(("/api/agent/runs/", "/api/chat/messages/", "/api/proofos/jobs/"))
+        and path.endswith("/cancel")
+    ):
         # A spent write budget must not prevent stopping an in-flight external action.
         await reserve("security:cancel:" + owner, 60, config.sensitive_requests_per_minute)
         return
@@ -28,6 +32,10 @@ async def api_request(owner: str, path: str, method: str) -> None:
         config.write_requests_per_minute if write else config.read_requests_per_minute,
     )
     if path.startswith("/api/agent/") and (path.endswith("/execute") or path.endswith("/download")):
+        await reserve("security:sensitive:" + owner, 60, config.sensitive_requests_per_minute)
+    if path.startswith("/api/proofos/") and (
+        "/download/" in path or path.endswith(("/decide", "/request-approval", "/invoice-draft", "/review"))
+    ):
         await reserve("security:sensitive:" + owner, 60, config.sensitive_requests_per_minute)
 
 

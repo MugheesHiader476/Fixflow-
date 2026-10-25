@@ -36,7 +36,7 @@ from backend.schemas.agent import (
 from backend.schemas.connectors import Provider, Selection
 from backend.schemas.evidence import EvidenceRequest
 from backend.schemas.pipeline import Contract, digest
-from backend.services import evidence
+from backend.services import evidence, proofos_tools
 from backend.services.connector_sources import asset_path, discard_unreferenced, register, reusable_file
 from backend.services.ingestion import IngestionError, ingest_source
 
@@ -50,6 +50,7 @@ class ReadSource(Contract):
 
 
 TOOL_MODELS: dict[str, tuple[type[BaseModel], str]] = {
+    **proofos_tools.PROOF_TOOL_MODELS,
     "search_snapshots": (
         SearchSnapshots,
         "Search authorized parsed uploads and connector snapshots with lexical/hybrid retrieval. Query "
@@ -147,8 +148,10 @@ async def authorize(ctx: Context, *, native: bool = False) -> None:
     for captured in ctx.accounts():
         await connection(ctx, UUID(string(captured["id"])))
     async with get_session_factory()() as db:
+        db.info["owner_id"] = ctx.owner
         for material in ctx.materials:
             ref = material.reference
+            await proofos_tools.authorize_reference(db, ctx, ref, native=native)
             if ref.get("source_id"):
                 allowed_ids = [UUID(string(item["id"])) for item in ctx.accounts()]
                 scoped = await db.scalar(

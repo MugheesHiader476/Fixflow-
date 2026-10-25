@@ -85,7 +85,9 @@ class ResourcePage(Contract):
 class Selection(Contract):
     resource_ids: list[str] = Field(default_factory=list, max_length=200)
     branches: dict[str, str] = Field(default_factory=dict, max_length=200)
-    categories: list[Literal["code", "issues", "pull_requests", "commits", "releases"]] = Field(
+    categories: list[Literal[
+        "code", "issues", "pull_requests", "commits", "releases", "actions", "checks", "deployments"
+    ]] = Field(
         default=["code", "issues", "pull_requests", "commits", "releases"]
     )
     start_date: date | None = None

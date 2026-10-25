@@ -1,4 +1,6 @@
-# Grok workspace workflows
+# ProofOS backend
+
+ProofOS extends this existing runtime with owner projects, immutable approved scope, selected GitHub/CI observations, deterministic verification, private acceptance packages, distinct customer decisions and local invoice drafts. Migration `0011` and `/api/proofos/*` remain separate from canonical parsing and historical workflow tables. See the [current delivery workflow](../README.md#proofos-delivery-workspace), [security model](../docs/proofos/SECURITY_MODEL.md) and [executed validation](../docs/proofos/TEST_RESULTS.md). Earlier result tables below describe their historical increments, not current live-provider verification.
 
 The current [prompt/privacy/abuse and quota policy](../docs/agent-security.md) is implemented in `backend/security/`. It uses an original 350-token estimated static system prompt, local model/tool/disclosure checks and shared PostgreSQL quotas, with no extra classifier model call or new migration. Email tools default off unless the run explicitly enables them. Clerk account lockout requires verification in the deployed Clerk Dashboard. Security verification: full backend **422 passed, 2 OCR skips**; final focused security/workflow suite **74 passed**; frontend **150 passed**. Build, lint/types, Bandit, locked dependency audit, schema and browser checks passed. Live safety quality, latency, provider behavior and Clerk lockout remain unverified; signature checks are not a universal semantic misuse detector.
 

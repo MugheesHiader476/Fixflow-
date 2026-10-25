@@ -6,9 +6,9 @@ import mimetypes
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from email import utils
 from email.message import EmailMessage
 from email.policy import SMTP
-from email.utils import parseaddr
 from pathlib import PurePosixPath
 from urllib.parse import quote
 from uuid import UUID
@@ -20,9 +20,16 @@ from backend.connectors.gmail import GmailConnector
 from backend.connectors.slack import SlackConnector
 from backend.schemas.agent import DraftEmail, PrepareFile, ReadProvider, SearchProvider, email_address
 from backend.schemas.connectors import FetchResult, QuerySpec, Resource, Selection
+from backend.schemas.github_evidence import GitHubEvidenceRequest, GitHubEvidenceSnapshot
 from backend.services.uploads import safe_filename
 
 SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
+
+def sender_address(value: str) -> str:
+    if not getattr(utils, "supports_strict_parsing", False):
+        raise ConnectorError("unsupported", "Email replies require a supported strict address parser")
+    return email_address(utils.parseaddr(value)[1])
 
 
 def headers(message: dict[str, object]) -> dict[str, str]:
@@ -190,6 +197,11 @@ class NativeWorkspace:
             QuerySpec(resource_id=args.resource_id, limit=args.limit, cursor=args.cursor), self.selection
         )
         return page.model_dump(mode="json")
+
+    async def github_evidence(self, args: GitHubEvidenceRequest) -> GitHubEvidenceSnapshot:
+        if not isinstance(self.connector, GitHubConnector):
+            raise ConnectorError("unsupported", "Use a GitHub account for milestone evidence")
+        return await self.connector.github_evidence(args, self.selection)
 
     async def github_status(self, args: ReadProvider) -> dict[str, object]:
         connector = self.connector
@@ -409,7 +421,7 @@ class NativeWorkspace:
         if draft.reply_message_id:
             original = await self.gmail_message(draft.reply_message_id)
             values = headers(original)
-            recipient = email_address(parseaddr(values.get("from", ""), strict=True)[1])
+            recipient = sender_address(values.get("from", ""))
             if draft.recipient != recipient:
                 raise ConnectorError("inaccessible", "A reply must target the verified original sender")
             message_id = values.get("message-id", "")

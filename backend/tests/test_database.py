@@ -18,6 +18,7 @@ from backend.db.models import Document, DocumentChunk, KnowledgeSource
 from backend.db.session import get_engine
 from backend.repositories.sources import delete_source, list_sources
 from backend.services import ingestion
+from backend.services.readiness import expected_revision
 from backend.tests.legacy_records import chunk_values, content_hash, document_values, insert_chunks, insert_documents
 
 pytestmark = pytest.mark.anyio
@@ -39,7 +40,7 @@ async def make_corpus(db: AsyncSession, name: str = "guide.md") -> tuple[UUID, U
 async def test_connection_pgvector_and_migrations(db: AsyncSession) -> None:
     assert await db.scalar(text("SELECT 1")) == 1
     assert await db.scalar(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'"))
-    assert await db.scalar(text("SELECT version_num FROM alembic_version")) == "0010"
+    assert await db.scalar(text("SELECT version_num FROM alembic_version")) == expected_revision()
     assert await db.scalar(text("SELECT vector_dims('[1,0,0]'::vector)")) == 3
     assert get_engine() is get_engine()
 

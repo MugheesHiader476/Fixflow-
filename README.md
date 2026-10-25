@@ -1,6 +1,24 @@
-# FixFlow
+# ProofOS
 
-FixFlow is a private chat assistant for your uploads and selected Gmail, Google Drive, GitHub and Slack content. Connect apps once, choose the resources chat can read, then ask questions in the main prompt box. The assistant chooses relevant searches and reads automatically and returns answers with inspectable source quotations. Follow-ups continue the conversation; there is no workflow configuration or run button.
+**Turn completed work into verified client acceptance.** ProofOS helps businesses assemble contractual requirements, selected GitHub/CI evidence and delivery records into private customer acceptance packages. Technical verification, internal review, customer acceptance and invoice readiness remain separate states.
+
+The existing private workspace chat remains available for uploads and selected Gmail, Google Drive, GitHub and Slack content. Connect apps once, choose authorized resources, then ask questions in the main prompt box. The assistant chooses bounded searches and reads and returns inspectable source quotations. Follow-ups continue the conversation; ProofOS project controls live in Projects.
+
+## ProofOS delivery workspace
+
+1. Sign in, upload a contract/SRS in **Knowledge Sources**, and wait for Parsed. Existing supported formats and parsing limits apply.
+2. Open **Projects** and create an owner-scoped project/customer. Optionally select an authorized GitHub account/repository/branch. Configure the customer's exact, separate Clerk subject for formal reviews.
+3. Extract requirements from a parsed source. Deterministic section-aware proposals preserve original wording, hash/version and canonical locations. Edit the interpretation and machine-verifiable acceptance policy, resolve ambiguities, approve requirements and then approve the contract revision.
+4. Create a milestone, explicitly enter its contractual amount/currency/payment terms, assign requirements and freeze scope. Native checks require the selected repository, branch and exact 40-character SHA. CI needs the expected workflow, suite and individual test cases; deployment needs the exact environment. Incorrect approved scope requires a new milestone/version.
+5. Collect GitHub evidence using an exact run/workflow and explicitly named JUnit artifacts. Attach authorized canonical delivery documents to relevant requirements. Slack discussion proves discussion only. Run deterministic verification and inspect failed/missing checks and immutable executions.
+6. Generate private internal and customer-safe JSON/PDF packages. Review the exact internal package hash, then create an expiring customer review request. The configured customer signs in to **Approvals** and accepts/rejects/requests rework against the exact customer package version.
+7. Prepare a local invoice draft only after current technical/delivery checks, internal approval, actual customer acceptance and contractual terms satisfy policy. No invented taxes/bank details; drafts are never issued or sent automatically.
+
+Migration `0011` adds separate delivery tables without changing old records. Review and apply migrations before running this checkout; local validation uses disposable databases only. Durable extraction/evidence/verification/package jobs expose persisted status and recover after restarts. Refreshed evidence requires a new execution/package/review. Prior packages remain private history; explicit connector purge redacts derived private payloads.
+
+GitHub Actions/Checks/Deployments are separately selected read-only permissions. Green workflows alone cannot prove test execution. JUnit evidence requires a matching digest, bounded archive, exact run/SHA and attributable attempt. Cross-host artifact redirects and ambiguous rerun attribution remain unverified under the existing fixed-host transport boundary. Source access is rechecked; this is not instantaneous provider ACL mirroring. Slack posting, Drive package uploading, coding execution and invoice sending are unavailable; private downloads and engineering task packets are supported.
+
+See [audit](docs/proofos/REPOSITORY_AUDIT.md), [traceability](docs/proofos/REQUIREMENTS_TRACEABILITY.md), [security](docs/proofos/SECURITY_MODEL.md), [executed tests](docs/proofos/TEST_RESULTS.md) and [deployment guide](docs/proofos/DEPLOYMENT_GUIDE.md). Remote repository renaming remains an administrator operation. Existing callback URLs, PostgreSQL/volume names and `FIXFLOW_*` compatibility settings remain valid.
 
 The previous OKF/concept, legacy embedding and local inference stages remain removed. Existing conversations and saved findings remain readable. The evidence stage supports PostgreSQL lexical search and optional Gemini hybrid search; it does not revive the historical chunk/vector runtime. See [evidence/vector setup](backend/README.md) and [assistant tools and limits](docs/workspace-agents.md).
 
@@ -90,13 +108,13 @@ requires a reachable public HTTPS origin. Production HTTPS uses a TLS reverse
 proxy; localhost development certificates are supported by the native development launcher and Docker gateway.
 
 Gmail and Google Drive use the same Google OAuth project grant. Disconnecting one
-immediately marks the matching connection for the same Google account and FixFlow
+immediately marks the matching connection for the same Google account and ProofOS
 owner as requiring reconnection, wipes its credentials, cancels its active work,
 and disables source access before remote revocation. That companion connection's
 stored content is retained even if the selected connection is purged. Other Google
-accounts and other FixFlow owners are not changed by the local disconnect action.
+accounts and other ProofOS owners are not changed by the local disconnect action.
 
-If a FixFlow session expires during provider consent, the callback redirects to
+If a ProofOS session expires during provider consent, the callback redirects to
 the prebuilt sign-in page without carrying its code or state. After signing in,
 Connected Apps explains that a new connection must be started; an old callback
 is never replayed under a different session. Normal signed-out API requests

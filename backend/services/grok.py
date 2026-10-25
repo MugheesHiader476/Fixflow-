@@ -28,30 +28,32 @@ async def respond(messages: list[dict[str, object]], tools: list[dict[str, objec
     validate_disclosure(messages, configured_secrets())
     if tokens(json.dumps([messages, tools], ensure_ascii=False)) > config.input_token_limit:
         raise ValueError("Workflow context budget exceeded; narrow the request or selected sources")
-    async with asyncio.timeout(config.timeout_seconds):
-        async with httpx.AsyncClient(timeout=config.timeout_seconds, trust_env=False, follow_redirects=False) as client:
-            async with client.stream(
-                "POST",
-                "https://api.x.ai/v1/responses",
-                headers={"Authorization": "Bearer " + config.api_key.get_secret_value()},
-                json={
-                    "model": config.model,
-                    "input": messages,
-                    "tools": tools,
-                    "tool_choice": "required",
-                    "parallel_tool_calls": False,
-                    "store": False,
-                    "max_output_tokens": config.max_output_tokens,
-                    "include": ["reasoning.encrypted_content"],
-                    **({"reasoning": {"effort": config.reasoning_effort}} if config.reasoning_effort else {}),
-                },
-            ) as response:
-                response.raise_for_status()
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > 512 * 1024:
-                        raise ValueError("Grok response exceeds bounds")
+    async with (
+        asyncio.timeout(config.timeout_seconds),
+        httpx.AsyncClient(timeout=config.timeout_seconds, trust_env=False, follow_redirects=False) as client,
+        client.stream(
+            "POST",
+            "https://api.x.ai/v1/responses",
+            headers={"Authorization": "Bearer " + config.api_key.get_secret_value()},
+            json={
+                "model": config.model,
+                "input": messages,
+                "tools": tools,
+                "tool_choice": "required",
+                "parallel_tool_calls": False,
+                "store": False,
+                "max_output_tokens": config.max_output_tokens,
+                "include": ["reasoning.encrypted_content"],
+                **({"reasoning": {"effort": config.reasoning_effort}} if config.reasoning_effort else {}),
+            },
+        ) as response,
+    ):
+        response.raise_for_status()
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > 512 * 1024:
+                raise ValueError("Grok response exceeds bounds")
     payload = record(json.loads(body))
     if payload.get("status") != "completed":
         raise ValueError("Grok response was not completed")

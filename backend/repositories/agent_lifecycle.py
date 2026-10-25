@@ -6,12 +6,14 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import AgentAction, AgentFile, AgentRun
+from backend.services.proofos_lifecycle import disable as disable_proofos
 
 
 async def disable(
     db: AsyncSession, account_id: UUID, *, purge: bool = False,
     reason: str = "A connected source was disconnected or purged",
 ) -> None:
+    await disable_proofos(db, account_id, purge=purge)
     rows = list(
         await db.scalars(
             select(AgentRun).where(AgentRun.scope["accounts"].contains([{"id": str(account_id)}])).with_for_update()

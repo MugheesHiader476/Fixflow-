@@ -1,4 +1,5 @@
-pypdf
+pypdf>=6.21.2,<7
+Pillow>=13.0.0,<14
 cryptography
 fonttools
 beautifulsoup4

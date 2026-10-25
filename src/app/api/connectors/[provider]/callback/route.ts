@@ -10,7 +10,7 @@ async function failureCode(response: Response): Promise<string> {
     const payload: unknown = await response.json();
     if (typeof payload === "object" && payload !== null && "error" in payload) {
       const error = payload.error;
-      if (response.status === 401 && error === "Sign in to use FixFlow.") return "sign_in";
+      if (response.status === 401 && error === "Sign in to use ProofOS.") return "sign_in";
       if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
         const failure = knownOAuthFailure(error.code);
         if (failure) return failure;

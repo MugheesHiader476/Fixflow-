@@ -97,6 +97,7 @@ function validSession(value: unknown): boolean {
 }
 
 export function validResponse(path: string, value: unknown, method = "GET"): boolean {
+  if (path.startsWith("/api/proofos/")) return validProofResponse(path, value, method);
   if (path.startsWith("/api/agent/") || path.startsWith("/api/chat/messages")) return validWorkflowResponse(path, value);
   if (path.startsWith("/api/evidence/")) return validEvidenceResponse(path, value);
   if (path.startsWith("/api/connectors")) return validConnectorResponse(path, value);
@@ -114,3 +115,4 @@ import { validConnectorResponse } from "./connector-contracts";
 import { validEvidenceResponse } from "./evidence-contracts";
 
 import { validWorkflowResponse } from "./agent-contracts";
+import { validProofResponse } from "./proofos-contracts";

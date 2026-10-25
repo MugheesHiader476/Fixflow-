@@ -8,9 +8,9 @@ export function WorkspaceHero() {
       <Image src="/images/developer-workspace.webp" alt="A softly lit developer workspace overlooking the city at blue hour" fill sizes="(max-width: 768px) 100vw, (max-width: 1200px) 75vw, 1100px" className="ff-hero-image" />
       <div className="ff-hero-shade" />
       <div className="ff-hero-content">
-        <p className="ff-eyebrow"><span aria-hidden="true" />A little context. A lot of clarity.</p>
-        <h2 id="hero-title">Your apps.<br />One conversation.</h2>
-        <p>Your documents, data, and connected apps.<br className="hidden sm:block" /> Ask a question and follow the sources behind the answer.</p>
+        <p className="ff-eyebrow"><span aria-hidden="true" />From contract to evidence to payment readiness.</p>
+        <h2 id="hero-title">Completed work.<br />Clear evidence.</h2>
+        <p>Bring requirements and selected app evidence together.<br className="hidden sm:block" /> Ask a question and inspect the sources behind the answer.</p>
         <div className="ff-hero-actions">
           <a className="ff-pill ff-pill-white" href="#workspace">Open workspace <ArrowUpRight size={18} /></a>
           <Link className="ff-hero-link" href="/sources">Explore your knowledge <ArrowUpRight size={16} /></Link>

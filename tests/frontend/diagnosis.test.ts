@@ -6,7 +6,7 @@ describe("diagnosisMarkdown", () => {
   it("exports the diagnosis, steps, and source locations", () => {
     const markdown = diagnosisMarkdown(ASYNCIO_DIAGNOSIS);
 
-    expect(markdown).toContain("# FixFlow diagnosis");
+    expect(markdown).toContain("# ProofOS diagnosis");
     expect(markdown).toContain("**Confidence:** 92%");
     expect(markdown).toContain("1. **Make the endpoint async**");
     expect(markdown).toContain("https://docs.python.org/3/library/asyncio-eventloop.html");

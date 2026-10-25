@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FixFlow — Your knowledge workspace",
+  title: "ProofOS — Turn completed work into verified client acceptance",
   description:
-    "Bring documents and authorized apps into a private workspace. Parse your sources and preserve their original structure.",
+    "From contract to evidence to payment readiness. Assemble approved requirements, delivery evidence and verified outcomes in your private workspace.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -100,16 +100,23 @@ def connector_environment(database: None, monkeypatch: pytest.MonkeyPatch, confi
         ),
     )
     for field in (
+        "public_url",
         "vault_key",
+        "google_client_id",
         "google_client_secret",
+        "github_client_id",
         "github_client_secret",
+        "github_app_id",
         "github_private_key",
+        "slack_client_id",
         "slack_client_secret",
         "slack_signing_secret",
         "github_webhook_secret",
     ):
         value = getattr(config, field)
-        monkeypatch.setenv("CONNECTORS__" + field.upper(), value.get_secret_value())
+        monkeypatch.setenv(
+            "CONNECTORS__" + field.upper(), value.get_secret_value() if isinstance(value, SecretStr) else str(value)
+        )
     get_settings.cache_clear()
 
 
@@ -242,7 +249,9 @@ async def test_oauth_cards_explain_setup_without_exposing_configured_credentials
         assert not card["missing_configuration"] and isinstance(card["required_scopes"], list)
     assert "test-google-secret" not in result.text and VAULT_KEY not in result.text
     assert missing_configuration("slack", ConnectorConfig()) == [
-        "CONNECTORS__VAULT_KEY", "CONNECTORS__SLACK_CLIENT_ID", "CONNECTORS__SLACK_CLIENT_SECRET",
+        "CONNECTORS__VAULT_KEY",
+        "CONNECTORS__SLACK_CLIENT_ID",
+        "CONNECTORS__SLACK_CLIENT_SECRET",
         "CONNECTORS__PUBLIC_URL (HTTPS required for Slack)",
     ]
 

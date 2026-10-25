@@ -5,7 +5,7 @@ import re
 import unicodedata
 from collections.abc import Iterator
 
-POLICY_VERSION = "workspace-2026-10-17.2"
+POLICY_VERSION = "proofos-workspace-2026-10-25.1"
 REDACTED = "[REDACTED_SECRET]"
 
 # Deliberately narrow signatures: ordinary discussion of privacy/security is allowed.

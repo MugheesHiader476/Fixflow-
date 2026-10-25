@@ -43,6 +43,8 @@ async def clear_test_sources(url: str) -> None:
     engine = create_async_engine(url)
     try:
         async with engine.begin() as connection:
+            if await connection.scalar(text("SELECT to_regclass('public.proof_projects') IS NOT NULL")):
+                await connection.execute(text("TRUNCATE proof_projects CASCADE"))
             if await connection.scalar(text("SELECT to_regclass('public.agent_runs') IS NOT NULL")):
                 await connection.execute(text("TRUNCATE agent_runs CASCADE"))
             if await connection.scalar(text("SELECT to_regclass('public.knowledge_sources') IS NOT NULL")):
@@ -72,6 +74,7 @@ async def database(
                 "connector_rate_limits, agent_runs CASCADE"
             )
         )
+        await connection.execute(text("TRUNCATE proof_projects CASCADE"))
     try:
         yield
     finally:

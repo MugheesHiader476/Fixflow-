@@ -20,6 +20,7 @@ from backend.api.connectors import events_router
 from backend.api.connectors import router as connector_router
 from backend.api.evidence import router as evidence_router
 from backend.api.middleware import RequestGuardMiddleware
+from backend.api.proofos import router as proofos_router
 from backend.api.routes import router
 from backend.config import get_settings
 from backend.connectors.core import ConnectorError
@@ -29,6 +30,7 @@ from backend.services.connector_sync import connector_worker
 from backend.services.embeddings import embedding_worker
 from backend.services.ingestion import ingestion_worker
 from backend.services.logging_security import protect_access_logs
+from backend.services.proofos_jobs import worker as proofos_worker
 from backend.services.readiness import database_readiness
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     connectors = asyncio.create_task(connector_worker(), name="connector-sync")
     embeddings = asyncio.create_task(embedding_worker(), name="evidence-embeddings")
     agents = asyncio.create_task(agent_worker(), name="workspace-agents")
+    proofos = asyncio.create_task(proofos_worker(), name="proofos-delivery")
     try:
         yield
     finally:
@@ -48,6 +51,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         connectors.cancel()
         embeddings.cancel()
         agents.cancel()
+        proofos.cancel()
         with suppress(asyncio.CancelledError):
             await worker
         with suppress(asyncio.CancelledError):
@@ -56,10 +60,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await embeddings
         with suppress(asyncio.CancelledError):
             await agents
+        with suppress(asyncio.CancelledError):
+            await proofos
         await close_database()
 
 
-app = FastAPI(title="FixFlow API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="ProofOS API", version="0.3.0", lifespan=lifespan)
 
 
 def configured_origins(value: str) -> list[str]:
@@ -149,6 +155,7 @@ app.include_router(connector_router, prefix="/api")
 app.include_router(evidence_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(proofos_router, prefix="/api")
 app.include_router(events_router)
 
 

@@ -7,7 +7,7 @@ export const CONNECTION_ERRORS = {
   missing_scope: "Required provider permissions were not granted. Reconnect and approve the listed read permissions.",
   reauth_required: "Provider authorization expired, was revoked, or could not be refreshed. Reconnect this account.",
   invalid_state: "This authorization link expired or was already used. Start a new connection in the signed-in account.",
-  sign_in: "Your sign-in expired during authorization. Sign in to FixFlow and start a new connection.",
+  sign_in: "Your sign-in expired during authorization. Sign in to ProofOS and start a new connection.",
   provider_unavailable: "The provider is temporarily unavailable. Try connecting again later.",
   rate_limited: "The provider is rate limited. Try connecting again later.",
   inaccessible: "The provider denied data access. Check API enablement, app permissions and your organization's access policy, then reconnect.",

@@ -147,7 +147,7 @@ describe("backend API client", () => {
     const { listSaved } = await loadApi();
 
     const request = listSaved();
-    await expect(request).rejects.toThrow("Could not connect to the FixFlow backend.");
+    await expect(request).rejects.toThrow("Could not connect to the ProofOS backend.");
     await expect(request).rejects.toHaveProperty("cause", failure);
   });
 

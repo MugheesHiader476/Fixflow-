@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { configureConnector, discoverResources } from "@/lib/connectors";
 import type { ConnectorAccount, ConnectorResource, GitHubCategory } from "@/lib/connector-contracts";
 
-const CATEGORIES: GitHubCategory[] = ["code", "issues", "pull_requests", "commits", "releases"];
+const CATEGORIES: GitHubCategory[] = ["code", "issues", "pull_requests", "commits", "releases", "actions", "checks", "deployments"];
 
 export function ResourceSelection({ account, onSaved, onClose }: {
   account: ConnectorAccount; onSaved: () => void; onClose: () => void;
@@ -92,6 +92,7 @@ export function ResourceSelection({ account, onSaved, onClose }: {
         <p className="text-xs text-muted">File metadata is preserved with messages. Slack history limits can make large syncs take time.</p>
       </>}
       {account.provider === "github" && CATEGORIES.map((category) => <label key={category}><input type="checkbox" checked={selection.categories.includes(category)} onChange={(e) => toggleCategory(category, e.target.checked)} /> {category.replaceAll("_", " ")}</label>)}
+      {account.provider === "github" && <p className="w-full text-xs text-muted">Actions, checks and deployments enable read-only milestone evidence collection. They require matching GitHub App permissions and are not enabled for existing selections automatically.</p>}
       {account.provider === "google_drive" && <label className="w-full text-sm">File MIME types (optional, comma separated)<input className="mt-2 w-full rounded border border-border bg-panel-2 p-2" placeholder="application/pdf, text/plain" value={mimeTypes} onChange={(event) => setMimeTypes(event.target.value)} /></label>}
     </fieldset>
     <div className="flex justify-end gap-3"><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!!(selection.start_date && selection.end_date && selection.start_date > selection.end_date)} onClick={() => void save()}>Save selection</Button></div>

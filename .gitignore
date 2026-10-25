@@ -65,3 +65,7 @@ next-env.d.ts
 
 # Markdown parser fixtures are required by the regression tests.
 !/backend/tests/fixtures/pipeline/*.md
+
+# Versioned ProofOS implementation and verification records.
+!/docs/proofos/
+!/docs/proofos/*.md

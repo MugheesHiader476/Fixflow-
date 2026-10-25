@@ -1,6 +1,6 @@
 export const PROVIDERS = ["gmail", "github", "google_drive", "slack"] as const;
 export type ConnectorProvider = typeof PROVIDERS[number];
-export type GitHubCategory = "code" | "issues" | "pull_requests" | "commits" | "releases";
+export type GitHubCategory = "code" | "issues" | "pull_requests" | "commits" | "releases" | "actions" | "checks" | "deployments";
 export interface ConnectorSelection {
   resource_ids: string[];
   branches: Record<string, string>;
@@ -75,7 +75,7 @@ const resources = (v: unknown) => Array.isArray(v) && v.every((r) => record(r)
 
 export function validSelection(v: unknown): boolean {
   return record(v) && strings(v.resource_ids) && record(v.branches) && Object.values(v.branches).every(text)
-    && Array.isArray(v.categories) && v.categories.every((c) => ["code", "issues", "pull_requests", "commits", "releases"].includes(String(c)))
+    && Array.isArray(v.categories) && v.categories.every((c) => ["code", "issues", "pull_requests", "commits", "releases", "actions", "checks", "deployments"].includes(String(c)))
     && optional(v.start_date) && optional(v.end_date) && strings(v.mime_types)
     && ["attachments", "threads", "files"].every((k) => typeof v[k] === "boolean");
 }

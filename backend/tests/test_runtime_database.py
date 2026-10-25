@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError
 
 from backend.db.models import SavedSolution
 from backend.db.session import get_engine
+from backend.services.readiness import expected_revision
 from scripts.provision_runtime import provision
 
 pytestmark = pytest.mark.anyio
@@ -37,7 +38,7 @@ async def test_runtime_grants_preserve_data_and_deny_ddl(database: None) -> None
             assert saved == "Preserved finding"
             await connection.execute(text("UPDATE saved_solutions SET payload='{}'::jsonb WHERE owner_id=:owner"),
                                      {"owner": "user_qa_runtime"})
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0010"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == expected_revision()
             assert await connection.scalar(text("SELECT pg_try_advisory_xact_lock(987654321)"))
             assert not await connection.scalar(text("SELECT rolsuper OR rolcreatedb OR rolcreaterole "
                                                    "OR rolreplication OR rolbypassrls FROM pg_roles "

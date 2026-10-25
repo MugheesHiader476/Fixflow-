@@ -103,6 +103,7 @@ function DebugSessionContent({ sessionId, chatId }: { sessionId: string | null; 
             <Link href="/sources"><BookOpen size={15} />Explore your sources</Link>
           </nav>
           <p className="ff-current-capability">Your uploads and selected app data, together in one conversation.</p>
+          <Link href="/projects" className="mt-5 inline-flex items-center gap-2 text-sm text-accent underline underline-offset-4">Open projects & milestones <ArrowUpRight size={15} /></Link>
         </section>}
         {sessionId && <section className="ff-workspace-section" aria-labelledby="session-heading">
           <div className="ff-section-heading"><div><p className="ff-eyebrow">YOUR CONVERSATION</p><h1 id="session-heading">Review the conversation.</h1></div></div>

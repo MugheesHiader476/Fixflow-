@@ -29,7 +29,7 @@ function PreviousEmail({ original }: { original: WorkflowAction }) {
 export function ChatAnswer({ message }: { message: ChatMessage }) {
   const active = ["queued", "running"].includes(message.status);
   return <div className="ff-chat-answer">
-    <span className="ff-chat-author">FixFlow</span>
+    <span className="ff-chat-author">ProofOS</span>
     {active && <p role="status" className="ff-chat-thinking"><span className="ff-spin h-3 w-3 rounded-full border-2 border-current border-t-transparent" />Searching your sources and connected apps…</p>}
     {message.error && <p className="my-2 break-words text-sm">{message.error}</p>}
     {message.status === "cancelled" && !message.error && <p className="text-sm text-muted">Answer stopped.</p>}
