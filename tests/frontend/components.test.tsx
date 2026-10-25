@@ -62,7 +62,7 @@ describe("shared UI", () => {
       </>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /How FixFlow found/ }));
+    fireEvent.click(screen.getByRole("button", { name: /How ProofOS found/ }));
     expect(screen.getByText("Keyword retrieval")).toBeDefined();
     expect(screen.getByText("24", { selector: "p" })).toBeDefined();
   });
@@ -126,7 +126,7 @@ describe("debug interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onSaved).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("# FixFlow diagnosis")));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("# ProofOS diagnosis")));
     expect(screen.queryByRole("button", { name: "Apply Patch" })).toBeNull();
   });
 

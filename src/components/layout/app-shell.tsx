@@ -7,6 +7,8 @@ import { TopBar } from "./topbar";
 
 const PAGE_META: Record<string, string> = {
   "/": "Workspace",
+  "/projects": "Projects & milestones",
+  "/approvals": "Approval requests",
   "/history": "Conversation history",
   "/saved": "Saved findings",
   "/sources": "Knowledge sources",

@@ -22,7 +22,7 @@ export function RagTransparency({ rag, generation }: { rag: Diagnosis["rag"]; ge
         className="flex w-full items-center gap-2.5 px-4 py-3 text-left"
       >
         <Sparkles size={15} className="text-lime" />
-        <span className="text-sm font-medium">How FixFlow found this answer</span>
+        <span className="text-sm font-medium">How ProofOS found this answer</span>
         <span className="hidden gap-4 font-mono text-[11px] text-muted sm:flex">
           <span>Retrieved: {rag.retrieved}</span>
           {rag.reranked > 0 && <span>Reranked: {rag.reranked}</span>}

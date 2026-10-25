@@ -21,7 +21,7 @@ export default clerkMiddleware(async (auth, request) => {
   }
 
   if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "Sign in to use FixFlow." }, { status: 401 });
+    return NextResponse.json({ error: "Sign in to use ProofOS." }, { status: 401 });
   }
 
   return NextResponse.redirect(new URL("/sign-up", request.url));

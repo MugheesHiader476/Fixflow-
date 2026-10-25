@@ -176,7 +176,7 @@ asyncio.run(check())
     : [resolve(root, "scripts/start-production.mjs"), "--hostname", frontend.hostname, "--port", frontend.port || "80"],
   { ...process.env });
   await waitFor(() => frontendReady(frontend.origin), "Frontend", 60);
-  console.log(`FixFlow is ready at ${frontend.origin}. Ctrl+C stops processes started by this command; PostgreSQL stays running.`);
+  console.log(`ProofOS is ready at ${frontend.origin}. Ctrl+C stops processes started by this command; PostgreSQL stays running.`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : "Local startup failed.");
   await stop(1);

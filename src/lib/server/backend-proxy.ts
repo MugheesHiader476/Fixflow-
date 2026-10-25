@@ -7,6 +7,8 @@ const UUID = "[0-9a-fA-F-]{36}";
 const PROVIDER = "(gmail|github|google_drive|slack)";
 const GET_PATH = new RegExp(`^(health|api/(readiness|sessions|sources|saved|connectors)|api/chat/messages(/${UUID}(/thread)?)?|api/sessions/${UUID}(/messages)?|api/sources/${UUID}(/status)?|api/connectors/${UUID}/(resources|status)|api/evidence/sources/${UUID}/embedding-status|api/agent/(runs(/${UUID})?|files/${UUID}/download)|api/connectors/${PROVIDER}/callback)$`);
 const POST_PATH = new RegExp(`^api/(chat/messages(/${UUID}/cancel)?|agent/(runs|runs/${UUID}/cancel|actions/${UUID}/execute)|ask|debug|chat|saved|documents|sources/${UUID}/(retry-embedding|availability)|evidence/(search|answer|sources/${UUID}/(index|remove-index|embed))|connectors/${PROVIDER}/connect|connectors/${UUID}/(configure|sync|disconnect|health|query))$`);
+const PROOF_GET_PATH = new RegExp(`^api/proofos/(projects(/${UUID})?|jobs/${UUID}|packages/${UUID}(/download/(internal|customer)/(pdf|json))?|approvals(/${UUID}(/download/(pdf|json))?)?|milestones/${UUID}/task-packet)$`);
+const PROOF_POST_PATH = new RegExp(`^api/proofos/(projects(/${UUID}/(contracts|milestones))?|jobs/${UUID}/cancel|contracts/${UUID}/approve|requirements/${UUID}/(review|assign)|milestones/${UUID}/(approve|collect|evidence|verify|packages|invoice-draft)|packages/${UUID}/(review|request-approval)|approvals/${UUID}/decide)$`);
 
 function connectorQuery(request: Request, path: string): string | null {
   if (!path.startsWith("api/connectors/")) return "";
@@ -33,8 +35,9 @@ function responseHeaders(upstream: Response): Headers {
 
 export async function proxyBackend(request: Request, path: string) {
   const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Sign in to use FixFlow." }, { status: 401 });
-  const allowed = request.method === "GET" ? GET_PATH.test(path) : request.method === "POST" && POST_PATH.test(path);
+  if (!userId) return NextResponse.json({ error: "Sign in to use ProofOS." }, { status: 401 });
+  const allowed = request.method === "GET" ? GET_PATH.test(path) || PROOF_GET_PATH.test(path)
+    : request.method === "POST" && (POST_PATH.test(path) || PROOF_POST_PATH.test(path));
   if (!allowed) return NextResponse.json({ error: "Unknown API route" }, { status: 404 });
   const query = connectorQuery(request, path);
   if (query === null) return NextResponse.json({ error: "Invalid connector query" }, { status: 422 });
@@ -66,6 +69,6 @@ export async function proxyBackend(request: Request, path: string) {
       headers: responseHeaders(upstream),
     });
   } catch {
-    return NextResponse.json({ error: "Could not connect to the FixFlow backend." }, { status: 502 });
+    return NextResponse.json({ error: "Could not connect to the ProofOS backend." }, { status: 502 });
   }
 }

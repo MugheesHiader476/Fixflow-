@@ -124,6 +124,28 @@ describe("trusted backend gateway", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
 
+  it("allows only explicit ProofOS reads, writes and authenticated package variants", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const reads = ["projects", `projects/${id}`, `jobs/${id}`, `packages/${id}`, `packages/${id}/download/customer/pdf`, `packages/${id}/download/internal/json`, "approvals", `approvals/${id}`, `approvals/${id}/download/pdf`, `milestones/${id}/task-packet`];
+    const writes = ["projects", `projects/${id}/contracts`, `projects/${id}/milestones`, `jobs/${id}/cancel`, `contracts/${id}/approve`, `requirements/${id}/review`, `requirements/${id}/assign`, `milestones/${id}/approve`, `milestones/${id}/collect`, `milestones/${id}/evidence`, `milestones/${id}/verify`, `milestones/${id}/packages`, `milestones/${id}/invoice-draft`, `packages/${id}/review`, `packages/${id}/request-approval`, `approvals/${id}/decide`];
+    for (const route of reads) {
+      const path = `api/proofos/${route}`;
+      expect((await proxyBackend(new Request(`http://localhost/api/backend/${path}`), path)).status).toBe(200);
+    }
+    for (const route of writes) {
+      const path = `api/proofos/${route}`;
+      expect((await proxyBackend(new Request(`http://localhost/api/backend/${path}`, { method: "POST", body: "{}" }), path)).status).toBe(200);
+    }
+    vi.mocked(fetch).mockClear();
+    for (const route of [`projects/${id}/delete`, `milestones/${id}/send-invoice`, `packages/${id}/download/public/pdf`, `approvals/${id}/download/internal/pdf`]) {
+      const path = `api/proofos/${route}`;
+      expect((await proxyBackend(new Request(`http://localhost/api/backend/${path}`), path)).status).toBe(404);
+    }
+    const path = "api/proofos/projects";
+    expect((await proxyBackend(new Request(`http://localhost/api/backend/${path}`, { method: "POST", headers: { Origin: "https://attacker.example" } }), path)).status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each(["api/ask", "api/sources/11111111-1111-4111-8111-111111111111/availability", "api/evidence/answer", "api/evidence/search", "api/evidence/sources/11111111-1111-4111-8111-111111111111/embed", "api/evidence/sources/11111111-1111-4111-8111-111111111111/index", "api/evidence/sources/11111111-1111-4111-8111-111111111111/remove-index"])("forwards authorized question/source writes through the gateway: %s", async (path) => {
     const response = await proxyBackend(new Request(`http://localhost/api/backend/${path}`, {
       method: "POST", body: JSON.stringify({ question: "Refund policy?", active: false }),

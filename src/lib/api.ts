@@ -53,7 +53,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit, acceptedStat
     if (error instanceof DOMException && error.name === "TimeoutError") {
       throw new Error("The backend took too long to respond. Please try again.");
     }
-    throw new Error("Could not connect to the FixFlow backend.", { cause: error });
+    throw new Error("Could not connect to the ProofOS backend.", { cause: error });
   }
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok && !acceptedStatuses.includes(response.status)) throw new Error(apiErrorMessage(body, response.status));

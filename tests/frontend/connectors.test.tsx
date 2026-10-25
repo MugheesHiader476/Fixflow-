@@ -80,6 +80,21 @@ describe("Connected Apps", () => {
     await waitFor(() => expect(api.configureConnector).toHaveBeenCalledWith(ACCOUNT.id, expect.objectContaining({ mime_types: ["application/pdf", "text/plain"] })));
   });
 
+  it("requires explicit selection for read-only GitHub verification capabilities", async () => {
+    const github = { ...ACCOUNT, provider: "github" as const };
+    api.listConnectors.mockResolvedValue([{ ...CARDS[1], configured: true, accounts: [github] }]);
+    render(<ConnectorsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Configure resources" }));
+    const actions = await screen.findByLabelText("actions");
+    expect(actions).toHaveProperty("checked", false);
+    expect(screen.getByLabelText("checks")).toHaveProperty("checked", false);
+    expect(screen.getByLabelText("deployments")).toHaveProperty("checked", false);
+    fireEvent.click(actions);
+    fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
+    await waitFor(() => expect(api.configureConnector).toHaveBeenCalledWith(ACCOUNT.id,
+      expect.objectContaining({ categories: ["code", "issues", "actions"] })));
+  });
+
   it("requires explicit disconnect confirmation and supports purge", async () => {
     render(<ConnectorsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
@@ -143,6 +158,8 @@ describe("connector response validation", () => {
     expect(validConnectorResponse("/api/connectors", CARDS)).toBe(true);
     expect(validConnectorResponse(`/api/connectors/${ACCOUNT.id}/status`, { ...ACCOUNT, progress: { queued: -1 } })).toBe(false);
     expect(validConnectorResponse(`/api/connectors/${ACCOUNT.id}/status`, { ...ACCOUNT, configuration: { resource_ids: [] } })).toBe(false);
+    expect(validConnectorResponse(`/api/connectors/${ACCOUNT.id}/status`, { ...ACCOUNT,
+      configuration: { ...ACCOUNT.configuration, categories: ["actions", "checks", "deployments"] } })).toBe(true);
     expect(validConnectorResponse("/api/connectors/gmail/connect", { authorization_url: "javascript:alert(1)" })).toBe(false);
     expect(authorizationUrl("https://accounts.google.com/o/oauth2/v2/auth?state=state")).toBe(true);
     expect(authorizationUrl("https://accounts.google.com.attacker.test/o/oauth2/v2/auth")).toBe(false);

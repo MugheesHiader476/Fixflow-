@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Bookmark, Database, History, PanelLeftClose, Plug, Plus, Settings, ShieldCheck, X } from "lucide-react";
+import { Bookmark, ClipboardCheck, Database, FolderKanban, History, PanelLeftClose, Plug, Plus, Settings, ShieldCheck, X } from "lucide-react";
 import { timeAgo } from "@/lib/utils";
 import { listSessions } from "@/lib/api";
 import type { DebugSession } from "@/lib/types";
@@ -12,6 +12,8 @@ import { Brand } from "./brand";
 
 const NAV = [
   { href: "/", label: "New chat", icon: Plus },
+  { href: "/projects", label: "Projects & milestones", icon: FolderKanban },
+  { href: "/approvals", label: "Approval requests", icon: ClipboardCheck },
   { href: "/sources", label: "Knowledge Sources", icon: Database },
   { href: "/connectors", label: "Connected Apps", icon: Plug },
   { href: "/history", label: "Conversation History", icon: History },
@@ -74,7 +76,7 @@ export function Sidebar({ open, collapsed, onClose, onCollapse }: {
     </div>
     <nav aria-label={mobile ? "Mobile workspace navigation" : "Workspace navigation"} className="ff-sidebar-nav">
       {NAV.map((item) => <Link key={item.href} href={item.href} onClick={mobile ? onClose : undefined}
-        aria-current={pathname === item.href ? "page" : undefined}>
+        aria-current={pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`)) ? "page" : undefined}>
         <item.icon size={18} strokeWidth={1.6} /><span>{item.label}</span>
         {item.href === "/" && <kbd>New</kbd>}
       </Link>)}
@@ -90,7 +92,7 @@ export function Sidebar({ open, collapsed, onClose, onCollapse }: {
     </div>
     <div className="ff-sidebar-bottom">
       <Link href="/settings" onClick={mobile ? onClose : undefined} aria-current={pathname === "/settings" ? "page" : undefined}><Settings size={18} />Settings</Link>
-      <div className="ff-sidebar-account"><span className="ff-account-avatar">F</span><div><strong>Private workspace</strong><span><ShieldCheck size={11} />Only your selected sources</span></div></div>
+      <div className="ff-sidebar-account"><span className="ff-account-avatar">P</span><div><strong>Private workspace</strong><span><ShieldCheck size={11} />Only your selected sources</span></div></div>
     </div>
   </>;
 

@@ -82,7 +82,7 @@ function SessionChat({
               <div className="max-w-[85%] space-y-2">
                 <div className="rounded-lg rounded-tl-sm border border-border bg-background px-3.5 py-2.5">
                   {m.pending && (
-                    <span className="flex gap-1 py-1" aria-label="FixFlow is thinking">
+                    <span className="flex gap-1 py-1" aria-label="ProofOS is thinking">
                       {[0, 1, 2].map((i) => (
                         <span
                           key={i}
