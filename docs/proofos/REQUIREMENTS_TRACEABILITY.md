@@ -23,6 +23,6 @@ Status vocabulary: IMPLEMENTED (working code), VERIFIED (executed checks), PARTI
 | Coding automation | PARTIAL | Approved task packet export; runner not configured, execution_authorized=false; no backend shell or customer GitHub writes |
 | Release scenarios A/B/C | VERIFIED | Real PostgreSQL/API/parsing/jobs and separate actual React browser fixtures; failing auth/missing docs block; pending customer blocks; exact valid acceptance permits one draft |
 | CI/evaluation | IMPLEMENTED | Sonar preserved; existing evaluator gains ProofOS browser gate; new tests auto-collected. Actual remote status in PROGRESS.md |
-| Production/live services | BLOCKED | No deployment/application migration/live consent/customer action/model verification; inherited dependency audit failure; see KNOWN_LIMITATIONS.md |
+| Production/live services | BLOCKED | No deployment/application migration/live consent/customer action/model verification; clean audits do not establish live-service readiness; see KNOWN_LIMITATIONS.md |
 
 The commercial acceptance workflow is implemented and exercised locally. The broader transformation remains PARTIAL because optional writes, full team roles and autonomous planning/runner are absent. These are missing implementations, not merely missing credentials.

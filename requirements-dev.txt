@@ -2,6 +2,7 @@
 -r requirements-ingestion.txt
 
 bandit>=1.9
+filelock>=4.2.1
 mypy>=2.3
 pip-audit>=2.10
 pytest>=9.0

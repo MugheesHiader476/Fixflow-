@@ -28,4 +28,4 @@ Configure the customer's actual, separate Clerk subject. That user signs in to /
 
 ## Release blockers
 
-Resolve inherited dependency advisories; run complete CI with disposable PostgreSQL; verify production TLS/auth/grants/artifact reachability; test backup/restore/retention and purged-project operations; budget native rates/DB capacity; review privacy/contractual authority. Optional roles/writes/coding remain future work. Do not deploy this branch as a completed all-features production release.
+The PR #1 follow-up patches the inherited dependency advisories; require fresh passing audits and complete CI/Sonar verification before release. Verify production TLS/auth/grants/artifact reachability; test backup/restore/retention and purged-project operations; budget native rates/DB capacity; review privacy/contractual authority. Optional roles/writes/coding remain future work. Do not deploy this branch as a completed all-features production release.

@@ -22,11 +22,11 @@ Views are bounded to latest 100 contracts/milestones/history entries and 500 req
 
 PDFs use existing pypdf/core fonts; unsupported Unicode appears as visible escaped code points while JSON preserves exact Unicode. Fictional English PDFs were rendered/inspected, not every language/layout.
 
-## Baseline audit failure
+## Dependency audit remediation
 
-Before and after changes, the locked dependency audit reports52 vulnerabilities across certifi 2026.7.22, filelock 4.0.4, Pillow 12.3.0 and pypdf 6.19.0. No dependency upgrade or disabled gate conceals this. Remediation/regression testing blocks production release. Detailed current advisories are in ignored `.local/proofos-final-pip-audit.json`.
+The original delivery and completed code-check run 40173154053 failed dependency audits: 52 Python advisories across certifi 2026.7.22, filelock 4.0.4, Pillow 12.3.0 and pypdf 6.19.0, plus a critical Next 16.3.8 dependency. These were reproduced locally during the PR #1 follow-up, not suppressed.
 
-The production npm audit also fails for the inherited Next 16.3.8 dependency: one critical package, three advisory entries. This branch changes package branding only, not dependency versions. A separately reviewed Next security update and full regression run are required before production deployment. Details: ignored `.local/proofos-final-npm-audit.json`.
+The follow-up updates Next/eslint-config-next to 16.4.3, certifi to 2026.10.23, filelock to 4.2.4, Pillow to 13.0.0 and pypdf to 6.21.2, with secure minimums in the existing requirement inputs and regenerated hash locks. Vitest/coverage and affected development transitive packages receive compatible security updates too. Local locked Python, production npm and complete npm audits now report no known vulnerabilities. This is a timestamped audit result, not a permanent security guarantee. Full regression and actual CI/Sonar results are recorded separately in TEST_RESULTS.md and the PR; no audit ignore, force upgrade or skipped gate is used.
 
 ## Unverified external boundary
 

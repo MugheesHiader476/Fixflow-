@@ -5,6 +5,7 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `.gitignore`
 - `README.md`
 - `backend/README.md`
+- `backend/requirements.txt`
 - `backend/api/proofos.py`
 - `backend/connectors/github.py`
 - `backend/connectors/github_evidence.py`
@@ -50,6 +51,7 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `docs/proofos/IMPLEMENTATION_PLAN.md`
 - `docs/proofos/KNOWN_LIMITATIONS.md`
 - `docs/proofos/PROGRESS.md`
+- `docs/proofos/PR1_REVIEW.md`
 - `docs/proofos/REPOSITORY_AUDIT.md`
 - `docs/proofos/REQUIREMENTS_TRACEABILITY.md`
 - `docs/proofos/SECURITY_MODEL.md`
@@ -57,6 +59,9 @@ Paths are relative to the repository root. Generated PDFs, runtime evidence, env
 - `package-lock.json`
 - `package.json`
 - `pyproject.toml`
+- `requirements-dev.lock.txt`
+- `requirements-dev.txt`
+- `requirements-ingestion.txt`
 - `scripts/evaluate.py`
 - `scripts/proofos_demo.py`
 - `scripts/start-local.mjs`
