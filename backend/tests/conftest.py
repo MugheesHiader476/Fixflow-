@@ -60,6 +60,18 @@ async def database(
     monkeypatch.setenv("FIXFLOW_API_TOKEN", "test-only-gateway-token-at-least-32-characters")
     monkeypatch.setenv("DATABASE_URL", migrated_database)
     monkeypatch.setenv("FIXFLOW_DATA_DIR", str(tmp_path))
+    # A developer .env may configure embeddings/chat; tests start from fixed defaults and opt in explicitly.
+    monkeypatch.setenv("EMBEDDINGS__AUTO_EMBED", "false")
+    monkeypatch.setenv("EMBEDDINGS__URL", "")
+    for name, value in {
+        "PROVIDER": "xai",
+        "TIMEOUT_SECONDS": "25",
+        "INPUT_TOKEN_LIMIT": "16000",
+        "MAX_OUTPUT_TOKENS": "1800",
+        "REQUESTS_PER_MINUTE": "10",
+        "RUN_TIMEOUT_SECONDS": "600",
+    }.items():
+        monkeypatch.setenv("GROK__" + name, value)
     get_settings.cache_clear()
     await close_database()
     async with get_engine().begin() as connection:

@@ -1,4 +1,4 @@
-"""Durable bounded embedding jobs and one-call hybrid search; no implicit paid backfill."""
+"""Durable bounded embedding jobs and one-call hybrid search; new parses queue, no bulk backfill."""
 
 import asyncio
 import logging
@@ -32,13 +32,14 @@ from backend.processing.embedding_input import (
     document_input,
     input_hash,
     profile,
+    query_input,
 )
 from backend.repositories import embeddings as repository
 from backend.repositories.evidence import authorized, reauthorize, verified
 from backend.repositories.parsed import parsed_source
-from backend.schemas.evidence import EmbeddingReceipt, EvidenceHit, EvidenceRequest, GeminiConfig
+from backend.schemas.evidence import EmbeddingConfig, EmbeddingReceipt, EvidenceHit, EvidenceRequest
 from backend.services.access import owner_id
-from backend.services.gemini_embeddings import EmbeddingUsage, embed, normalized
+from backend.services.local_embeddings import EmbeddingUsage, embed, normalized, provider_failure, retryable_status
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def source_lock(db: AsyncSession, source_id: UUID) -> None:
         raise HTTPException(409, "Source is currently processing")
 
 
-async def receipt(db: AsyncSession, source_id: UUID, config: GeminiConfig) -> EmbeddingReceipt:
+async def receipt(db: AsyncSession, source_id: UUID, config: EmbeddingConfig) -> EmbeddingReceipt:
     if await parsed_source(db, source_id, owner_id(db)) is None:
         raise HTTPException(404, "Accessible parsed source not found")
     index = await db.get(PassageIndex, source_id, populate_existing=True)
@@ -91,11 +92,11 @@ async def receipt(db: AsyncSession, source_id: UUID, config: GeminiConfig) -> Em
     )
 
 
-async def prepare(db: AsyncSession, source_id: UUID, config: GeminiConfig) -> EmbeddingReceipt:
+async def prepare(db: AsyncSession, source_id: UUID, config: EmbeddingConfig) -> EmbeddingReceipt:
     await source_lock(db, source_id)
     result = await receipt(db, source_id, config)
     if not config.configured:
-        raise HTTPException(503, "Semantic search requires explicit GEMINI__MODEL and GEMINI__API_KEY configuration")
+        raise HTTPException(503, "Semantic search requires EMBEDDINGS__URL and EMBEDDINGS__MODEL (local Ollama)")
     index = await db.get(PassageIndex, source_id)
     if index is None:
         raise ValueError("The source passage index is unavailable")
@@ -113,7 +114,7 @@ async def prepare(db: AsyncSession, source_id: UUID, config: GeminiConfig) -> Em
     return await receipt(db, source_id, config)
 
 
-async def activate(db: AsyncSession, job: EmbeddingJob, index: PassageIndex, config: GeminiConfig) -> None:
+async def activate(db: AsyncSession, job: EmbeddingJob, index: PassageIndex, config: EmbeddingConfig) -> None:
     """Publish all current memberships and the activation pointer in this transaction."""
     rows = select(EvidencePassage.id, EvidencePassage.source_id, EvidencePassage.embedding_input_hash).where(
         EvidencePassage.source_id == job.source_id, repository.cached(config).exists()
@@ -141,9 +142,9 @@ async def activate(db: AsyncSession, job: EmbeddingJob, index: PassageIndex, con
     job.status, job.run_token, job.error = "complete", None, None
 
 
-async def process_batch(source_id: UUID, config: GeminiConfig | None = None) -> None:
+async def process_batch(source_id: UUID, config: EmbeddingConfig | None = None) -> None:
     """Claim one batch with an expiring lease; release every connection/lock over HTTP."""
-    config = config or get_settings().gemini
+    config = config or get_settings().embeddings
     now = datetime.now(UTC)
     token = uuid4()
     async with get_session_factory().begin() as db:
@@ -232,6 +233,10 @@ async def process_batch(source_id: UUID, config: GeminiConfig | None = None) -> 
             vectors = [normalized(vector) for vector in vectors]
     except ConnectorError as error:
         failure, retry_delay = "Embedding rate limit; preparation will resume", max(1, error.retry_after or 60)
+    except httpx.HTTPStatusError as error:
+        status = error.response.status_code
+        failure = provider_failure(status) + "; lexical search remains available"
+        retryable = retryable_status(status)
     except (httpx.HTTPError, TimeoutError, ValueError, TypeError, OverflowError) as error:
         failure = "Embedding batch failed; lexical search remains available"
         retryable = not isinstance(error, (ValueError, TypeError, OverflowError))
@@ -337,14 +342,14 @@ async def hybrid(
     db: AsyncSession,
     request: EvidenceRequest,
     lexical: list[EvidenceHit],
-    config: GeminiConfig,
+    config: EmbeddingConfig,
     usage: EmbeddingUsage,
     warnings: list[str],
 ) -> list[EvidenceHit]:
     total, ready = await repository.counts(db, request, config)
     if not config.configured or not ready:
         warnings.append(
-            "Hybrid search unavailable: configure Gemini model/key and complete source preparation. "
+            "Hybrid search unavailable: start the local embedding service and complete source preparation. "
             "Lexical search used."
         )
         return lexical
@@ -353,10 +358,14 @@ async def hybrid(
     await db.rollback()
     try:
         await reserve("evidence-embed:" + owner_id(db), 60, config.requests_per_minute)
-        vectors = await embed(["task: search result | query: " + request.question], config, usage)
+        vectors = await embed([query_input(request.question)], config, usage)
         if len(vectors) != 1:
             raise ValueError("Query embedding count mismatch")
         query_vector = normalized(vectors[0])
+    except httpx.HTTPStatusError as error:
+        usage.completed = False
+        warnings.append(provider_failure(error.response.status_code) + "; lexical search used.")
+        return lexical
     except (ConnectorError, httpx.HTTPError, TimeoutError, ValueError, TypeError, OverflowError):
         usage.completed = False
         warnings.append("The single query embedding attempt failed or was rate limited; lexical search used.")

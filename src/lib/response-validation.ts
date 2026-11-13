@@ -44,6 +44,7 @@ function validHealth(value: unknown): boolean {
     && (value.evidence_generation === undefined || ["configured", "not_configured"].includes(String(value.evidence_generation)))
     && (value.workspace_agent === undefined || ["configured", "not_configured"].includes(String(value.workspace_agent)))
     && (value.evidence_semantic === undefined || ["configured", "not_configured"].includes(String(value.evidence_semantic)))
+    && (value.ocr === undefined || ["available", "not_configured"].includes(String(value.ocr)))
     && (value.answer_service === undefined || ["removed", "ready", "unavailable", "not_configured"].includes(String(value.answer_service)));
 }
 

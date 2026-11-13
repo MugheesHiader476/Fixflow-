@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 
 from backend.config import Settings, get_settings
@@ -26,12 +26,12 @@ from backend.db.models import (
     PassageIndex,
 )
 from backend.db.session import close_database, get_session_factory
-from backend.processing.embedding_input import DIMENSIONS, MODEL
+from backend.processing.embedding_input import DIMENSIONS, INPUT_FORMAT_VERSION, MODEL, REVISION
 from backend.repositories.sources import delete_source
-from backend.schemas.evidence import GeminiConfig
+from backend.schemas.evidence import EmbeddingConfig
 from backend.services.embeddings import embedding_worker, process_batch
-from backend.services.gemini_embeddings import normalized
-from backend.tests.test_embeddings import VECTOR, mock_google, release_rates, response, run_prepare
+from backend.services.local_embeddings import normalized
+from backend.tests.test_embeddings import VECTOR, mock_local, release_rates, response, run_prepare
 from backend.tests.test_evidence import indexed, search
 
 pytestmark = pytest.mark.anyio
@@ -55,11 +55,20 @@ def test_vector_contract(vector: object) -> None:
 
 
 def test_explicit_configuration_rejects_unsupported_space() -> None:
-    assert not GeminiConfig().configured
-    assert not GeminiConfig(api_key=SecretStr("not-a-real-key")).configured
-    for changes in [{"model": "gemini-embedding-001"}, {"dimensions": 1536}, {"dimensions": 769}]:
+    assert not EmbeddingConfig().configured
+    assert not EmbeddingConfig(url="http://127.0.0.1:11435").configured
+    assert EmbeddingConfig(url="http://127.0.0.1:11435/", model="nomic-embed-text").url == "http://127.0.0.1:11435"
+    for changes in [
+        {"model": "gemini-embedding-2"},
+        {"dimensions": 1536},
+        {"dimensions": 769},
+        {"url": "file:///etc/passwd"},
+        {"url": "http://user:secret@127.0.0.1:11435"},
+        {"url": "http://127.0.0.1:11435/api/embed"},
+        {"revision": "short"},
+    ]:
         with pytest.raises(ValidationError):
-            GeminiConfig.model_validate(changes)
+            EmbeddingConfig.model_validate(changes)
 
 
 async def test_queue_atomic_activation_and_restart_resume(
@@ -70,9 +79,9 @@ async def test_queue_atomic_activation_and_restart_resume(
 
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        return response(len(json.loads(request.content)["requests"]))
+        return response(len(json.loads(request.content)["input"]))
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     url = f"/api/evidence/sources/{identifier}/embed"
     queued = await client.post(url)
     assert queued.status_code == 202 and queued.json()["status"] == "queued" and not calls
@@ -106,8 +115,8 @@ async def test_queue_atomic_activation_and_restart_resume(
         assert await db.scalar(select(func.count()).select_from(PassageEmbedding)) == 20
         row = await db.scalar(select(EvidenceEmbedding))
         index = await db.get(PassageIndex, identifier)
-        assert row and index and row.model == row.revision == MODEL and row.dimensions == DIMENSIONS
-        assert row.input_format_version == "search-v1" and index.vector_fingerprint == index.fingerprint
+        assert row and index and row.model == MODEL and row.revision == REVISION and row.dimensions == DIMENSIONS
+        assert row.input_format_version == INPUT_FORMAT_VERSION and index.vector_fingerprint == index.fingerprint
 
 
 async def test_workers_share_claim_and_duplicate_queue_is_idempotent(
@@ -124,7 +133,7 @@ async def test_workers_share_claim_and_duplicate_queue_is_idempotent(
         await release.wait()
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await client.post(f"/api/evidence/sources/{identifier}/embed")).status_code == 202
     first = asyncio.create_task(process_batch(identifier))
     try:
@@ -149,9 +158,9 @@ async def test_revision_mismatch_and_rate_failure_keep_lexical(
     async def handler(request: httpx.Request) -> httpx.Response:
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).json()["active"]
-    monkeypatch.setenv("GEMINI__REVISION", "operator-rollout-2")
+    monkeypatch.setenv("EMBEDDINGS__REVISION", "1234567890abcdef")
     get_settings.cache_clear()
     result = await search(client, retrieval="hybrid")
     assert result.json()["retrieval"] == "lexical" and result.json()["embedding_calls"] == 0
@@ -160,7 +169,7 @@ async def test_revision_mismatch_and_rate_failure_keep_lexical(
     assert (await run_prepare(client, identifier)).json()["active"]
     async with get_session_factory()() as db:
         assert await db.scalar(select(func.count()).select_from(EvidenceEmbedding)) == 2
-    monkeypatch.setenv("GEMINI__REQUESTS_PER_MINUTE", "1")
+    monkeypatch.setenv("EMBEDDINGS__REQUESTS_PER_MINUTE", "1")
     get_settings.cache_clear()
     limited = await search(client, retrieval="hybrid")
     assert limited.status_code == 200 and limited.json()["retrieval"] == "lexical"
@@ -180,7 +189,7 @@ async def test_retries_are_bounded_and_malformed_batches_never_publish(
             raise httpx.ReadTimeout("secret upstream message")
         return response(2)  # There is only one pending input.
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await client.post(f"/api/evidence/sources/{identifier}/embed")).status_code == 202
     for _ in range(3):
         await release_rates()
@@ -203,7 +212,7 @@ async def test_selection_budget_and_rank_metadata(client: httpx.AsyncClient, mon
     async def handler(request: httpx.Request) -> httpx.Response:
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     await run_prepare(client, identifier)
     result = (
         await search(
@@ -250,18 +259,17 @@ async def test_lexical_hybrid_benchmark(client: httpx.AsyncClient, monkeypatch: 
 
     async def handler(request: httpx.Request) -> httpx.Response:
         vectors = []
-        for item in json.loads(request.content)["requests"]:
-            text = item["content"]["parts"][0]["text"]
-            calls.append("query" if text.startswith("task:") else "document")
+        for text in json.loads(request.content)["input"]:
+            calls.append("query" if text.startswith("search_query:") else "document")
             matches = [i for i, (body, question) in enumerate(corpus) if body in text or question in text]
             assert len(matches) == 1
             vector = [0.0] * DIMENSIONS
             vector[matches[0]] = 1.0
-            vectors.append({"values": vector})
-        return httpx.Response(200, json={"embeddings": vectors, "usageMetadata": {"promptTokenCount": 123}})
+            vectors.append(vector)
+        return httpx.Response(200, json={"embeddings": vectors, "prompt_eval_count": 123})
 
-    mock_google(monkeypatch, handler)
-    monkeypatch.setenv("GEMINI__REQUESTS_PER_MINUTE", "30")
+    mock_local(monkeypatch, handler)
+    monkeypatch.setenv("EMBEDDINGS__REQUESTS_PER_MINUTE", "30")
     get_settings.cache_clear()
     for identifier in ids:
         await release_rates()
@@ -324,7 +332,7 @@ async def test_activated_vectors_follow_current_permissions(
         calls.append(request)
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).json()["active"]
     async with get_session_factory().begin() as db:
         source = await db.get(KnowledgeSource, identifier)
@@ -378,7 +386,7 @@ async def test_incompatible_cache_fails_without_repeated_provider_calls(
         calls.append(request)
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).json()["active"]
     async with get_session_factory().begin() as db:
         await db.execute(update(EvidenceEmbedding).values(model="incompatible-model"))
@@ -436,9 +444,33 @@ async def test_migration_preserves_0008_vectors_without_activation(client: httpx
 
 
 def test_embedding_dimensions_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GEMINI__MODEL", MODEL)
-    monkeypatch.setenv("GEMINI__DIMENSIONS", "768")
-    assert Settings().gemini.dimensions == 768
-    monkeypatch.setenv("GEMINI__DIMENSIONS", "1536")
+    monkeypatch.setenv("EMBEDDINGS__MODEL", MODEL)
+    monkeypatch.setenv("EMBEDDINGS__DIMENSIONS", "768")
+    assert Settings().embeddings.dimensions == 768
+    monkeypatch.setenv("EMBEDDINGS__DIMENSIONS", "1536")
     with pytest.raises(ValidationError):
         Settings()
+
+
+async def test_provider_denial_fails_preparation_with_actionable_safe_error(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identifier = await indexed(client, "Payment evidence for a denied project.")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "private model detail"})
+
+    mock_local(monkeypatch, handler)
+    assert (await client.post(f"/api/evidence/sources/{identifier}/embed")).status_code == 202
+    await release_rates()
+    await process_batch(identifier)
+    status = await client.get(f"/api/evidence/sources/{identifier}/embedding-status")
+    assert status.json()["status"] == "failed" and status.json()["embedding_calls"] == 1
+    assert "ollama pull nomic-embed-text" in status.json()["error"] and "private model detail" not in status.text
+    await release_rates()
+    result = await search(client, retrieval="hybrid")
+    assert result.json()["retrieval"] == "lexical" and result.json()["passages"]
+    # Nothing was prepared, so hybrid search degrades before any further embedding call.
+    assert result.json()["embedding_calls"] == 0
+    assert any("Hybrid search unavailable" in warning for warning in result.json()["warnings"])

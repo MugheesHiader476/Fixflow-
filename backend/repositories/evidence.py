@@ -1,15 +1,18 @@
 """PostgreSQL passage writes/reads with authorization before private payload decoding."""
 
 import asyncio
+import logging
 import re
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
+from backend.config import get_settings
 from backend.db.models import EmbeddingJob, EvidenceEmbedding, EvidencePassage, KnowledgeSource, PassageIndex
-from backend.processing.embedding_input import input_hash
+from backend.processing.embedding_input import input_hash, profile
 from backend.processing.passages import PASSAGE_VERSION, build_passages, source_metadata, validate_passage
 from backend.processing.pipeline.validation import validate_result
 from backend.repositories.parsed import parsed_source
@@ -17,6 +20,8 @@ from backend.repositories.source_access import accessible_source
 from backend.schemas.evidence import EvidenceHit, EvidenceRequest, IndexRequest, Passage
 from backend.schemas.pipeline import PipelineResult, digest
 from backend.services.access import owner_id
+
+logger = logging.getLogger(__name__)
 
 
 def index_fingerprint(result: PipelineResult, labels: IndexRequest) -> str:
@@ -94,10 +99,50 @@ async def write_index(db: AsyncSession, source: KnowledgeSource, result: Pipelin
     return len(passages)
 
 
+AUTOMATIC_PROJECT = "workspace"
+
+
+def automatic_labels() -> IndexRequest:
+    return IndexRequest(project=AUTOMATIC_PROJECT)
+
+
 async def refresh_index(db: AsyncSession, source: KnowledgeSource, result: PipelineResult) -> None:
+    """Keep every parsed source searchable as structure-aware passages.
+
+    Owner-labelled indexes keep their labels and fail loudly. Automatic indexes never fail
+    parsing: an unindexable source is left to whole-document search instead.
+    """
     index = await db.get(PassageIndex, source.id)
-    if index is not None:
-        await write_index(db, source, result, IndexRequest.model_validate(index.specification))
+    labels = IndexRequest.model_validate(index.specification) if index is not None else automatic_labels()
+    automatic = labels == automatic_labels()
+    if not automatic:
+        await write_index(db, source, result, labels)
+    else:
+        try:
+            async with db.begin_nested():
+                await write_index(db, source, result, labels)
+        except ValueError:
+            logger.warning("Automatic passage indexing skipped source=%s; whole-document search remains", source.id)
+            # A stale index would fail verification for every search, so remove it.
+            await db.execute(delete(PassageIndex).where(PassageIndex.source_id == source.id))
+            return
+    embedding = get_settings().embeddings
+    if embedding.configured and embedding.auto_embed:
+        await queue_embedding(db, source.id, profile(embedding.revision))
+
+
+async def queue_embedding(db: AsyncSession, source_id: UUID, identity: str) -> None:
+    """Queue the bounded, rate-limited embedding worker for the current index version only."""
+    index = await db.get(PassageIndex, source_id)
+    if index is None or (index.vector_fingerprint == index.fingerprint and index.vector_profile == identity):
+        return
+    job = await db.get(EmbeddingJob, source_id)
+    if job is None:
+        db.add(EmbeddingJob(source_id=source_id, source_version=index.fingerprint, profile=identity))
+    elif job.source_version != index.fingerprint or job.profile != identity or job.status == "cancelled":
+        job.source_version, job.profile = index.fingerprint, identity
+        job.status, job.run_token, job.failures, job.error = "queued", None, 0, None
+        job.next_attempt_at = datetime.now(UTC)
 
 
 def authorized(db: AsyncSession, request: EvidenceRequest) -> Select[tuple[EvidencePassage]]:

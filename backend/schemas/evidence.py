@@ -2,11 +2,13 @@
 
 from datetime import date
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 
-from backend.processing.embedding_input import DIMENSIONS, MODEL
+from backend.processing.embedding_input import DIMENSIONS
+from backend.processing.embedding_input import REVISION as MODEL_REVISION
 from backend.schemas.models import PersistedText
 from backend.schemas.pipeline import Contract, Provenance
 
@@ -24,25 +26,46 @@ class EvidenceConfig(Contract):
         return None if value == "" else value
 
 
-class GeminiConfig(Contract):
-    """Explicit remote semantic search; fixed model/space, no automatic fallback model."""
+class EmbeddingConfig(Contract):
+    """Free local semantic search through an operator-run Ollama; fixed model/space, no fallback model."""
 
-    api_key: SecretStr | None = None
-    model: Literal["gemini-embedding-2"] | None = None
-    revision: str = Field(default=MODEL, min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
+    url: str | None = Field(default=None, max_length=200)
+    model: Literal["nomic-embed-text"] | None = None
+    # Ollama weights digest prefix; vectors from different weights are never mixed.
+    revision: str = Field(default=MODEL_REVISION, min_length=12, max_length=80, pattern=r"^[a-f0-9]+$")
     dimensions: int = Field(default=DIMENSIONS, ge=DIMENSIONS, le=DIMENSIONS)
-    timeout_seconds: float = Field(default=12, ge=1, le=15)
-    requests_per_minute: int = Field(default=5, ge=1, le=30)
+    timeout_seconds: float = Field(default=60, ge=1, le=120)
+    requests_per_minute: int = Field(default=120, ge=1, le=600)
     min_similarity: float = Field(default=0.5, ge=0, le=1)
+    # Newly parsed sources queue the embedding worker; existing sources are not backfilled.
+    auto_embed: bool = True
 
-    @field_validator("api_key", "model", mode="before")
+    @field_validator("url", "model", mode="before")
     @classmethod
-    def optional_key(cls, value: object) -> object:
+    def optional_value(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("url")
+    @classmethod
+    def local_service(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parts = urlsplit(value)
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+            or parts.path not in {"", "/"}
+        ):
+            raise ValueError("EMBEDDINGS__URL must be an Ollama base URL such as http://127.0.0.1:11435")
+        return value.rstrip("/")
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.model)
+        return bool(self.url and self.model)
 
 
 class EmbeddingReceipt(Contract):

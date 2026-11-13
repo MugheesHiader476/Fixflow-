@@ -21,7 +21,7 @@ from backend.connectors.slack import SlackConnector
 from backend.connectors.workspace import NativeWorkspace
 from backend.db.models import AgentRun, ConnectorAccount, Document, KnowledgeSource, PassageIndex
 from backend.db.session import get_session_factory
-from backend.repositories.parsed import parsed_source
+from backend.repositories.parsed import parsed_identity, parsed_source
 from backend.repositories.source_access import accessible_source
 from backend.schemas.agent import (
     DraftEmail,
@@ -164,10 +164,10 @@ async def authorize(ctx: Context, *, native: bool = False) -> None:
                 )
                 if scoped is None:
                     raise ConnectorError("inaccessible", "Evidence is outside this workflow's authorized connections")
-                result = await parsed_source(db, UUID(string(ref["source_id"])), ctx.owner)
-                if result is None or result.canonical.source.sha256 != ref.get("source_hash"):
+                identity = await parsed_identity(db, UUID(string(ref["source_id"])), ctx.owner)
+                if identity is None or identity[0] != ref.get("source_hash"):
                     raise ConnectorError("inaccessible", "Source access or version changed")
-                if ref.get("canonical_hash") and result.canonical.content_hash != ref["canonical_hash"]:
+                if ref.get("canonical_hash") and identity[1] != ref["canonical_hash"]:
                     raise ConnectorError("processing", "Canonical evidence changed; run the workflow again")
             if native and ref.get("account_id") and ref.get("read_request"):
                 workspace, _ = await connection(ctx, UUID(string(ref["account_id"])))
@@ -318,12 +318,12 @@ async def snapshots(ctx: Context, args: SearchSnapshots) -> dict[str, object]:
         include_manual_sources=manual,
         max_passages=5,
         context_tokens=2200,
-        retrieval="hybrid" if get_settings().gemini.configured else "lexical",
+        retrieval="hybrid" if get_settings().embeddings.configured else "lexical",
     )
     output: list[Material] = []
     async with get_session_factory()() as db:
         db.info["owner_id"] = ctx.owner
-        result = await evidence.search(db, request, get_settings().gemini)
+        result = await evidence.search(db, request, get_settings().embeddings, live_gate=False)
         for hit in result.passages:
             p = hit.passage
             output.append(

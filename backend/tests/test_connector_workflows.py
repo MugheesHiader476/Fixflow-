@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.connectors.config import ConnectorConfig
-from backend.connectors.core import EnvelopeFactory, record
+from backend.connectors.core import ConnectorError, EnvelopeFactory, record, records
 from backend.connectors.events import lifecycle_event
 from backend.connectors.github import GitHubConnector
 from backend.connectors.gmail import GmailConnector
@@ -31,7 +31,7 @@ from backend.db.models import (
 )
 from backend.db.session import get_session_factory
 from backend.repositories.parsed import parsed_source
-from backend.schemas.connectors import Credentials, Resource
+from backend.schemas.connectors import Credentials, FetchResult, Resource, Selection
 from backend.services.connector_sources import register
 from backend.services.ingestion import ingest_source
 from backend.tests.test_connectors import (
@@ -491,3 +491,49 @@ async def test_provider_refresh_rotates_encrypted_credentials(
     assert credentials.refresh_token and credentials.refresh_token.get_secret_value() == "new-private-refresh-token"
     ciphertext = await db.get(ConnectorCredential, reference, populate_existing=True)
     assert ciphertext and "new-private" not in ciphertext.ciphertext
+
+
+@pytest.mark.parametrize("code", ["unsupported_encoding", "invalid_envelope", "invalid_asset", "too_large"])
+async def test_one_bad_message_is_recorded_without_dropping_later_messages(
+    client: httpx.AsyncClient,
+    connector_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+) -> None:
+    native = NativeFixture("gmail")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(
+                200, json={"messages": [{"id": "m1", "threadId": "t1"}, {"id": "m2", "threadId": "t2"}]}
+            )
+        if request.url.path.endswith("/messages/m2"):
+            return httpx.Response(200, json=message("m2"))
+        return native.respond(request)
+
+    original = ProviderHttp.__init__
+
+    def initialize(
+        self: ProviderHttp, settings: ConnectorConfig, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
+        original(self, settings, httpx.MockTransport(respond))
+
+    fetch = GmailConnector.fetch_resource
+
+    async def failing_first(self: GmailConnector, resource: Resource, selection: Selection) -> FetchResult:
+        if resource.id == "m1":
+            raise ConnectorError(code, "Deterministic per-message failure")
+        return await fetch(self, resource, selection)
+
+    monkeypatch.setattr(ProviderHttp, "__init__", initialize)
+    monkeypatch.setattr(GmailConnector, "fetch_resource", failing_first)
+    identifier = await connect_gmail(client)
+    configured = await client.post(f"/api/connectors/{identifier}/configure", json={"resource_ids": ["INBOX"]})
+    assert configured.status_code == 200, configured.text
+    await run_jobs(identifier, "complete_with_warning")
+    async with get_session_factory()() as db:
+        job = await db.scalar(select(ConnectorSyncJob).where(ConnectorSyncJob.account_id == UUID(identifier)))
+        assert job is not None and job.progress["failed"] == 1
+        assert [ref["id"] for ref in records(job.cursor["failed_refs"])] == ["m1"]
+        resources = {row.external_id for row in await db.scalars(select(ConnectorResource))}
+        assert resources == {"m2"}

@@ -180,10 +180,21 @@ class Builder:
         self.add("heading", title, {"level": level}, location=location)
 
     def table(self, headers: list[str], rows: list[list[str]], location: dict[str, object] | None = None) -> None:
-        if not headers or not rows or any(len(row) != len(headers) for row in rows):
-            raise ValueError("Invalid table dimensions or missing data")
+        """Retain every source cell. Ragged rows are padded with empty cells, never truncated or inferred."""
+        body = [row for row in rows if row]
+        width = max([len(headers), *(len(row) for row in body)], default=0)
+        if not width:
+            return
+        if len(headers) != width or any(len(row) != width for row in body):
+            self.result.warnings.append("Table rows were padded to a uniform width; original cells are unchanged")
+            headers = [*headers, *[""] * (width - len(headers))]
+            body = [[*row, *[""] * (width - len(row))] for row in body]
         headers = [h or f"Column {i + 1}" for i, h in enumerate(headers)]
-        self.add("table", render_table(headers, rows), {"headers": headers, "rows": rows}, location=location)
+        if not body:
+            self.result.warnings.append("Table without data rows retained as text")
+            self.add("paragraph", render_table(headers, []), location=location)
+            return
+        self.add("table", render_table(headers, body), {"headers": headers, "rows": body}, location=location)
 
     def asset(self, reference: str, media_type: str, location: dict[str, object] | None = None) -> None:
         identifier = "a-" + digest([self.source.source_id, reference])[:32]
@@ -203,6 +214,12 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
         return "| " + " | ".join(v.replace("|", "\\|").replace("\n", "<br>") for v in values) + " |"
 
     return "\n".join([row(headers), row(["---"] * len(headers)), *(row(r) for r in rows)])
+
+
+def grid(builder: Builder, rows: list[list[str]], location: dict[str, object] | None = None) -> None:
+    """The first source row supplies headers; an empty grid is skipped instead of failing the document."""
+    if rows:
+        builder.table(rows[0], rows[1:], location)
 
 
 def markdown(text: str, builder: Builder, location: dict[str, object] | None = None) -> None:
@@ -226,18 +243,20 @@ def markdown(text: str, builder: Builder, location: dict[str, object] | None = N
             first = int(str(loc.get("line_start", 1))) + int(token.type == "fence")
             loc.update(line_start=first, line_end=first + len(token.content.splitlines()) - 1)
             structured: dict[str, object] = {"language": language}
+            tree = None
             if language == "python":
-                symbols = python_symbols(ast.parse(token.content))
-                for symbol in symbols:
-                    symbol["line_start"] = int(str(symbol["line_start"])) + first - 1
-                    symbol["line_end"] = int(str(symbol["line_end"])) + first - 1
-                structured["symbols"] = symbols
-            else:
-                symbols = code_symbols(token.content)
-                for symbol in symbols:
-                    symbol["line_start"] = int(str(symbol["line_start"])) + first - 1
-                    symbol["line_end"] = int(str(symbol["line_end"])) + first - 1
-                structured["symbols"] = symbols
+                try:
+                    tree = ast.parse(token.content)
+                except (SyntaxError, ValueError, RecursionError):
+                    # Documentation fences often hold REPL sessions, shell lines or fragments.
+                    builder.result.warnings.append(
+                        "Python code fence does not parse; lexical declaration evidence used"
+                    )
+            symbols = python_symbols(tree) if tree is not None else code_symbols(token.content)
+            for symbol in symbols:
+                symbol["line_start"] = int(str(symbol["line_start"])) + first - 1
+                symbol["line_end"] = int(str(symbol["line_end"])) + first - 1
+            structured["symbols"] = symbols
             builder.add("code", token.content, structured, location=loc)
         elif token.type == "table_open":
             rows: list[list[str]] = []
@@ -248,7 +267,7 @@ def markdown(text: str, builder: Builder, location: dict[str, object] | None = N
                 if tokens[end].type == "inline":
                     rows[-1].append(tokens[end].content)
                 end += 1
-            builder.table(rows[0], rows[1:], loc)
+            grid(builder, rows, loc)
             index = end
         elif token.type in {"bullet_list_open", "ordered_list_open", "blockquote_open"} and positions:
             kind: BlockType = "quote" if token.type == "blockquote_open" else "list"
@@ -285,8 +304,18 @@ def python_symbols(node: ast.AST, parent: list[str] | None = None) -> list[dict[
 def python_code(text: str, builder: Builder) -> None:
     try:
         tree = ast.parse(text)
-    except SyntaxError as error:
-        raise ValueError("Python source has invalid syntax") from error
+    except (SyntaxError, ValueError, RecursionError):
+        # Python 2, templates and broken sources stay loadable as exact lexical evidence.
+        builder.add(
+            "code",
+            text,
+            {"language": "python", "symbols": code_symbols(text), "representation": "source_lexical"},
+            location={"line_start": 1, "line_end": len(text.splitlines())},
+        )
+        builder.result.warnings.append(
+            "Python source does not parse as Python 3; lexical declaration evidence used without AST symbols"
+        )
+        return
     lines = text.splitlines(keepends=True)
     start = 0
     for node in tree.body:
@@ -483,7 +512,7 @@ def office(inspection: Inspection, builder: Builder) -> None:
                 location: dict[str, object] = {"element_path": f"word/document.xml/body/*[{index + 1}]"}
                 if item.tag.endswith("}tbl"):
                     rows = [[xml_text(c) for c in r.findall("w:tc", ns)] for r in item.findall("w:tr", ns)]
-                    builder.table(rows[0], rows[1:], location)
+                    grid(builder, rows, location)
                 elif item.tag.endswith("}p"):
                     text = xml_text(item)
                     style = item.find("w:pPr/w:pStyle", ns)
@@ -527,7 +556,7 @@ def office(inspection: Inspection, builder: Builder) -> None:
                 for item in root.iter():
                     if item.tag.endswith("}tbl"):
                         rows = [[xml_text(c) for c in r.findall("a:tc", ns)] for r in item.findall("a:tr", ns)]
-                        builder.table(rows[0], rows[1:], {"slide": number})
+                        grid(builder, rows, {"slide": number})
                     elif item.tag.endswith("}sp"):
                         for paragraph in item.findall(".//a:p", ns):
                             builder.add("paragraph", xml_text(paragraph), location={"slide": number})
@@ -617,7 +646,7 @@ def html(text: str, builder: Builder) -> None:
                 [c.get_text(" ", strip=True) for c in r.find_all(["th", "td"], recursive=False)]
                 for r in node.find_all("tr")
             ]
-            builder.table(rows[0], rows[1:])
+            grid(builder, rows)
         elif node.name == "pre":
             builder.add("code", node.get_text(), {"language": "text"})
         elif node.name == "img":
@@ -686,7 +715,7 @@ class NativeParser:
             html(text, builder)
         elif modality == "csv":
             rows = list(csv.reader(io.StringIO(text), strict=True))
-            builder.table(rows[0], rows[1:], {"line_start": 1, "line_end": len(text.splitlines())})
+            grid(builder, rows, {"line_start": 1, "line_end": len(text.splitlines())})
         elif modality in {"json", "yaml"}:
             try:
                 value = (
@@ -897,7 +926,7 @@ class LayoutParser:
                     flush_paragraph(paragraph, number)
                 for table in tables:
                     rows = [[v or "" for v in r] for r in table.extract()]
-                    builder.table(rows[0], rows[1:], {"page": number, "bbox": table.bbox})
+                    grid(builder, rows, {"page": number, "bbox": table.bbox})
                 for index, image in enumerate(page.images):
                     builder.asset(
                         f"source:{source.source_id}#page/{number}/image/{index}",

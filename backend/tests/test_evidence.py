@@ -16,9 +16,18 @@ from sqlalchemy import delete, func, select
 
 from backend.config import get_settings
 from backend.connectors.core import EnvelopeFactory
-from backend.db.models import ConnectorAccount, EvidencePassage, IngestionArtifact, KnowledgeSource, PassageIndex
+from backend.db.models import (
+    ConnectorAccount,
+    EmbeddingJob,
+    EvidencePassage,
+    IngestionArtifact,
+    KnowledgeSource,
+    PassageIndex,
+)
 from backend.db.session import get_session_factory
 from backend.schemas.connectors import Resource
+from backend.schemas.evidence import EvidenceRequest
+from backend.services import evidence as evidence_service
 from backend.services.connector_sources import register
 from backend.services.ingestion import ingest_source
 
@@ -456,3 +465,67 @@ async def test_representative_retrieval_quality_and_latency(client: httpx.AsyncC
             }
         )
     )
+
+
+async def upload(client: httpx.AsyncClient, body: str) -> UUID:
+    response = await client.post("/api/documents", data={"content": body, "value": "Status Report"})
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    await ingest_source(identifier)
+    return identifier
+
+
+@pytest.mark.parametrize("auto_embed", [True, False])
+async def test_parsed_sources_are_indexed_automatically_for_chat_search(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, auto_embed: bool
+) -> None:
+    monkeypatch.setenv("EMBEDDINGS__URL", "http://127.0.0.1:11435")
+    monkeypatch.setenv("EMBEDDINGS__MODEL", "nomic-embed-text")
+    monkeypatch.setenv("EMBEDDINGS__AUTO_EMBED", str(auto_embed).lower())
+    get_settings.cache_clear()
+    identifier = await upload(client, "# Release\n\nPayment testing is blocking the release.")
+    async with get_session_factory()() as db:
+        index = await db.get(PassageIndex, identifier)
+        assert index is not None and index.project == "workspace"
+        job = await db.get(EmbeddingJob, identifier)
+        assert (job is not None and job.status == "queued" and job.source_version == index.fingerprint) is auto_embed
+    hits = (await search(client, project="workspace")).json()["passages"]
+    assert hits and "blocking the release" in hits[0]["passage"]["content"]
+    # An owner label chosen later survives reparsing; it is never reset to the automatic project.
+    labelled = await client.post(f"/api/evidence/sources/{identifier}/index", json={"project": "Atlas"})
+    assert labelled.status_code == 200, labelled.text
+    update = await client.post(
+        "/api/documents",
+        data={"content": "Payment testing passed. Release approved.", "update_source_id": str(identifier)},
+    )
+    assert update.status_code == 202, update.text
+    await ingest_source(identifier)
+    async with get_session_factory()() as db:
+        index = await db.get(PassageIndex, identifier, populate_existing=True)
+        assert index is not None and index.project == "Atlas"
+
+
+async def test_unindexable_source_still_parses_without_stale_index(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def oversized(*args: object, **kwargs: object) -> None:
+        raise ValueError("Indivisible structured unit exceeds passage budget; needs review")
+
+    monkeypatch.setattr("backend.repositories.evidence.build_passages", oversized)
+    identifier = await upload(client, "Payment testing evidence that cannot be split.")
+    async with get_session_factory()() as db:
+        source = await db.get(KnowledgeSource, identifier)
+        assert source is not None and source.status == "parsed"
+        assert await db.get(PassageIndex, identifier) is None
+        assert await db.scalar(select(func.count()).select_from(EvidencePassage)) == 0
+
+
+async def test_chat_search_keeps_passages_for_current_status_questions(client: httpx.AsyncClient) -> None:
+    await upload(client, "Payment testing is blocking the release.")
+    request = EvidenceRequest(question="What is the current payment testing status?", project="workspace")
+    async with get_session_factory()() as db:
+        db.info["owner_id"] = "user_test"
+        gated = await evidence_service.search(db, request)
+        open_ = await evidence_service.search(db, request, live_gate=False)
+    assert gated.passages == [] and gated.coverage == "not_searched"
+    assert open_.passages and any("confirm live facts" in warning for warning in open_.warnings)

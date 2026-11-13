@@ -89,7 +89,8 @@ async def test_failed_update_keeps_previous_valid_artifacts_and_retry_recovers(c
     async with get_session_factory()() as db:
         before = await artifact_result(db, identifier)
         old_ids = set(await db.scalars(select(Document.id)))
-    await upload(client, b"```python\ndef broken(\n```", update_source_id=str(identifier))
+    # Unparseable code fences now degrade; exceeding the block bound is a deterministic parse failure.
+    await upload(client, b"x\n\n" * 20_001, update_source_id=str(identifier))
     with pytest.raises(IngestionError):
         await ingest_source(identifier)
     async with get_session_factory()() as db:

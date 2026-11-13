@@ -143,7 +143,7 @@ def test_bad_parser_output_escalates_before_canonical_generation() -> None:
 def test_scan_requires_real_configured_adapter_and_fallback_preserves_provenance() -> None:
     profile = inspect(GOLDEN / "scanned.pdf", PipelineConfig()).profile
     assert profile.scanned_pages == [1] and profile.text_layer is False
-    with pytest.raises(PipelineError, match="parsing failed"):
+    with pytest.raises(PipelineError, match="needs OCR, which is not available"):
         run_pipeline(GOLDEN / "scanned.pdf", "scan")
 
     def test_adapter(inspection, source, config):
@@ -263,3 +263,44 @@ def test_content_inspection_recognizes_structured_text_in_txt(tmp_path: Path) ->
     path.write_bytes((GOLDEN / "data.json").read_bytes())
     result = run_pipeline(path, "sniff")
     assert result.canonical.profile.modality == "json"
+
+
+def test_common_document_shapes_degrade_without_failing(tmp_path: Path) -> None:
+    """Ragged tables, empty grids and unparseable code remain loadable, exact evidence with warnings."""
+    cases = {
+        "repl.md": "# Guide\n\nUse it like this:\n\n```python\n>>> import foo\n>>> foo.run()\n```\n",
+        "ragged.html": "<html><body><h1>Pricing</h1><table><tr><th colspan='2'>Plans</th></tr>"
+        "<tr><td>Basic</td><td>$5</td><td>monthly</td></tr></table><p>Notes</p></body></html>",
+        "empty.html": "<html><body><p>Intro</p><table></table><p>After</p></body></html>",
+        "trailing.csv": "name,qty\napple,1\nbanana,2\n\n",
+        "short.csv": "name,qty,unit\napple,1\nbanana,2,kg\n",
+        "legacy.py": "print 'hello'\n",
+        "headers.md": "| a | b |\n|---|---|\n",
+    }
+    results = {}
+    for name, body in cases.items():
+        path = tmp_path / name
+        path.write_text(body)
+        results[name] = run_pipeline(path, "tolerant-" + name)
+    fence = next(b for b in results["repl.md"].canonical.blocks if b.type == "code")
+    assert fence.content == ">>> import foo\n>>> foo.run()\n"
+    assert fence.structured_content == {"language": "python", "symbols": []}
+    assert any("code fence does not parse" in warning for warning in results["repl.md"].warnings)
+    table = next(b for b in results["ragged.html"].canonical.blocks if b.type == "table")
+    assert table.structured_content == {
+        "headers": ["Plans", "Column 2", "Column 3"],
+        "rows": [["Basic", "$5", "monthly"]],
+    }
+    assert any("padded" in warning for warning in results["ragged.html"].warnings)
+    assert [b.content for b in results["empty.html"].canonical.blocks] == ["Intro", "After"]
+    assert results["trailing.csv"].canonical.blocks[0].structured_content["rows"] == [["apple", "1"], ["banana", "2"]]
+    short = results["short.csv"].canonical.blocks[0].structured_content
+    assert short == {"headers": ["name", "qty", "unit"], "rows": [["apple", "1", ""], ["banana", "2", "kg"]]}
+    legacy = results["legacy.py"].canonical.blocks[0]
+    assert legacy.type == "code" and legacy.content == "print 'hello'\n"
+    assert legacy.structured_content["representation"] == "source_lexical"
+    assert any("does not parse as Python 3" in warning for warning in results["legacy.py"].warnings)
+    header_only = results["headers.md"].canonical.blocks[0]
+    assert header_only.type == "paragraph" and header_only.content == "| a | b |\n| --- | --- |"
+    for result in results.values():
+        assert result.canonical.parse_quality.passed and result.contract_version == 3

@@ -1,4 +1,5 @@
-pypdf
+# 6.21.4 fixes CVE-2026-119203/119204/119205 in the PDF decoder used for untrusted uploads.
+pypdf>=6.21.4,<7
 cryptography
 fonttools
 beautifulsoup4

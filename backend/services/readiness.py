@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.config import ROOT, get_settings
 from backend.db.models import Base, Document, DocumentChunk, KnowledgeSource
 from backend.db.session import get_engine
+from backend.processing.pipeline.runner import ocr_available
 
 
 @lru_cache
@@ -42,7 +43,8 @@ async def database_readiness(owner: str | None = None) -> dict[str, object]:
         "ai_generation": "removed",
         "processing_mode": "parsing_only",
         "evidence_search": "project_opt_in",
-        "evidence_semantic": "configured" if settings.gemini.configured else "not_configured",
+        "evidence_semantic": "configured" if settings.embeddings.configured else "not_configured",
+        "ocr": "available" if ocr_available(settings.pipeline) else "not_configured",
         "workspace_agent": "configured" if settings.grok.configured else "not_configured",
         "evidence_generation": "configured"
         if settings.evidence.api_key and settings.evidence.model

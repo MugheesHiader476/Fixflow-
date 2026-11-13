@@ -27,15 +27,21 @@ function file(value: unknown): boolean {
     && typeof value.mime_type === "string" && typeof value.download_path === "string"
     && /^\/api\/agent\/files\/[a-f0-9-]{36}\/download$/.test(value.download_path);
 }
+// Identical to WHITESPACE in backend/services/agent.py; keep both in sync.
+const WHITESPACE = /[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/g;
+export function compactQuote(text: string): string {
+  return text.replace(WHITESPACE, " ").replace(/^ | $/g, "");
+}
 function validAnswer(value: unknown, materials: WorkflowMaterial[]): boolean {
   if (value === null) return true;
   if (!record(value) || typeof value.answer !== "string" || !strings(value.limitations)
     || !Array.isArray(value.claims) || value.claims.length > 12) return false;
-  const known = new Map(materials.map((entry) => [entry.id, entry.text]));
+  const known = new Map(materials.map((entry) => [entry.id, compactQuote(entry.text)]));
   return value.claims.every((claim: unknown) => record(claim) && typeof claim.text === "string"
     && Array.isArray(claim.citations) && claim.citations.length > 0
     && claim.citations.every((cite: unknown) => record(cite) && typeof cite.evidence_id === "string"
-      && typeof cite.quote === "string" && cite.quote.trim().length > 0 && known.get(cite.evidence_id)?.includes(cite.quote)));
+      && typeof cite.quote === "string" && compactQuote(cite.quote).length > 0
+      && known.get(cite.evidence_id)?.includes(compactQuote(cite.quote))));
 }
 function run(value: unknown): boolean {
   if (!record(value) || typeof value.id !== "string" || typeof value.question !== "string" || !count(value.steps)

@@ -29,7 +29,7 @@ from backend.config import ROOT
 from backend.connectors.config import ConnectorConfig
 from backend.db.models import Base
 from backend.schemas.agent import GrokConfig
-from backend.schemas.evidence import EvidenceConfig, GeminiConfig
+from backend.schemas.evidence import EmbeddingConfig, EvidenceConfig
 from backend.security.config import SecurityConfig
 from scripts.provision_runtime import provision
 
@@ -94,12 +94,13 @@ async def evaluate(nginx: Path, output: Path) -> dict[str, object]:
             if probe.connect_ex(("127.0.0.1", port)) == 0:
                 raise ValueError(f"QA port {port} is occupied")
     environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("CONNECTORS", "GROK", "EVIDENCE", "GEMINI", "SECURITY"))}
+                   if not key.startswith(("CONNECTORS", "GROK", "EVIDENCE", "EMBEDDINGS", "SECURITY"))}
     token, role, password = secrets.token_urlsafe(40), "qa_load_" + uuid4().hex, secrets.token_urlsafe(40)
     environment.update({"DATABASE_URL": database, "FIXFLOW_API_TOKEN": token,
                         "FIXFLOW_DATA_DIR": str(output / "uploads"),
                         "CONNECTORS": ConnectorConfig().model_dump_json(), "GROK": GrokConfig().model_dump_json(),
-                        "EVIDENCE": EvidenceConfig().model_dump_json(), "GEMINI": GeminiConfig().model_dump_json(),
+                        "EVIDENCE": EvidenceConfig().model_dump_json(),
+                        "EMBEDDINGS": EmbeddingConfig().model_dump_json(),
                         "SECURITY": SecurityConfig().model_dump_json(),
                         "DB_POOL_SIZE": "5", "DB_MAX_OVERFLOW": "5", "PYTHONUNBUFFERED": "1"})
     # This script never resets a database, even one named _test.

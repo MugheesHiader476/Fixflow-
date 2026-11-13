@@ -32,6 +32,7 @@ export interface BackendHealth {
   evidence_generation?: "configured" | "not_configured";
   evidence_semantic?: "configured" | "not_configured";
   workspace_agent?: "configured" | "not_configured";
+  ocr?: "available" | "not_configured";
 }
 
 export function checkBackendHealth(signal?: AbortSignal): Promise<BackendHealth> {

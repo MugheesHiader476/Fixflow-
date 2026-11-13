@@ -12,17 +12,17 @@ from backend.processing.passages import SLACK_TARGET_TOKENS, tokens
 from backend.repositories import evidence as repository
 from backend.schemas.evidence import (
     AnswerDraft,
+    EmbeddingConfig,
     EvidenceAnswer,
     EvidenceConfig,
     EvidenceHit,
     EvidenceRequest,
     EvidenceResult,
-    GeminiConfig,
 )
 from backend.security.policy import redact, validate_disclosure
 from backend.security.runtime import configured_secrets, request_policy
 from backend.services.embeddings import hybrid
-from backend.services.gemini_embeddings import EmbeddingUsage
+from backend.services.local_embeddings import EmbeddingUsage
 
 MAX_EVIDENCE = 6
 MAX_EVIDENCE_TOKENS = 3000
@@ -91,16 +91,26 @@ def needs_neighbour(hit: EvidenceHit, question: str) -> bool:
     return bool(positions) and (min(positions) < 20 or max(positions) >= len(body) - 20)
 
 
-async def search(db: AsyncSession, request: EvidenceRequest, gemini: GeminiConfig | None = None) -> EvidenceResult:
+async def search(
+    db: AsyncSession, request: EvidenceRequest, embedding: EmbeddingConfig | None = None, *, live_gate: bool = True
+) -> EvidenceResult:
+    """`live_gate=False` is for the tool-using assistant, which can confirm live facts natively."""
     started = time.perf_counter()
-    if EXACT.search(request.question):
-        return empty_evidence("Use an authoritative native tool for this exact/live question; no model call was used.")
-    selected: list[EvidenceHit] = []
     warnings: list[str] = []
+    if EXACT.search(request.question):
+        if live_gate:
+            return empty_evidence(
+                "Use an authoritative native tool for this exact/live question; no model call was used."
+            )
+        warnings.append(
+            "Snapshot passages are background for latest/current/count questions; confirm live facts "
+            "with search_provider, read_resource or github_status."
+        )
+    selected: list[EvidenceHit] = []
     usage = EmbeddingUsage()
     matches = await repository.candidates(db, request)
     if request.retrieval == "hybrid":
-        matches = await hybrid(db, request, matches, gemini or GeminiConfig(), usage, warnings)
+        matches = await hybrid(db, request, matches, embedding or EmbeddingConfig(), usage, warnings)
     matches.sort(key=lambda h: (-h.score, h.passage.id))
     # Main matches are reserved first; expansion cannot displace stronger hits.
     for hit in matches:
@@ -154,7 +164,7 @@ async def search(db: AsyncSession, request: EvidenceRequest, gemini: GeminiConfi
     if not await repository.reauthorize(db, request, selected):
         selected = []
     warnings += [
-        "Search covers accessible, explicitly indexed parsed snapshots in this project; it is not a live provider scan."
+        "Search covers accessible, indexed parsed snapshots in this project; it is not a live provider scan."
     ]
     warnings.extend(dict.fromkeys(warning for hit in selected for warning in hit.passage.warnings))
     if any(hit.passage.metadata.get("date_basis") == "owner_supplied" for hit in selected):
@@ -188,7 +198,7 @@ def empty_evidence(warning: str, model_calls: int = 0, previous: EvidenceResult 
 
 
 async def answer(
-    db: AsyncSession, request: EvidenceRequest, config: EvidenceConfig, gemini: GeminiConfig | None = None
+    db: AsyncSession, request: EvidenceRequest, config: EvidenceConfig, embedding: EmbeddingConfig | None = None
 ) -> EvidenceAnswer:
     if EXACT.search(request.question):
         return EvidenceAnswer(
@@ -200,7 +210,7 @@ async def answer(
             ),
             evidence=empty_evidence("No retrieval or model call was used for this exact/live question."),
         )
-    evidence = await search(db, request, gemini)
+    evidence = await search(db, request, embedding)
     if not evidence.passages:
         return EvidenceAnswer(
             status="insufficient_evidence",

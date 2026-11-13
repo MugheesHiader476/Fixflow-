@@ -52,7 +52,7 @@ async def search(payload: EvidenceRequest, db: Database) -> EvidenceResult:
     except PolicyViolation as error:
         raise HTTPException(403, str(error)) from error
     try:
-        return await evidence.search(db, payload, get_settings().gemini)
+        return await evidence.search(db, payload, get_settings().embeddings)
     except ValueError as error:
         raise HTTPException(409, "Indexed evidence could not be verified; refresh or re-index the source") from error
 
@@ -75,7 +75,7 @@ async def remove_index(source_id: UUID, db: Database) -> dict[str, bool]:
 @router.post("/sources/{source_id}/embed", response_model=EmbeddingReceipt, status_code=202)
 async def prepare_embeddings(source_id: UUID, db: Database) -> EmbeddingReceipt:
     try:
-        return await embeddings.prepare(db, source_id, get_settings().gemini)
+        return await embeddings.prepare(db, source_id, get_settings().embeddings)
     except ValueError as error:
         raise HTTPException(409, "Indexed evidence could not be verified; refresh or re-index the source") from error
 
@@ -83,7 +83,7 @@ async def prepare_embeddings(source_id: UUID, db: Database) -> EmbeddingReceipt:
 @router.get("/sources/{source_id}/embedding-status", response_model=EmbeddingReceipt)
 async def embedding_status(source_id: UUID, db: Database) -> EmbeddingReceipt:
     try:
-        return await embeddings.receipt(db, source_id, get_settings().gemini)
+        return await embeddings.receipt(db, source_id, get_settings().embeddings)
     except ValueError as error:
         raise HTTPException(409, "Indexed evidence could not be verified; refresh or re-index the source") from error
 
@@ -99,7 +99,7 @@ async def answer(payload: EvidenceRequest, db: Database) -> EvidenceAnswer:
     if payload.synthesize:
         await reserve("evidence-answer:" + owner_id(db), 60, config.requests_per_minute)
     try:
-        result = await evidence.answer(db, payload, config, get_settings().gemini)
+        result = await evidence.answer(db, payload, config, get_settings().embeddings)
     except ValueError as error:
         raise HTTPException(409, "Indexed evidence could not be verified; refresh or re-index the source") from error
     result.elapsed_ms = round((time.perf_counter() - started) * 1000, 3)

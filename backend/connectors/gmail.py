@@ -1,6 +1,7 @@
 """Read-only Gmail labels, history, messages and individually traceable attachments."""
 
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from urllib.parse import quote
@@ -18,6 +19,24 @@ from backend.schemas.connectors import (
     Selection,
     SyncPage,
 )
+
+
+def decode_body(data: bytes, charset: str | None) -> str:
+    """Decode a body part without dropping the whole message for a mislabelled or unknown charset."""
+    for candidate in (charset, "utf-8"):
+        if not candidate:
+            continue
+        try:
+            return data.decode(candidate)
+        except (UnicodeError, LookupError):
+            continue
+    # Readable text with replacement characters is better evidence than a missing email.
+    return data.decode("utf-8", errors="replace")
+
+
+def email_filename(subject: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", subject).strip("-._")[:80]
+    return (stem or "email") + ".eml"
 
 
 class GmailConnector(OAuthConnector):
@@ -227,18 +246,14 @@ class GmailConnector(OAuthConnector):
                             + quote(string(body["attachmentId"]), safe="")
                         )
                     )["data"]
-                try:
-                    part_headers = {
-                        string(h["name"]).casefold(): string(h["value"]) for h in records(part.get("headers", []))
-                    }
-                    part_mail = EmailMessage()
-                    part_mail["Content-Type"] = part_headers.get("content-type", mime)
-                    text = unbase64(encoded).decode(part_mail.get_content_charset() or "utf-8")
-                except (UnicodeError, LookupError) as error:
-                    raise ConnectorError(
-                        "unsupported_encoding", "Email body character encoding could not be decoded"
-                    ) from error
-                (html if mime == "text/html" else plain).append(text)
+                part_headers = {
+                    string(h["name"]).casefold(): string(h["value"]) for h in records(part.get("headers", []))
+                }
+                part_mail = EmailMessage()
+                part_mail["Content-Type"] = part_headers.get("content-type", mime)
+                (html if mime == "text/html" else plain).append(
+                    decode_body(unbase64(encoded), part_mail.get_content_charset())
+                )
         if plain:
             mail.set_content("\n\n".join(plain))
         elif html:
@@ -264,7 +279,7 @@ class GmailConnector(OAuthConnector):
                 self.factory.text(
                     ref,
                     mail.as_string(),
-                    "message.eml",
+                    email_filename(headers.get("subject", "")),
                     "message/rfc822",
                     permissions=[
                         {

@@ -4,12 +4,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import httpx
 from asyncpg import PostgresError
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +56,24 @@ from backend.services.workspace_tools import (
 
 logger = logging.getLogger(__name__)
 INSTRUCTIONS = SYSTEM_PROMPT
+
+
+# Identical to the frontend class in src/lib/agent-contracts.ts; keep both in sync.
+WHITESPACE = re.compile(r"[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
+
+
+def retry_after(response: httpx.Response) -> float:
+    """Bounded provider wait; free-tier token windows reset within a minute."""
+    try:
+        seconds = float(response.headers.get("retry-after", "20"))
+    except ValueError:
+        seconds = 20
+    return min(120.0, max(2.0, seconds if seconds == seconds else 20))
+
+
+def compact(text: str) -> str:
+    """Whitespace-insensitive quote matching; wrapped or re-spaced quotes are still exact text."""
+    return WHITESPACE.sub(" ", text).strip(" ")
 
 
 def context(run: AgentRun) -> Context:
@@ -292,7 +312,14 @@ async def dispatch(ctx: Context, call: dict[str, object]) -> dict[str, object]:
         raise ValueError("Unknown workspace tool")
     if name == "draft_email" and not ctx.request.email_enabled:
         raise PolicyViolation("Email actions were not authorized for this workflow")
-    args = TOOL_MODELS[name][0].model_validate_json(string(call["arguments"]))
+    try:
+        args = TOOL_MODELS[name][0].model_validate_json(string(call["arguments"]))
+    except ValidationError as error:
+        # Correctable within the bounded step budget; never echo argument values.
+        fields = sorted({".".join(map(str, item["loc"])) or "arguments" for item in error.errors()})[:8]
+        raise ConnectorError(
+            "invalid_arguments", f"Tool arguments do not match the {name} schema; check: {', '.join(fields)}"
+        ) from error
     validate_disclosure(args.model_dump(mode="json"), configured_secrets())
     if call.get("waiting_source_id"):
         return await read_canonical(
@@ -346,15 +373,21 @@ async def dispatch(ctx: Context, call: dict[str, object]) -> dict[str, object]:
     if isinstance(args, Finish):
         validate_disclosure(args.model_dump(mode="json"), configured_secrets())
         await authorize(ctx, native=True)
-        known = {value.id: value.text for value in ctx.materials}
-        for claim in args.claims:
+        known = {value.id: compact(value.text) for value in ctx.materials}
+        for number_, claim in enumerate(args.claims, start=1):
             for citation in claim.citations:
-                if (
-                    citation.evidence_id not in known
-                    or not citation.quote.strip()
-                    or citation.quote not in known[citation.evidence_id]
-                ):
-                    raise ValueError("Final answer includes fabricated evidence")
+                if citation.evidence_id not in known:
+                    raise ConnectorError(
+                        "invalid_citation",
+                        f"Claim {number_} cites an unknown evidence_id; cite only returned material IDs",
+                    )
+                quote = compact(citation.quote)
+                if not quote or quote not in known[citation.evidence_id]:
+                    raise ConnectorError(
+                        "invalid_citation",
+                        f"Claim {number_} quote is not exact text from {citation.evidence_id}; copy a shorter "
+                        "contiguous quote verbatim or remove the claim",
+                    )
         # Keep factual answer text structurally linked to verified claims.
         return {"finished": args.model_dump(mode="json")}
     raise ValueError("Unsupported tool arguments")
@@ -451,12 +484,16 @@ async def process_step(identifier: UUID) -> None:
         else:
             failure = "Workflow request could not be completed"
     except httpx.HTTPStatusError as error:
-        if error.response.status_code in {401, 403}:
+        status = error.response.status_code
+        if status in {401, 403}:
             failure = (
-                "Chat provider denied access. Check the xAI API key, credits, spending limit and model permissions."
+                "Chat provider denied access. Check the chat API key, credits, spending limit and model permissions."
             )
-        elif error.response.status_code == 429:
-            failure = "Chat provider rate limit reached. Try again later."
+        elif status == 429 and call is None:
+            # Free tiers meter tokens per minute; wait and resume the same step within the run deadline.
+            failure, delay = "Chat provider rate limit; workflow will resume", retry_after(error.response)
+        elif status == 413:
+            failure = "The request exceeds the chat provider's per-request token limit; lower GROK__INPUT_TOKEN_LIMIT."
         else:
             failure = "Chat provider is unavailable. Try again later; no automatic paid retry."
     except (
@@ -540,6 +577,7 @@ async def process_step(identifier: UUID) -> None:
 
 async def worker() -> None:
     while True:
+        ids: list[UUID] = []
         try:
             async with get_session_factory()() as db:
                 ids = list(
@@ -564,4 +602,5 @@ async def worker() -> None:
                             run.status, run.run_token, run.error = "cancelled", None, "Workspace access changed"
         except (SQLAlchemyError, PostgresError, OSError, ValueError, TimeoutError) as error:
             logger.error("Workspace workflow queue unavailable (%s)", type(error).__name__)
-        await asyncio.sleep(1)
+        # Active runs continue promptly between model and tool steps; idle polling stays at one second.
+        await asyncio.sleep(0.2 if ids else 1)

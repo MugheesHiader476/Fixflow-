@@ -3,6 +3,9 @@
 import base64
 import json
 from datetime import date
+from email import message_from_string
+from email import policy as email_policy
+from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
@@ -11,6 +14,8 @@ from uuid import uuid4
 import httpx
 import pytest
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
 from backend.config import get_settings
@@ -19,7 +24,7 @@ from backend.connectors.config import ConnectorConfig
 from backend.connectors.core import ConnectorError
 from backend.connectors.drive import GoogleDriveConnector
 from backend.connectors.github import GitHubConnector
-from backend.connectors.gmail import GmailConnector
+from backend.connectors.gmail import GmailConnector, decode_body, email_filename
 from backend.connectors.http import ProviderHttp
 from backend.connectors.registry import adapter, configured, missing_configuration
 from backend.connectors.slack import SlackConnector
@@ -44,6 +49,27 @@ async def test_slack_http_callback_is_unavailable_before_authorization() -> None
     with pytest.raises(ConnectorError, match="Slack requires an HTTPS") as error:
         await SlackConnector(config).get_authorization_url("state", "verifier")
     assert error.value.code == "not_configured"
+
+
+def test_github_setup_requires_a_loadable_app_signing_key() -> None:
+    base = ConnectorConfig(
+        vault_key=SecretStr(Fernet.generate_key().decode()),
+        github_client_id="github-client", github_client_secret=SecretStr("github-secret"), github_app_id="12345",
+    )
+    truncated = base.model_copy(update={"github_private_key": SecretStr("-----BEGIN RSA PRIVATE KEY-----")})
+    assert not configured("github", truncated)
+    assert missing_configuration("github", truncated) == [
+        "CONNECTORS__GITHUB_PRIVATE_KEY (invalid PEM private key; quote it and escape newlines as \\n)"
+    ]
+    with pytest.raises(ConnectorError, match="invalid PEM private key") as error:
+        adapter("github", truncated)
+    assert error.value.code == "not_configured"
+    pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()
+    ).decode()
+    for value in (pem, pem.replace("\n", "\\n")):
+        valid = base.model_copy(update={"github_private_key": SecretStr(value)})
+        assert configured("github", valid) and not missing_configuration("github", valid)
 
 
 @pytest.mark.parametrize("origin", ["https://localhost:3000", "https://app.example.test"])
@@ -481,6 +507,46 @@ async def test_gmail_external_body_and_folded_header(isolated: ConnectorConfig) 
     assert "Large body documentation." in str(result.envelopes[0].content)
     assert "subject: folded" in str(result.envelopes[0].content).casefold()
     assert not result.followups
+
+
+async def test_gmail_unknown_charset_keeps_message_and_subject_title(isolated: ConnectorConfig) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "m2",
+                "threadId": "t2",
+                "historyId": "11",
+                "labelIds": ["INBOX"],
+                "internalDate": "1760000000000",
+                "payload": {
+                    "mimeType": "text/plain",
+                    "headers": [
+                        {"name": "Subject", "value": "Q3 / launch: plan?"},
+                        {"name": "Content-Type", "value": "text/plain; charset=unknown-8bit"},
+                    ],
+                    "body": {"data": base64.urlsafe_b64encode(b"Launch moved to Friday \xff\xfe.").decode()},
+                },
+            },
+        )
+
+    connector = GmailConnector(isolated, account("gmail"), ProviderHttp(isolated, httpx.MockTransport(respond)))
+    result = await connector.fetch_resource(
+        Resource(id="m2", name="m2", kind="email_message"), Selection(resource_ids=["INBOX"])
+    )
+    envelope = result.envelopes[0]
+    parsed = message_from_string(str(envelope.content), policy=email_policy.default)
+    assert isinstance(parsed, EmailMessage)
+    assert "Launch moved to Friday" in str(parsed.get_content())
+    assert envelope.filename == "Q3-launch-plan.eml"
+
+
+def test_gmail_body_decoding_and_filename_fallbacks() -> None:
+    assert decode_body("café".encode("latin-1"), "iso-8859-1") == "café"
+    assert decode_body("café".encode(), "no-such-charset") == "café"
+    assert decode_body(b"ok \xff", None) == "ok �"
+    assert email_filename("") == email_filename("///") == "email.eml"
+    assert len(email_filename("x" * 500)) == 84
 
 
 async def test_gmail_attachment_rechecks_parent_selection(isolated: ConnectorConfig) -> None:

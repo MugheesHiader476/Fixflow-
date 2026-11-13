@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import shutil
 import time
 from datetime import UTC, datetime
 from importlib import import_module
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 class PipelineError(ValueError):
     """Only a safe, stage-level message escapes the processing boundary."""
+
+
+def ocr_available(config: PipelineConfig) -> bool:
+    """Enabled OCR with installed Tesseract and Poppler; images and scanned PDFs need all three."""
+    return bool(config.ocr_enabled and shutil.which("tesseract") and shutil.which("pdftoppm"))
 
 
 def event(name: str, source_id: str, **fields: object) -> None:
@@ -157,6 +163,14 @@ def run_pipeline(
             except (ValueError, OSError, KeyError, IndexError, TypeError, RuntimeError) as error:
                 event("fallback_triggered", source_id, parser=parser.name, error_type=type(error).__name__)
         if canonical is None:
+            needs_ocr = inspection.profile.modality == "image" or (
+                inspection.profile.modality == "pdf" and not inspection.profile.text_layer
+            )
+            if needs_ocr and not ocr_available(config):
+                raise PipelineError(
+                    "This scanned or image source needs OCR, which is not available on this server: install "
+                    "Tesseract and Poppler and set PIPELINE__OCR_ENABLED=true, then retry the upload."
+                )
             raise PipelineError(
                 "Pipeline parsing failed quality validation; configure a suitable fallback parser or OCR"
                 + (" (layout_uncertain; needs review)" if "layout_uncertain" in quality_failures else "")

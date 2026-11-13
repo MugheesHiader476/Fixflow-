@@ -1,6 +1,10 @@
 """Direct transports selected for this deployment; no provider logic crosses the envelope."""
 
 from collections.abc import Callable
+from functools import lru_cache
+
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
 
 from backend.connectors.config import ConnectorConfig
 from backend.connectors.core import Connector, ConnectorError
@@ -18,6 +22,21 @@ ADAPTERS: dict[str, Callable[[ConnectorConfig, ConnectorAccount | None], Connect
     "github": GitHubConnector,
     "slack": SlackConnector,
 }
+
+
+@lru_cache(maxsize=4)
+def _pem_private_key_loads(pem: str) -> bool:
+    try:
+        serialization.load_pem_private_key(pem.replace("\\n", "\n").encode(), password=None)
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+    return True
+
+
+def github_signing_key_valid(config: ConnectorConfig) -> bool:
+    """A truncated or unquoted multi-line PEM only fails later, inside GitHub App JWT signing."""
+    key = config.github_private_key
+    return key is not None and _pem_private_key_loads(key.get_secret_value())
 
 
 def adapter(provider: Provider, config: ConnectorConfig, account: ConnectorAccount | None = None) -> Connector:
@@ -44,6 +63,7 @@ def configured(provider: Provider, config: ConnectorConfig) -> bool:
             and config.github_client_secret
             and config.github_app_id
             and config.github_private_key
+            and github_signing_key_valid(config)
         )
     return bool(config.slack_client_id and config.slack_client_secret and config.public_url.startswith("https://"))
 
@@ -58,6 +78,8 @@ def missing_configuration(provider: Provider, config: ConnectorConfig) -> list[s
     missing = ["CONNECTORS__" + name.upper() for name in fields if not getattr(config, name)]
     if provider == "slack" and not config.public_url.startswith("https://"):
         missing.append("CONNECTORS__PUBLIC_URL (HTTPS required for Slack)")
+    if provider == "github" and config.github_private_key and not github_signing_key_valid(config):
+        missing.append("CONNECTORS__GITHUB_PRIVATE_KEY (invalid PEM private key; quote it and escape newlines as \\n)")
     if config.vault_key:
         try:
             TokenVault(config)

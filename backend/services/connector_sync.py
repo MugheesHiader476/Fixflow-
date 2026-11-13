@@ -24,6 +24,16 @@ from backend.services.connector_sources import asset_path, discard_unreferenced,
 from backend.services.connectors import ACTIVE, PENDING, audit, enqueue, failure
 
 logger = logging.getLogger(__name__)
+SKIPPABLE_RESOURCE_ERRORS = frozenset({
+    "not_found",
+    "inaccessible",
+    "unsupported",
+    "unsupported_encoding",
+    "invalid_resource",
+    "invalid_envelope",
+    "invalid_asset",
+    "too_large",
+})
 
 
 def drain_events(account: ConnectorAccount, cursor: dict[str, object]) -> None:
@@ -283,7 +293,9 @@ async def step_failure(
             job.available_at = datetime.now(UTC) + timedelta(seconds=max(1, error.retry_after))
             audit(db, account.owner_id, "rate_limit" if error.code == "rate_limited" else "source_busy", account_id)
         elif ref and (
-            error.code in {"not_found", "inaccessible", "unsupported", "invalid_resource", "too_large"}
+            # Deterministic per-resource failures are recorded and skipped; retrying cannot fix them,
+            # and failing the whole job would leave every later selected resource unsynchronized.
+            error.code in SKIPPABLE_RESOURCE_ERRORS
             or retries >= get_settings().connectors.max_retries
         ):
             if error.code in {"not_found", "inaccessible"}:
@@ -424,6 +436,7 @@ async def schedule() -> None:
 
 async def connector_worker() -> None:
     while True:
+        progressed = False
         try:
             await schedule()
             async with get_session_factory()() as db:
@@ -434,7 +447,8 @@ async def connector_worker() -> None:
                     .limit(1)
                 )
             if identifier:
-                await process_job(identifier)
+                progressed = await process_job(identifier)
         except (SQLAlchemyError, PostgresError, OSError, ValueError, TimeoutError, ConnectorError) as error:
             logger.error("Connector queue unavailable (%s)", type(error).__name__)
-        await asyncio.sleep(1)
+        # A completed step continues at once; idle, failed or waiting jobs keep the one-second poll.
+        await asyncio.sleep(0 if progressed else 1)

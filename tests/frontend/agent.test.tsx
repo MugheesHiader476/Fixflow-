@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentPanel } from "@/components/workspace/agent-panel";
 import { ChatAnswer } from "@/components/workspace/chat-answer";
-import { validWorkflowResponse } from "@/lib/agent-contracts";
+import { compactQuote, validWorkflowResponse } from "@/lib/agent-contracts";
 import type { ChatMessage } from "@/lib/chat";
 
 const calls = vi.hoisted(() => ({ sendChatMessage: vi.fn(), chatMessage: vi.fn(), chatThread: vi.fn(), stopChatMessage: vi.fn() }));
@@ -118,5 +118,15 @@ describe("chat and historical receipt validation", () => {
     const outside = message(); outside.files[0].download_path = "https://attacker.example/private.pdf";
     expect(validWorkflowResponse(`/api/agent/runs/${id}`, outside)).toBe(false);
     expect(validWorkflowResponse(`/api/chat/messages/${id}`, { ...message(), parent_run_id: 123 })).toBe(false);
+  });
+
+  it("accepts re-wrapped quotes like the backend but still rejects whitespace-only or altered text", () => {
+    const wrapped = message(); wrapped.answer!.claims[0].citations[0].quote = " Payment tests\n  are\tfailing. ";
+    expect(validWorkflowResponse(`/api/chat/messages/${id}`, wrapped)).toBe(true);
+    const blank = message(); blank.answer!.claims[0].citations[0].quote = " \n\t ";
+    expect(validWorkflowResponse(`/api/chat/messages/${id}`, blank)).toBe(false);
+    const altered = message(); altered.answer!.claims[0].citations[0].quote = "Payment tests are passing.";
+    expect(validWorkflowResponse(`/api/chat/messages/${id}`, altered)).toBe(false);
+    expect(compactQuote("﻿a  b ")).toBe("a b");
   });
 });

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { access, mkdir, readFile } from "node:fs/promises";
 import { get as httpsGet } from "node:https";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import nextEnvironment from "@next/env";
@@ -124,6 +125,7 @@ print(json.dumps({
     "gateway_hash": hashlib.sha256(s.fixflow_api_token.get_secret_value().encode()).hexdigest() if s.fixflow_api_token else None,
     "public_origin": s.connectors.public_url,
     "local_database": u.query.get("host") == str(Path(".local/postgres").resolve()),
+    "embeddings_url": s.embeddings.url if s.embeddings.configured else None,
 }))
 `));
   process.env.NODE_ENV = development ? "development" : "production";
@@ -160,6 +162,25 @@ async def check():
 asyncio.run(check())
 `));
   if (database.status !== "ok") throw new Error("Database/schema is unavailable. Review configuration and required migrations.");
+  if (configuration.embeddings_url) {
+    // Free local embeddings: reuse a running Ollama, or start a project-scoped one on the configured loopback port.
+    const embeddings = new URL(configuration.embeddings_url);
+    if (!(await getJson(`${embeddings.origin}/api/version`))) {
+      if (!["127.0.0.1", "localhost", "[::1]"].includes(embeddings.hostname)) {
+        throw new Error("EMBEDDINGS__URL is not reachable. Start that Ollama service or unset EMBEDDINGS__URL.");
+      }
+      start("embeddings", "ollama", ["serve"], {
+        ...nativeEnvironment,
+        OLLAMA_HOST: `${embeddings.hostname}:${embeddings.port || "11434"}`,
+        OLLAMA_MODELS: process.env.OLLAMA_MODELS || resolve(homedir(), ".ollama/models"),
+      });
+      await waitFor(async () => Boolean(await getJson(`${embeddings.origin}/api/version`)), "Local embeddings");
+    }
+    const models = await getJson(`${embeddings.origin}/api/tags`);
+    if (!models?.models?.some((model) => String(model.name).startsWith("nomic-embed-text"))) {
+      console.warn(`Embedding model missing: run OLLAMA_HOST=${embeddings.host} ollama pull nomic-embed-text (lexical search works meanwhile).`);
+    }
+  }
   const existingBackend = await getJson(`${backend.origin}/health`);
   if (existingBackend?.service !== "fixflow-api" || existingBackend.status !== "ok") {
     start("backend", python, ["-m", "uvicorn", "backend.main:app", "--host", backend.hostname.replace(/^\[|\]$/g, ""),

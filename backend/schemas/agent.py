@@ -25,8 +25,11 @@ def email_address(value: str) -> str:
 
 
 class GrokConfig(Contract):
+    """Chat model for the workspace assistant: xAI Grok (Responses API) or Groq's free tier (Chat Completions)."""
+
+    provider: Literal["xai", "groq"] = "xai"
     api_key: SecretStr | None = None
-    model: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9._-]+$")
+    model: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)?$")
     reasoning_effort: Literal["low", "medium", "high"] | None = "low"
     timeout_seconds: float = Field(default=25, ge=1, le=60)
     max_steps: int = Field(default=12, ge=2, le=20)

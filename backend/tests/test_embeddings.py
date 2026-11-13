@@ -1,4 +1,4 @@
-"""Gemini HTTP is mocked; authorization, pgvector and migrations use real PostgreSQL."""
+"""Local Ollama HTTP is mocked; authorization, pgvector and migrations use real PostgreSQL."""
 
 import asyncio
 import json
@@ -11,7 +11,6 @@ from uuid import UUID
 
 import httpx
 import pytest
-from pydantic import SecretStr
 from sqlalchemy import delete, func, select, update
 
 from backend.config import get_settings
@@ -25,27 +24,45 @@ from backend.db.models import (
     PassageIndex,
 )
 from backend.db.session import get_session_factory
-from backend.processing.embedding_input import DIMENSIONS, PROFILE
-from backend.schemas.evidence import GeminiConfig
+from backend.processing.embedding_input import DIMENSIONS, INPUT_FORMAT_VERSION, MODEL, PROFILE, REVISION
+from backend.schemas.evidence import EmbeddingConfig
+from backend.services import local_embeddings
 from backend.services.embeddings import activate, process_batch
-from backend.services.gemini_embeddings import EmbeddingUsage, embed
 from backend.services.ingestion import ingest_source
+from backend.services.local_embeddings import EmbeddingUsage, embed
 from backend.tests.test_evidence import indexed, search
 
 pytestmark = pytest.mark.anyio
 VECTOR = [1.0] + [0.0] * (DIMENSIONS - 1)
 
 
-def mock_google(
+LOCAL_URL = "http://embeddings.test:11435"
+
+
+def tags(digest: str = REVISION + "0" * 52) -> httpx.Response:
+    return httpx.Response(200, json={"models": [{"name": MODEL + ":latest", "digest": digest}]})
+
+
+def mock_local(
     monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
 ) -> None:
-    monkeypatch.setenv("GEMINI__API_KEY", "test-only-not-a-real-key")
-    monkeypatch.setenv("GEMINI__MODEL", "gemini-embedding-2")
+    """Mock the local Ollama service; the weights-digest check is answered here, embeddings by `handler`."""
+    monkeypatch.setenv("EMBEDDINGS__URL", LOCAL_URL)
+    monkeypatch.setenv("EMBEDDINGS__MODEL", MODEL)
     get_settings.cache_clear()
+    local_embeddings._verified.clear()
     original = httpx.AsyncClient
+
+    async def route(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            # The local service serves the weights the operator configured, unless a test overrides it.
+            return tags(get_settings().embeddings.revision.ljust(64, "0"))
+        assert str(request.url) == LOCAL_URL + "/api/embed"
+        return await handler(request)
+
     monkeypatch.setattr(
-        "backend.services.gemini_embeddings.httpx.AsyncClient",
-        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+        "backend.services.local_embeddings.httpx.AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(route), **kwargs),
     )
 
 
@@ -53,8 +70,8 @@ def response(count: int, vector: list[float] | None = None) -> httpx.Response:
     return httpx.Response(
         200,
         json={
-            "embeddings": [{"values": vector or VECTOR} for _ in range(count)],
-            "usageMetadata": {"promptTokenCount": 123},
+            "embeddings": [vector or VECTOR for _ in range(count)],
+            "prompt_eval_count": 123,
         },
     )
 
@@ -79,24 +96,16 @@ async def test_separate_contents_no_truncation_and_normalized_vectors(monkeypatc
 
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        assert (
-            request.url
-            == "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents"
-        )
-        assert "key=" not in str(request.url)
         body = json.loads(request.content)
-        assert len(body["requests"]) == 2
-        for item, expected in zip(body["requests"], ["first passage", "second passage"], strict=True):
-            assert item["model"] == "models/gemini-embedding-2"
-            assert item["content"]["parts"] == [{"text": expected}]
-            assert item["embedContentConfig"] == {"outputDimensionality": 768, "autoTruncate": False}
-            assert "taskType" not in item
+        assert body["model"] == MODEL and body["truncate"] is False
+        assert body["input"] == ["first passage", "second passage"]
+        assert "authorization" not in request.headers
         return response(2, [3.0, 4.0] + [0.0] * 766)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     usage = EmbeddingUsage()
     vectors = await embed(
-        ["first passage", "second passage"], GeminiConfig(api_key=SecretStr("test"), model="gemini-embedding-2"), usage
+        ["first passage", "second passage"], EmbeddingConfig(url=LOCAL_URL, model="nomic-embed-text"), usage
     )
     assert vectors[0][:2] == [0.6, 0.8] and len(calls) == 1
     assert usage.calls == 1 and usage.input_tokens == 123
@@ -113,7 +122,7 @@ async def test_invalid_provider_outputs_fail_once(monkeypatch: pytest.MonkeyPatc
         if bad == "redirect":
             return httpx.Response(302, headers={"location": "https://attacker.example/steal"})
         if bad == "oversize":
-            return httpx.Response(200, content=b"x" * (512 * 1024 + 1))
+            return httpx.Response(200, content=b"x" * (1024 * 1024 + 1))
         if bad == "aggregate":
             return response(1)
         if bad == "dimension":
@@ -122,10 +131,10 @@ async def test_invalid_provider_outputs_fail_once(monkeypatch: pytest.MonkeyPatc
             return response(2, [True, *VECTOR[1:]])
         return response(2, [0.0] * DIMENSIONS)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     with pytest.raises((ValueError, httpx.HTTPError)):
         await embed(
-            ["first", "second"], GeminiConfig(api_key=SecretStr("test"), model="gemini-embedding-2"), EmbeddingUsage()
+            ["first", "second"], EmbeddingConfig(url=LOCAL_URL, model="nomic-embed-text"), EmbeddingUsage()
         )
     assert len(calls) == 1
 
@@ -143,12 +152,12 @@ async def test_prepare_resume_reuse_and_durable_rate_limit(
         if fail:
             raise httpx.ReadTimeout("private upstream failure")
         assert all(
-            item["content"]["parts"][0]["text"].startswith("title: none | text: Project: Atlas")
-            for item in body["requests"]
+            text.startswith("search_document: Project: Atlas")
+            for text in body["input"]
         )
-        return response(len(body["requests"]))
+        return response(len(body["input"]))
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     first = await run_prepare(client, identifier)
     assert first.status_code == 200, first.text
     assert (first.json()["prepared"], first.json()["remaining"], first.json()["input_tokens"]) == (16, 4, 123)
@@ -164,7 +173,7 @@ async def test_prepare_resume_reuse_and_durable_rate_limit(
     fail = False
     second = await run_prepare(client, identifier)
     assert second.status_code == 200 and second.json()["remaining"] == 0, second.text
-    assert [len(call["requests"]) for call in calls] == [16, 4, 4]
+    assert [len(call["input"]) for call in calls] == [16, 4, 4]
     unchanged = await run_prepare(client, identifier)
     assert unchanged.json()["embedding_calls"] == 3 and len(calls) == 3
     assert unchanged.json()["status"] == "complete" and unchanged.json()["active"]
@@ -183,9 +192,9 @@ async def test_hybrid_finds_paraphrase_and_keeps_lexical_default(
     async def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         calls.append(body)
-        return response(len(body["requests"]))
+        return response(len(body["input"]))
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).status_code == 200
     lexical = await search(client, question="Explain login invalidation")
     assert lexical.json()["passages"] == [] and lexical.json()["embedding_calls"] == 0
@@ -195,8 +204,8 @@ async def test_hybrid_finds_paraphrase_and_keeps_lexical_default(
     assert data["retrieval"] == "hybrid" and data["embedding_calls"] == 1 and data["embedding_input_tokens"] == 123
     assert data["passages"][0]["passage"]["source_id"] == str(identifier)
     assert (
-        calls[-1]["requests"][0]["content"]["parts"][0]["text"]
-        == "task: search result | query: Explain login invalidation"
+        calls[-1]["input"][0]
+        == "search_query: Explain login invalidation"
     )
     assert len(calls) == 2
     exact = await search(client, question="What is the latest email?", retrieval="hybrid")
@@ -229,7 +238,7 @@ async def test_changes_during_embedding_discard_vectors(
             assert changed.status_code == 200
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     result = await run_prepare(client, identifier)
     assert result.status_code in {200, 404}, result.text
     async with get_session_factory()() as db:
@@ -249,9 +258,9 @@ async def test_owner_isolation_unchanged_input_reuse_and_pruning(
     async def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         calls.append(body)
-        return response(len(body["requests"]))
+        return response(len(body["input"]))
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     url = f"/api/evidence/sources/{identifier}/embed"
     assert (await run_prepare(client, identifier)).json()["prepared"] == 2
     foreign = await client.post(url, headers={"X-FixFlow-User-Id": "user_other"})
@@ -273,7 +282,7 @@ async def test_owner_isolation_unchanged_input_reuse_and_pruning(
     await release_rates()
     result = await run_prepare(client, identifier)
     assert result.status_code == 200 and result.json()["prepared"] == 2, result.text
-    assert [len(call["requests"]) for call in calls] == [2, 1]
+    assert [len(call["input"]) for call in calls] == [2, 1]
     removed = await client.post(f"/api/evidence/sources/{identifier}/remove-index")
     assert removed.status_code == 200
     async with get_session_factory()() as db:
@@ -296,7 +305,7 @@ async def test_hybrid_partial_failure_and_revocation_do_not_leak(
                 await db.execute(update(KnowledgeSource).values(is_active=False))
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).status_code == 200
     phase = "failure"
     failure = await search(client, retrieval="hybrid")
@@ -321,7 +330,7 @@ async def test_0007_rows_prepare_without_reindex_and_cache_hash_tamper_rejected(
     async def handler(request: httpx.Request) -> httpx.Response:
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).json()["prepared"] == 1
     async with get_session_factory().begin() as db:
         await db.execute(update(EvidencePassage).values(embedding_input_hash="a" * 64))
@@ -344,7 +353,9 @@ async def test_dense_access_filter_precedes_decode_and_similarity_cutoff(
                     profile=PROFILE,
                     input_hash=row.embedding_input_hash,
                     embedding=VECTOR,
-                    revision="gemini-embedding-2",
+                    model=MODEL,
+                    revision=REVISION,
+                    input_format_version=INPUT_FORMAT_VERSION,
                 )
             )
             if row.source_id != allowed:
@@ -362,7 +373,7 @@ async def test_dense_access_filter_precedes_decode_and_similarity_cutoff(
             job = EmbeddingJob(source_id=identifier, source_version=index.fingerprint, profile=PROFILE)
             db.add(job)
             await db.flush()
-            await activate(db, job, index, get_settings().gemini)
+            await activate(db, job, index, get_settings().embeddings)
     vector = VECTOR
     calls = []
 
@@ -370,7 +381,7 @@ async def test_dense_access_filter_precedes_decode_and_similarity_cutoff(
         calls.append(request)
         return response(1, vector)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     result = await search(client, question="Explain login invalidation", retrieval="hybrid")
     assert result.status_code == 200, result.text
     assert [hit["passage"]["source_id"] for hit in result.json()["passages"]] == [str(allowed)]
@@ -389,7 +400,7 @@ async def test_dense_access_filter_precedes_decode_and_similarity_cutoff(
 async def test_preparation_requires_configuration_and_hybrid_falls_back_without_paid_calls(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GEMINI__API_KEY", "")
+    monkeypatch.setenv("EMBEDDINGS__URL", "")
     get_settings.cache_clear()
     identifier = await indexed(client, "Payment testing blocks release.")
     assert (await run_prepare(client, identifier)).status_code == 503
@@ -406,7 +417,7 @@ async def test_migration_refuses_to_discard_populated_vectors(
     async def handler(request: httpx.Request) -> httpx.Response:
         return response(1)
 
-    mock_google(monkeypatch, handler)
+    mock_local(monkeypatch, handler)
     assert (await run_prepare(client, identifier)).status_code == 200
     result = await asyncio.to_thread(
         subprocess.run,
@@ -421,3 +432,21 @@ async def test_migration_refuses_to_discard_populated_vectors(
     async with get_session_factory()() as db:
         assert await db.scalar(select(func.count()).select_from(EvidenceEmbedding)) == 1
         assert await db.get(KnowledgeSource, identifier)
+
+
+async def test_changed_local_weights_are_rejected_before_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    original = httpx.AsyncClient
+
+    async def route(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return tags("f" * 64)
+
+    local_embeddings._verified.clear()
+    monkeypatch.setattr(
+        "backend.services.local_embeddings.httpx.AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(route), **kwargs),
+    )
+    with pytest.raises(ValueError, match="weights changed"):
+        await embed(["passage"], EmbeddingConfig(url=LOCAL_URL, model="nomic-embed-text"), EmbeddingUsage())
+    assert calls == ["/api/tags"]

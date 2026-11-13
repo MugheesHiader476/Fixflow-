@@ -35,7 +35,9 @@ from backend.schemas.connectors import Credentials
 from backend.schemas.pipeline import digest
 from backend.security.policy import REDACTED
 from backend.services.agent import process_step
+from backend.services.grok import chat_messages, chat_tools
 from backend.services.ingestion import ingest_source
+from backend.services.workspace_tools import tool_definitions
 from backend.tests.test_connectors import config, connector_environment
 from backend.tests.test_evidence import indexed
 
@@ -52,6 +54,8 @@ Arguments = dict[str, object] | Callable[[list[dict[str, object]]], dict[str, ob
 class World:
     accounts: dict[str, UUID] = field(default_factory=dict)
     plan: list[tuple[str, Arguments]] = field(default_factory=list)
+    groq_failures: list[httpx.Response] = field(default_factory=list)
+    groq_bodies: list[dict[str, object]] = field(default_factory=list)
     model_calls: list[dict[str, object]] = field(default_factory=list)
     requests: list[httpx.Request] = field(default_factory=list)
     sent: list[dict[str, object]] = field(default_factory=list)
@@ -107,9 +111,55 @@ class World:
             "modifiedTime": "2026-10-17T10:00:00Z",
         }
 
+    def groq(self, request: httpx.Request) -> httpx.Response:
+        """Groq Chat Completions mock that replays the same plan as the xAI mock."""
+        body = json.loads(request.content)
+        self.groq_bodies.append(body)
+        assert request.url.path == "/openai/v1/chat/completions" and body["tool_choice"] == "required"
+        assert "private-provider-token" not in request.content.decode()
+        assert all(tool["type"] == "function" and "$defs" not in json.dumps(tool) for tool in body["tools"])
+        if self.groq_failures:
+            return self.groq_failures.pop(0)
+        # Present tool results to plan callables in the stored provider-neutral shape.
+        history = [
+            {"type": "function_call_output", "output": message["content"]}
+            for message in body["messages"]
+            if message["role"] == "tool"
+        ]
+        self.model_calls.append({"input": history})
+        index = len(self.model_calls) - 1
+        assert index < len(self.plan), "Unexpected extra paid model call"
+        name, args = self.plan[index]
+        if callable(args):
+            args = args(history)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_" + str(index),
+                                    "type": "function",
+                                    "function": {"name": name, "arguments": json.dumps(args)},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+            },
+        )
+
     async def respond(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path, host = request.url.path, request.url.host
+        if host == "api.groq.com":
+            return self.groq(request)
         if host == "api.x.ai":
             body = json.loads(request.content)
             self.model_calls.append(body)
@@ -461,6 +511,7 @@ async def test_untrusted_instructions_cannot_grant_tools_recipients_or_content(
         args["account_id"] = "11111111-1111-4111-8111-111111111111"
         world.plan = [("draft_email", args)]
     else:
+        # Fabrication is returned to the model as a correctable error; repeating it exhausts the step budget.
         world.plan = [
             (
                 "finish",
@@ -471,10 +522,42 @@ async def test_untrusted_instructions_cannot_grant_tools_recipients_or_content(
                     ],
                 },
             )
-        ]
+        ] * get_settings().grok.max_steps
     identifier = await start(client, action_mode="auto", allowed_recipients=["manager@example.test"])
     result = await complete(client, identifier)
-    assert result.status in {"failed", "cancelled"} and not world.sent
+    assert result.status in {"failed", "cancelled"} and not world.sent and result.answer is None
+
+
+async def test_inexact_citation_is_returned_for_correction_then_completes(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    receipt = await client.post("/api/documents", data={"content": SRS, "value": "Requirements"})
+    assert receipt.status_code == 202
+    await ingest_source(UUID(receipt.json()["id"]))
+    world.plan = [
+        ("search_snapshots", {"query": "payments integration"}),
+        (
+            "finish",
+            {
+                "answer": "Invented.",
+                "claims": [{"text": "False claim", "citations": [{"evidence_id": "made-up", "quote": "fabricated"}]}],
+            },
+        ),
+        ("finish", finish_with(SRS)),
+    ]
+    identifier = await start(client, include_connections=False)
+    result = await complete(client, identifier)
+    assert result.status == "completed" and result.answer is not None
+    assert result.answer.claims[0].text == SRS
+    inputs = records(world.model_calls[-1]["input"])
+    correction = json.loads(
+        next(
+            str(message["output"])
+            for message in inputs
+            if message.get("type") == "function_call_output" and "invalid_citation" in str(message["output"])
+        )
+    )
+    assert correction["error"] == "invalid_citation" and "made-up" not in correction["message"]
 
 
 async def test_rate_model_failures_and_missing_configuration_are_explicit(
@@ -1029,3 +1112,77 @@ async def test_malformed_nested_model_response_does_not_prevent_the_next_workflo
     world.plan = [("finish", {"answer": "Ready for the next authorized request."})]
     succeeded = await complete(client, await start(client))
     assert succeeded.status == "completed"
+
+
+async def use_groq(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROK__PROVIDER", "groq")
+    monkeypatch.setenv("GROK__MODEL", "openai/gpt-oss-120b")
+    get_settings.cache_clear()
+
+
+async def test_groq_free_tier_completes_grounded_workflow(
+    client: httpx.AsyncClient, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await use_groq(monkeypatch)
+    receipt = await client.post("/api/documents", data={"content": SRS, "value": "Requirements"})
+    await ingest_source(UUID(receipt.json()["id"]))
+    world.groq_failures = [
+        # One malformed generated tool call is retried once inside the same step.
+        httpx.Response(400, json={"error": {"code": "tool_use_failed", "message": "private generation"}}),
+    ]
+    world.plan = [("search_snapshots", {"query": "payments integration"}), ("finish", finish_with(SRS))]
+    result = await complete(client, await start(client, include_connections=False))
+    assert result.status == "completed" and result.answer is not None and result.answer.claims[0].text == SRS
+    assert all(request.url.host == "api.groq.com" for request in world.requests)
+    first, *_, last = world.groq_bodies
+    assert first["model"] == "openai/gpt-oss-120b" and first["reasoning_effort"] == "low"
+    assert "parallel_tool_calls" not in first and records(first["messages"])[0]["role"] == "system"
+    # The tool result returns as a Chat Completions tool message tied to the assistant call.
+    messages = records(last["messages"])
+    assert [message["role"] for message in messages][-2:] == ["assistant", "tool"]
+    assert records(messages[-2]["tool_calls"])[0]["id"] == messages[-1]["tool_call_id"]
+
+
+async def test_groq_token_rate_limit_resumes_instead_of_failing(
+    client: httpx.AsyncClient, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await use_groq(monkeypatch)
+    world.groq_failures = [httpx.Response(429, headers={"retry-after": "7"}, json={"error": {"message": "TPM"}})]
+    world.plan = [("finish", {"answer": "No workspace evidence was needed."})]
+    identifier = await start(client, include_connections=False)
+    await process_step(identifier)
+    async with get_session_factory()() as db:
+        run = await db.get(AgentRun, identifier)
+        assert run is not None and run.status == "queued" and run.steps == 0
+        assert run.next_attempt_at > datetime.now(UTC) + timedelta(seconds=5)
+        run.next_attempt_at = datetime.now(UTC)
+        await db.commit()
+    result = await complete(client, identifier)
+    assert result.status == "completed" and len(world.groq_bodies) == 2
+
+
+def test_stored_history_converts_to_chat_completions() -> None:
+    items: list[dict[str, object]] = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "question"},
+        {"type": "reasoning", "encrypted_content": "opaque"},
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Searching."}]},
+        {"type": "function_call", "name": "search_snapshots", "call_id": "c1", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "{\"materials\": []}"},
+    ]
+    assert chat_messages(items) == [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "question"},
+        {
+            "role": "assistant",
+            "content": "Searching.",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "search_snapshots", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "{\"materials\": []}"},
+    ]
+    with pytest.raises(ValueError, match="Unsupported"):
+        chat_messages([{"type": "web_search_call"}])
+    schema = json.dumps(chat_tools(tool_definitions(False)))
+    assert "$ref" not in schema and "$defs" not in schema

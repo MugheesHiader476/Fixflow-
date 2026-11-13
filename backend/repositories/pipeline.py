@@ -66,5 +66,6 @@ async def persist_result(session: AsyncSession, source_id: UUID, result: Pipelin
         session.add(IngestionArtifact(source_id=source_id, result=payload))
     else:
         artifact.result = payload
-    # Only sources explicitly opted into evidence search receive a derived index.
+    # Every parsed source receives a derived passage index (owner labels preserved) so chat
+    # retrieval searches structure-aware passages instead of whole documents.
     await refresh_index(session, source, result)

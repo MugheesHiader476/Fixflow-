@@ -16,7 +16,7 @@ from backend.db.models import AgentAction, AgentRun, ConnectorRateLimit
 from backend.db.session import get_session_factory
 from backend.processing.passages import tokens
 from backend.schemas.agent import GrokConfig
-from backend.schemas.evidence import GeminiConfig
+from backend.schemas.evidence import EmbeddingConfig
 from backend.security.policy import (
     POLICY_VERSION,
     REDACTED,
@@ -26,8 +26,8 @@ from backend.security.policy import (
     validate_request,
 )
 from backend.security.prompt import SYSTEM_PROMPT
-from backend.services.gemini_embeddings import EmbeddingUsage, embed
 from backend.services.grok import respond
+from backend.services.local_embeddings import EmbeddingUsage, embed
 
 SECRET = "xai-" + "a1B2" * 10
 pytestmark = pytest.mark.anyio
@@ -92,7 +92,7 @@ def test_deep_model_content_is_rejected_with_a_bounded_policy_error() -> None:
 async def test_provider_adapters_reject_secrets_before_http_or_embedding_usage() -> None:
     usage = EmbeddingUsage()
     with pytest.raises(PolicyViolation):
-        await embed([SECRET], GeminiConfig(api_key=SecretStr("mock-key"), model="gemini-embedding-2"), usage)
+        await embed([SECRET], EmbeddingConfig(url="http://127.0.0.1:11435", model="nomic-embed-text"), usage)
     assert usage.calls == 0
     with pytest.raises(PolicyViolation):
         await respond(
