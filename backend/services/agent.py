@@ -85,6 +85,33 @@ def model_output(result: dict[str, object]) -> dict[str, object]:
     return view
 
 
+REPEATED_CALL: dict[str, object] = {
+    "error": "repeated_call",
+    "message": (
+        "This exact call already ran and its result is above. Use different keywords or another tool, "
+        "or call finish and state what evidence is missing."
+    ),
+}
+
+
+def repeated_call(messages: list[dict[str, object]], call: dict[str, object]) -> bool:
+    """Identical tool calls return identical results; re-running them only burns steps and tokens."""
+
+    def normalized(arguments: object) -> object:
+        try:
+            return json.loads(string(arguments))
+        except (ValueError, TypeError):
+            return arguments
+
+    target = (call.get("name"), normalized(call.get("arguments")))
+    return any(
+        item.get("type") == "function_call"
+        and item.get("call_id") != call.get("call_id")
+        and (item.get("name"), normalized(item.get("arguments"))) == target
+        for item in messages
+    )
+
+
 def retry_after(response: httpx.Response) -> float:
     """Bounded provider wait; free-tier token windows reset within a minute."""
     try:
@@ -479,8 +506,11 @@ async def process_step(identifier: UUID) -> None:
             )
         else:
             await authorize(ctx)
-            async with asyncio.timeout(180):
-                result = await dispatch(ctx, call)
+            if repeated_call(messages, call):
+                result = dict(REPEATED_CALL)
+            else:
+                async with asyncio.timeout(180):
+                    result = await dispatch(ctx, call)
             serialized_size(result)
             cleaned = record(redact(result, configured_secrets()))
             originals = records(result.get("materials", []))

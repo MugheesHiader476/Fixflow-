@@ -399,6 +399,11 @@ async def snapshots(ctx: Context, args: SearchSnapshots) -> dict[str, object]:
         output.extend(Material.model_validate(item) for item in records(page.get("materials", [])))
     return {
         "materials": [item.model_dump(mode="json") for item in output[:SNAPSHOT_MAX_MATERIALS]],
+        **(
+            {"message": "No passages matched. Try different or broader keywords, or finish and say what is missing."}
+            if not output
+            else {}
+        ),
         "warnings": result.warnings,
         "embedding_calls": result.embedding_calls,
         "embedding_input_tokens": result.embedding_input_tokens,

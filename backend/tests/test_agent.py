@@ -1253,3 +1253,18 @@ def test_context_budget_falls_back_to_finish_before_failing() -> None:
     assert [tool["name"] for tool in offered] == ["finish"] and kept[-1]["content"] == FINISH_NOW
     with pytest.raises(ValueError, match="budget exceeded"):
         within_budget(messages, tools, 200)
+
+
+async def test_repeated_identical_call_is_not_rerun(client: httpx.AsyncClient, world: World) -> None:
+    receipt = await client.post("/api/documents", data={"content": SRS, "value": "Requirements"})
+    await ingest_source(UUID(receipt.json()["id"]))
+    search: tuple[str, Arguments] = ("search_snapshots", {"query": "payments integration"})
+    world.plan = [search, search, ("finish", finish_with(SRS))]
+    result = await complete(client, await start(client, include_connections=False))
+    assert result.status == "completed"
+    outputs = [
+        json.loads(str(item["output"]))
+        for item in records(world.model_calls[-1]["input"])
+        if item.get("type") == "function_call_output"
+    ]
+    assert outputs[0]["materials"] and outputs[1]["error"] == "repeated_call"
