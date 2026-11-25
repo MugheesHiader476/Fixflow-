@@ -36,7 +36,8 @@ class EmbeddingConfig(Contract):
     dimensions: int = Field(default=DIMENSIONS, ge=DIMENSIONS, le=DIMENSIONS)
     timeout_seconds: float = Field(default=60, ge=1, le=120)
     requests_per_minute: int = Field(default=120, ge=1, le=600)
-    min_similarity: float = Field(default=0.5, ge=0, le=1)
+    # 0.6 tuned for nomic-embed-text on the golden set (scripts/rag_eval.py): better rank, fewer weak passages.
+    min_similarity: float = Field(default=0.6, ge=0, le=1)
     # Newly parsed sources queue the embedding worker; existing sources are not backfilled.
     auto_embed: bool = True
 

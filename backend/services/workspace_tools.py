@@ -43,7 +43,7 @@ from backend.services.ingestion import IngestionError, ingest_source
 ACTIVE = ("connected", "syncing", "connected_with_warning")
 # Chat snapshot search budget, tuned with scripts/rag_eval.py on the golden set (backend/tests/golden_set.py).
 SNAPSHOT_MAX_PASSAGES = 5
-SNAPSHOT_CONTEXT_TOKENS = 2200
+SNAPSHOT_CONTEXT_TOKENS = 1800  # ~4 full passages; keeps two searches inside the free-tier budget
 SNAPSHOT_CANDIDATE_LIMIT = 24
 SNAPSHOT_MAX_MATERIALS = 8
 
