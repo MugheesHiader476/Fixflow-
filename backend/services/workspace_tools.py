@@ -97,12 +97,29 @@ TOOL_MODELS: dict[str, tuple[type[BaseModel], str]] = {
 }
 
 
-@lru_cache(maxsize=2)
-def tool_definitions(email_enabled: bool = False) -> list[dict[str, object]]:
+# Tools that need a captured connection of one of these providers; others are always offered.
+PROVIDER_TOOLS: dict[str, frozenset[str]] = {
+    "search_provider": frozenset({"gmail", "google_drive", "github", "slack"}),
+    "read_resource": frozenset({"gmail", "google_drive", "github"}),
+    "github_status": frozenset({"github"}),
+    "prepare_file": frozenset({"google_drive", "github"}),
+    "draft_email": frozenset({"gmail"}),
+}
+
+
+@lru_cache(maxsize=64)
+def tool_definitions(
+    email_enabled: bool = False, providers: frozenset[str] | None = None
+) -> list[dict[str, object]]:
+    """Offer only usable tools: unusable schemas waste the model's bounded context on every step.
+
+    `providers=None` keeps the full list for callers that do not know the run's connections.
+    """
     return [
         {"type": "function", "name": name, "description": description, "parameters": model.model_json_schema()}
         for name, (model, description) in TOOL_MODELS.items()
-        if email_enabled or name != "draft_email"
+        if (email_enabled or name != "draft_email")
+        and (providers is None or name not in PROVIDER_TOOLS or bool(PROVIDER_TOOLS[name] & providers))
     ]
 
 
@@ -116,6 +133,9 @@ class Context:
 
     def accounts(self) -> list[dict[str, object]]:
         return records(self.scope.get("accounts", []))
+
+    def providers(self) -> frozenset[str]:
+        return frozenset(string(item.get("provider", "")) for item in self.accounts())
 
 
 async def connection(ctx: Context, identifier: UUID) -> tuple[NativeWorkspace, ConnectorAccount]:

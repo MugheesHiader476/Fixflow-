@@ -29,13 +29,31 @@ async def respond(messages: list[dict[str, object]], tools: list[dict[str, objec
     if not config.configured or config.api_key is None:
         raise ValueError("Configure the chat API key and model")
     validate_disclosure(messages, configured_secrets())
-    if tokens(json.dumps([messages, tools], ensure_ascii=False)) > config.input_token_limit:
-        raise ValueError("Workflow context budget exceeded; narrow the request or selected sources")
+    messages, tools = within_budget(messages, tools, config.input_token_limit)
     if config.provider == "groq":
         output, usage = await groq_output(messages, tools, config)
     else:
         output, usage = await xai_output(messages, tools, config)
     return validated_step(output, usage)
+
+
+FINISH_NOW = (
+    "Server note: the context budget for this answer is reached. Call finish now using only evidence already "
+    "returned above, and list anything still missing in limitations."
+)
+
+
+def within_budget(
+    messages: list[dict[str, object]], tools: list[dict[str, object]], limit: int
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Fit the bounded context; near the limit, offer only `finish` so collected evidence is still answered."""
+    if tokens(json.dumps([messages, tools], ensure_ascii=False)) <= limit:
+        return messages, tools
+    finish = [tool for tool in tools if tool.get("name") == "finish"]
+    final: list[dict[str, object]] = [*messages, {"role": "user", "content": FINISH_NOW}]
+    if finish and tokens(json.dumps([final, finish], ensure_ascii=False)) <= limit:
+        return final, finish
+    raise ValueError("Workflow context budget exceeded; narrow the request or selected sources")
 
 
 async def bounded_body(response: httpx.Response) -> bytes:

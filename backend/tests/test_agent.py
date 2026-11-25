@@ -18,7 +18,7 @@ from pydantic import SecretStr
 from sqlalchemy import func, select, update
 
 from backend.config import get_settings
-from backend.connectors.core import records, string
+from backend.connectors.core import record, records, string
 from backend.connectors.vault import TokenVault
 from backend.db.models import (
     AgentAction,
@@ -30,14 +30,15 @@ from backend.db.models import (
     SavedSolution,
 )
 from backend.db.session import close_database, get_session_factory
+from backend.processing.passages import tokens
 from backend.schemas.agent import GrokConfig, RunView
 from backend.schemas.connectors import Credentials
 from backend.schemas.pipeline import digest
 from backend.security.policy import REDACTED
 from backend.services.agent import process_step
-from backend.services.grok import chat_messages, chat_tools
+from backend.services.grok import FINISH_NOW, chat_messages, chat_tools, within_budget
 from backend.services.ingestion import ingest_source
-from backend.services.workspace_tools import tool_definitions
+from backend.services.workspace_tools import TOOL_MODELS, tool_definitions
 from backend.tests.test_connectors import config, connector_environment
 from backend.tests.test_evidence import indexed
 
@@ -1207,3 +1208,48 @@ async def test_groq_request_larger_than_minute_limit_fails_without_retry_loop(
     result = await complete(client, await start(client, include_connections=False))
     assert result.status == "failed" and "GROK__MAX_OUTPUT_TOKENS" in str(result.error)
     assert len(world.groq_bodies) == 1 and "Request too large" not in str(result.error)
+
+
+async def test_model_sees_slim_evidence_while_citations_use_full_materials(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    receipt = await client.post("/api/documents", data={"content": SRS, "value": "Requirements"})
+    await ingest_source(UUID(receipt.json()["id"]))
+    world.plan = [("search_snapshots", {"query": "payments integration"}), ("finish", finish_with(SRS))]
+    identifier = await start(client, include_connections=False)
+    result = await complete(client, identifier)
+    assert result.status == "completed" and result.answer is not None
+    async with get_session_factory()() as db:
+        run = await db.get(AgentRun, identifier)
+        assert run is not None
+        outputs = [str(item["output"]) for item in run.messages if item.get("type") == "function_call_output"]
+        assert outputs and all("source_hash" not in text and "spans" not in text for text in outputs)
+        assert all(record(item["reference"]).get("spans") for item in records(run.materials))
+    # A run without connections is offered only snapshot search, source reads and finish.
+    offered = {tool["name"] for tool in records(world.model_calls[0]["tools"])}
+    assert offered == {"search_snapshots", "read_source", "finish"}
+
+
+def test_tool_list_follows_connected_providers() -> None:
+    names = lambda providers: {tool["name"] for tool in tool_definitions(False, providers)}  # noqa: E731
+    assert names(frozenset()) == {"search_snapshots", "read_source", "finish"}
+    assert {"github_status", "prepare_file", "read_resource", "search_provider"} <= names(frozenset({"github"}))
+    assert "github_status" not in names(frozenset({"slack"})) and "read_resource" not in names(frozenset({"slack"}))
+    assert "draft_email" in {tool["name"] for tool in tool_definitions(True, frozenset({"gmail"}))}
+    assert "draft_email" not in {tool["name"] for tool in tool_definitions(True, frozenset({"slack"}))}
+    assert len(tool_definitions(False)) == len(TOOL_MODELS) - 1  # Unknown connections keep the full list.
+
+
+def test_context_budget_falls_back_to_finish_before_failing() -> None:
+    tools = tool_definitions(False, frozenset())
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "x" * 2000},
+    ]
+    kept, offered = within_budget(messages, tools, 100_000)
+    assert kept == messages and offered == tools
+    finish_only = tokens(json.dumps([messages, [t for t in tools if t["name"] == "finish"]])) + 80
+    kept, offered = within_budget(messages, tools, finish_only)
+    assert [tool["name"] for tool in offered] == ["finish"] and kept[-1]["content"] == FINISH_NOW
+    with pytest.raises(ValueError, match="budget exceeded"):
+        within_budget(messages, tools, 200)

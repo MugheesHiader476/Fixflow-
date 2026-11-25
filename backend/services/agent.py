@@ -62,6 +62,29 @@ INSTRUCTIONS = SYSTEM_PROMPT
 WHITESPACE = re.compile(r"[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
 
 
+MODEL_MATERIAL_FIELDS = ("id", "title", "text", "warning")
+# Bookkeeping for the server and UI; the model never needs it to answer or cite.
+SERVER_ONLY_RESULT_FIELDS = frozenset({"embedding_calls", "embedding_input_tokens", "pending_source_id"})
+
+
+def model_output(result: dict[str, object]) -> dict[str, object]:
+    """Model-facing tool result: evidence text and IDs only.
+
+    Full materials (spans, hashes, provenance, ranks) stay in `run.materials`, which drives
+    citation validation and the source list. Sending them back costs ~300 tokens per passage.
+    """
+    view = {key: value for key, value in result.items() if key not in SERVER_ONLY_RESULT_FIELDS}
+    if "materials" in view:
+        view["materials"] = [
+            {key: item[key] for key in MODEL_MATERIAL_FIELDS if item.get(key) is not None}
+            for item in records(view["materials"])
+        ]
+    warnings = view.get("warnings")
+    if isinstance(warnings, list):
+        view["warnings"] = list(dict.fromkeys(str(item) for item in warnings))[:4]
+    return view
+
+
 def retry_after(response: httpx.Response) -> float:
     """Bounded provider wait; free-tier token windows reset within a minute."""
     try:
@@ -451,7 +474,9 @@ async def process_step(identifier: UUID) -> None:
                 raise
             await authorize(ctx)
             await ensure_mutable(ctx, automatic=True)
-            response = await grok.respond(messages, tool_definitions(ctx.request.email_enabled), config)
+            response = await grok.respond(
+                messages, tool_definitions(ctx.request.email_enabled, ctx.providers()), config
+            )
         else:
             await authorize(ctx)
             async with asyncio.timeout(180):
@@ -528,7 +553,7 @@ async def process_step(identifier: UUID) -> None:
                 usage[key] = usage.get(key, 0) + count if usage.get(key, 0) is not None and count is not None else None
             run.usage = usage
             previous_ids = {item.get("call_id") for item in run.messages if item.get("type") == "function_call"}
-            allowed = {value["name"] for value in tool_definitions(ctx.request.email_enabled)}
+            allowed = {value["name"] for value in tool_definitions(ctx.request.email_enabled, ctx.providers())}
             if any(item["call_id"] in previous_ids or item["name"] not in allowed for item in response.calls):
                 run.status, run.error = "failed", "Unknown or duplicate model tool call rejected"
                 return
@@ -568,7 +593,7 @@ async def process_step(identifier: UUID) -> None:
                     {
                         "type": "function_call_output",
                         "call_id": call["call_id"],
-                        "output": json.dumps(result, ensure_ascii=False),
+                        "output": json.dumps(model_output(result), ensure_ascii=False),
                     },
                 ]
                 run.pending_calls = run.pending_calls[1:]
