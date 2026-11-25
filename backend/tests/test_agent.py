@@ -1186,3 +1186,24 @@ def test_stored_history_converts_to_chat_completions() -> None:
         chat_messages([{"type": "web_search_call"}])
     schema = json.dumps(chat_tools(tool_definitions(False)))
     assert "$ref" not in schema and "$defs" not in schema
+
+
+async def test_groq_request_larger_than_minute_limit_fails_without_retry_loop(
+    client: httpx.AsyncClient, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await use_groq(monkeypatch)
+    world.groq_failures = [
+        httpx.Response(
+            429,
+            json={
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Request too large for model on output tokens per minute (OTPM): Limit 1000",
+                }
+            },
+        )
+    ]
+    world.plan = [("finish", {"answer": "Never reached."})]
+    result = await complete(client, await start(client, include_connections=False))
+    assert result.status == "failed" and "GROK__MAX_OUTPUT_TOKENS" in str(result.error)
+    assert len(world.groq_bodies) == 1 and "Request too large" not in str(result.error)

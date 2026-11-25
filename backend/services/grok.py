@@ -7,7 +7,7 @@ from typing import cast
 
 import httpx
 
-from backend.connectors.core import record, records, string
+from backend.connectors.core import ConnectorError, record, records, string
 from backend.processing.passages import tokens
 from backend.schemas.agent import GrokConfig
 from backend.security.policy import validate_disclosure
@@ -174,6 +174,13 @@ async def groq_output(
             body = await bounded_body(response)
             if response.status_code == 400 and attempt == 0 and tool_use_failed(body):
                 continue
+            if response.status_code == 429 and request_too_large(body):
+                # A single request above a per-minute token limit never succeeds by waiting.
+                raise httpx.HTTPStatusError(
+                    "Chat request exceeds a per-minute token limit",
+                    request=response.request,
+                    response=httpx.Response(413, request=response.request),
+                )
             response.raise_for_status()
         break
     payload = record(json.loads(body))
@@ -200,12 +207,19 @@ async def groq_output(
     return output, usage
 
 
-def tool_use_failed(body: bytes) -> bool:
+def provider_error(body: bytes) -> dict[str, object]:
     try:
-        error = record(record(json.loads(body)).get("error", {}))
-    except (ValueError, TypeError):
-        return False
-    return error.get("code") == "tool_use_failed"
+        return record(record(json.loads(body)).get("error", {}))
+    except (ValueError, TypeError, ConnectorError):
+        return {}
+
+
+def tool_use_failed(body: bytes) -> bool:
+    return provider_error(body).get("code") == "tool_use_failed"
+
+
+def request_too_large(body: bytes) -> bool:
+    return str(provider_error(body).get("message", "")).startswith("Request too large")
 
 
 def validated_step(output: list[dict[str, object]], usage: dict[str, object]) -> GrokStep:

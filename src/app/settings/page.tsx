@@ -101,7 +101,7 @@ export default function SettingsPage() {
               <dt className="text-muted">Stored documents</dt><dd>{health.data.documents ?? "—"}</dd>
               <dt className="text-muted">Processing</dt><dd>Canonical parsing and opt-in evidence indexing</dd>
               {health.data.workspace_agent && <><dt className="text-muted">Workspace chat</dt><dd>{health.data.workspace_agent === "configured" ? "Configured" : "Set the backend API key and model"}</dd></>}
-              {health.data.evidence_search && <><dt className="text-muted">Project evidence</dt><dd>Opt-in source search</dd></>}
+              {health.data.evidence_search && <><dt className="text-muted">Source search</dt><dd>{health.data.evidence_search === "automatic" ? "Automatic passage index" : "Opt-in source search"}</dd></>}
               {health.data.evidence_generation && <><dt className="text-muted">Cited synthesis</dt><dd>{health.data.evidence_generation === "configured" ? "Configured" : "Not configured"}</dd></>}
               {health.data.ocr && <><dt className="text-muted">OCR for scans and images</dt><dd>{health.data.ocr === "available" ? "Available" : "Not available: install Tesseract/Poppler and enable PIPELINE__OCR_ENABLED"}</dd></>}
               {health.data.evidence_semantic && <><dt className="text-muted">Local semantic search (Ollama)</dt><dd>{health.data.evidence_semantic === "configured" ? "Configured; prepare sources explicitly" : "Not configured"}</dd></>}

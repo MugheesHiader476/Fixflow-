@@ -493,7 +493,10 @@ async def process_step(identifier: UUID) -> None:
             # Free tiers meter tokens per minute; wait and resume the same step within the run deadline.
             failure, delay = "Chat provider rate limit; workflow will resume", retry_after(error.response)
         elif status == 413:
-            failure = "The request exceeds the chat provider's per-request token limit; lower GROK__INPUT_TOKEN_LIMIT."
+            failure = (
+                "The request exceeds the chat provider's per-minute token limit; lower GROK__INPUT_TOKEN_LIMIT "
+                "or GROK__MAX_OUTPUT_TOKENS."
+            )
         else:
             failure = "Chat provider is unavailable. Try again later; no automatic paid retry."
     except (

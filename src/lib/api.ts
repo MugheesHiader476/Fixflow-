@@ -28,7 +28,7 @@ export interface BackendHealth {
   answer_service?: "removed" | "ready" | "unavailable" | "not_configured";
   retrieval_mode?: "keyword" | "dense" | "removed";
   processing_mode?: "parsing_only";
-  evidence_search?: "project_opt_in";
+  evidence_search?: "automatic" | "project_opt_in";
   evidence_generation?: "configured" | "not_configured";
   evidence_semantic?: "configured" | "not_configured";
   workspace_agent?: "configured" | "not_configured";
