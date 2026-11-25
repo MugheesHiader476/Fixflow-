@@ -199,6 +199,9 @@ async def groq_output(
                     request=response.request,
                     response=httpx.Response(413, request=response.request),
                 )
+            if response.status_code == 429 and daily_quota(body):
+                # Waiting minutes per step would only stall the run past its deadline.
+                raise DailyQuotaExceeded
             response.raise_for_status()
         break
     payload = record(json.loads(body))
@@ -234,6 +237,15 @@ def provider_error(body: bytes) -> dict[str, object]:
 
 def tool_use_failed(body: bytes) -> bool:
     return provider_error(body).get("code") == "tool_use_failed"
+
+
+class DailyQuotaExceeded(RuntimeError):
+    """The provider's per-day token or request quota is used up (e.g. Groq free tier: 200K tokens/day)."""
+
+
+def daily_quota(body: bytes) -> bool:
+    message = str(provider_error(body).get("message", ""))
+    return "per day" in message and ("(TPD)" in message or "(RPD)" in message)
 
 
 def request_too_large(body: bytes) -> bool:

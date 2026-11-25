@@ -538,6 +538,11 @@ async def process_step(identifier: UUID) -> None:
             result = {"error": "tool_unavailable", "message": str(error.detail)}
         else:
             failure = "Workflow request could not be completed"
+    except grok.DailyQuotaExceeded:
+        failure = (
+            "The chat provider's daily free-tier quota is used up. Try again later (Groq's quota is rolling over "
+            "24 hours) or upgrade the provider plan."
+        )
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         if status in {401, 403}:

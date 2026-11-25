@@ -1255,6 +1255,22 @@ def test_context_budget_falls_back_to_finish_before_failing() -> None:
         within_budget(messages, tools, 200)
 
 
+async def test_groq_daily_quota_fails_immediately_with_clear_message(
+    client: httpx.AsyncClient, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await use_groq(monkeypatch)
+    world.groq_failures = [
+        httpx.Response(
+            429,
+            json={"error": {"code": "rate_limit_exceeded", "message": "Rate limit reached on tokens per day (TPD)"}},
+        )
+    ]
+    world.plan = [("finish", {"answer": "Never reached."})]
+    result = await complete(client, await start(client, include_connections=False))
+    assert result.status == "failed" and "daily free-tier quota" in str(result.error)
+    assert len(world.groq_bodies) == 1
+
+
 async def test_repeated_identical_call_is_not_rerun(client: httpx.AsyncClient, world: World) -> None:
     receipt = await client.post("/api/documents", data={"content": SRS, "value": "Requirements"})
     await ingest_source(UUID(receipt.json()["id"]))
