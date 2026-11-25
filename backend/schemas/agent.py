@@ -142,9 +142,18 @@ class AgentClaim(Contract):
 
 
 class Finish(Contract):
-    answer: str = Field(min_length=1, max_length=12000)
-    claims: list[AgentClaim] = Field(default_factory=list, max_length=12)
-    limitations: list[str] = Field(default_factory=list, max_length=10)
+    answer: str = Field(
+        min_length=1,
+        max_length=12000,
+        description=(
+            "One or two full sentences that directly answer the question, never a title or topic. Example: "
+            "'The release is blocked by failing integration tests; Sara owns it.'"
+        ),
+    )
+    claims: list[AgentClaim] = Field(
+        default_factory=list, max_length=12, description="Factual claims, each with exact-quote citations."
+    )
+    limitations: list[str] = Field(default_factory=list, max_length=10, description="Missing or uncertain evidence.")
 
 
 class ActionApproval(Contract):

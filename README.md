@@ -38,7 +38,7 @@ Account ownership, connector permissions/leases, raw uploads, persistent parsing
 
 Use **Ask your workspace** on the home page. Enter a question and press Enter or Send. Shift+Enter adds a newline. Authorized app selections and parsed uploads are included automatically; there is no per-message project or app switch. Open **Conversation History** to resume a chat, or **New chat** to start another. Questions and consulted source excerpts are sent to xAI. Selected resources, bounded search pages and last verified permissions determine coverage; an answer is not proof that every account item was reviewed.
 
-Set backend-only `GROK__PROVIDER=groq`, `GROK__API_KEY` (free key from console.groq.com) and `GROK__MODEL=openai/gpt-oss-120b`, or `GROK__PROVIDER=xai` with a funded xAI key and model. Missing keys and provider denials produce an explicit failure without an alternate provider; free-tier token-per-minute limits (HTTP 429) pause the run and resume it within the run deadline. Embeddings use local Ollama (`EMBEDDINGS__URL`, `EMBEDDINGS__MODEL=nomic-embed-text`); `npm run dev:local` starts a project Ollama on 127.0.0.1:11435. The [prompt and security policy](docs/agent-security.md) retains versioned instructions, credential-egress checks, continuous tool/output validation and PostgreSQL quotas. Clerk handles sign-in and credential lockout.
+Set backend-only `GROK__PROVIDER=groq`, `GROK__API_KEY` (free key from console.groq.com) and `GROK__MODEL=qwen/qwen3.8-27b`, or `GROK__PROVIDER=xai` with a funded xAI key and model. Missing keys and provider denials produce an explicit failure without an alternate provider; free-tier token-per-minute limits (HTTP 429) pause the run and resume it within the run deadline. Embeddings use local Ollama (`EMBEDDINGS__URL`, `EMBEDDINGS__MODEL=nomic-embed-text`); `npm run dev:local` starts a project Ollama on 127.0.0.1:11435. The [prompt and security policy](docs/agent-security.md) retains versioned instructions, credential-egress checks, continuous tool/output validation and PostgreSQL quotas. Clerk handles sign-in and credential lockout.
 
 New chat messages have no email action authority. Existing run/action APIs and historical email receipts remain compatible; previously prepared emails require their exact stored approval. Drive/GitHub file requests use private version-bound downloads. Durable assistant work continues internally across restarts so closing a tab does not discard a question. PostgreSQL stores chats; the browser is not their database. The model receives at most eight previous turns; the UI reopens the most recent twenty. Existing source parsing, optional lexical/hybrid indexes and historical saved records remain available.
 
@@ -171,6 +171,37 @@ npm run dev
 ```
 
 Production native startup uses `npm run build` followed by `npm run start:local`, or separate FastAPI and `npm run start` processes. The launcher starts the application services only; no model server or inference warm-up remains. `python -m scripts.check_launch` performs a secret-free, read-only configuration/schema preflight.
+
+## RAG evaluation (golden set)
+
+`backend/tests/golden_set.py` is a synthetic, connector-shaped workspace: Gmail EML threads, Slack threads, GitHub
+code, issues and PRs, Drive documents and a CSV upload, including 31 hard-negative look-alikes. It comes with 42
+labelled questions (fact, paraphrase, multi-hop, table, code, temporal, unanswerable) split into dev and test. Gold
+evidence is exact substrings, so labels survive chunking changes.
+
+```bash
+# Disposable database only (name must end in _test); local Ollama for hybrid search.
+DATABASE_URL=...fixflow_<name>_test PYTHONPATH=. myenev/bin/python -m scripts.rag_eval retrieval --out .local/rag-eval
+DATABASE_URL=...fixflow_<name>_test PYTHONPATH=. myenev/bin/python -m scripts.rag_eval e2e --split test
+```
+
+`retrieval` scores the exact chat search path (hit rate, MRR, model-facing evidence tokens) over chunk size/overlap,
+hybrid vs lexical, similarity cutoff and per-search budget. `e2e` runs real answers through the agent loop and uses
+the chat provider's quota. `backend/tests/test_golden_retrieval.py` is the fast lexical regression gate.
+
+Results (2026-11-25, nomic-embed-text, qwen/qwen3.8-27b on Groq's free tier):
+
+| Finding | Effect |
+| --- | --- |
+| Hybrid vs lexical-only search | +11–17 points hit rate on the model's keyword queries |
+| Chunk size 450 target / 650 max / 40 overlap | Best of 250–600; 600-token chunks only added tokens |
+| Similarity cutoff 0.5 → 0.6 | Keyword-query MRR 0.43 → 0.55; ~10% fewer evidence tokens |
+| Per-search budget 2,200 → 1,800 tokens | Same recall; about 4 full passages, two searches fit the budget |
+| End to end (15 held-out questions before the last fixes) | 13 correct; the 2 failures led to the searchable-name, Slack-thread and repeated-call fixes |
+| Cost | About 6.5–7.5K input tokens per two-step answer; Groq's free tier allows 200K tokens/day, about 25–30 answers |
+
+The golden documents are short (about 120 tokens per passage on average), so hit rate is near its ceiling and MRR is
+the more sensitive metric. Rerun the evaluation on real connector data once apps are connected.
 
 ## Docker
 

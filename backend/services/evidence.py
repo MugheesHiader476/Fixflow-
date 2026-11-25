@@ -76,6 +76,22 @@ def add_hit(
     return True
 
 
+def evict_weaker(selected: list[EvidenceHit], anchor: EvidenceHit) -> bool:
+    """Drop the weakest direct match ranked below `anchor` from another source; False if none qualifies."""
+    weaker = [
+        h
+        for h in selected
+        if h.reason == "match" and h.score < anchor.score and h.passage.source_id != anchor.passage.source_id
+        and not (anchor.passage.kind == "slack" and h.passage.metadata.get("thread_id") == anchor.passage.metadata.get(
+            "thread_id"
+        ))
+    ]
+    if not weaker:
+        return False
+    selected.remove(min(weaker, key=lambda h: (h.score, h.passage.id)))
+    return True
+
+
 def needs_neighbour(hit: EvidenceHit, question: str) -> bool:
     p = hit.passage
     if p.kind == "slack":
@@ -118,9 +134,7 @@ async def search(
             add_hit(selected, hit, request.max_passages, request.context_tokens)
     if request.expand_context:
         for hit in selected.copy():
-            if len(selected) >= request.max_passages:
-                break
-            if not needs_neighbour(hit, request.question):
+            if hit not in selected or not needs_neighbour(hit, request.question):
                 continue
             extras = await repository.neighbours(db, request, hit)
             for extra in extras:
@@ -144,8 +158,18 @@ async def search(
                     or extra.passage.spans[0].block_id == hit.passage.spans[-1].block_id
                 ):
                     continue
-                add_hit(selected, extra, request.max_passages, request.context_tokens)
-                break
+                if any(redundant(extra, previous) for previous in selected):
+                    continue
+                if len(selected) >= request.max_passages and (
+                    hit.passage.kind != "slack" or not evict_weaker(selected, hit)
+                ):
+                    # Only a Slack reply (the message is meaningless without its thread) may replace a
+                    # weaker match; document neighbours never displace direct matches.
+                    break
+                added = add_hit(selected, extra, request.max_passages, request.context_tokens)
+                # A Slack thread may contribute several replies within its own token budget.
+                if added and hit.passage.kind != "slack":
+                    break
 
     def reading_order(hit: EvidenceHit) -> tuple[str, ...]:
         p = hit.passage

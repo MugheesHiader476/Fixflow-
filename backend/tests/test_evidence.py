@@ -25,6 +25,7 @@ from backend.db.models import (
     PassageIndex,
 )
 from backend.db.session import get_session_factory
+from backend.repositories.evidence import refresh_stale_indexes
 from backend.schemas.connectors import Resource
 from backend.schemas.evidence import EvidenceRequest
 from backend.services import evidence as evidence_service
@@ -278,10 +279,9 @@ async def test_slack_assembles_authorized_root_and_replies_in_original_order(cli
             await client.post(f"/api/evidence/sources/{identifier}/index", json={"project": "Atlas"})
         ).status_code == 200
     hits = (await search(client, question="Payment testing", expand_context=True)).json()["passages"]
-    assert len(hits) == 2
+    # The whole short thread is assembled (root + every reply) in original order within its token budget.
     assert any(h["reason"] == "thread_root" for h in hits)
-    assert {h["passage"]["metadata"]["message_id"] for h in hits} == {"100.000000", "100.000001"}
-    assert [h["passage"]["metadata"]["message_id"] for h in hits] == ["100.000000", "100.000001"]
+    assert [h["passage"]["metadata"]["message_id"] for h in hits] == ["100.000000", "100.000001", "100.000002"]
     assert sum(h["passage"]["tokens"] for h in hits) <= 600
     async with get_session_factory().begin() as db:
         root = await db.get(KnowledgeSource, identifiers[0])
@@ -529,3 +529,66 @@ async def test_chat_search_keeps_passages_for_current_status_questions(client: h
         open_ = await evidence_service.search(db, request, live_gate=False)
     assert gated.passages == [] and gated.coverage == "not_searched"
     assert open_.passages and any("confirm live facts" in warning for warning in open_.warnings)
+
+
+async def test_passage_version_change_skips_stale_index_then_rebuilds(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await indexed(client, "Payment testing is blocking the release.")
+    assert (await search(client)).json()["passages"]
+    # A new passage version (e.g. new chunk sizes) makes every existing index stale.
+    monkeypatch.setattr("backend.processing.passages.PASSAGE_VERSION", "test-next-cl100k_base")
+    monkeypatch.setattr("backend.repositories.evidence.PASSAGE_VERSION", "test-next-cl100k_base")
+    stale = await search(client)
+    assert stale.status_code == 200 and stale.json()["passages"] == []
+    assert await refresh_stale_indexes() == 1
+    hits = (await search(client)).json()["passages"]
+    assert hits and "blocking the release" in hits[0]["passage"]["content"]
+    assert await refresh_stale_indexes() == 0
+
+
+async def test_thread_reply_replaces_weaker_match_within_passage_limit(client: httpx.AsyncClient) -> None:
+    await indexed(client, "Planning notes: the release calendar is shared every quarter.")
+    async with get_session_factory().begin() as db:
+        account = ConnectorAccount(
+            owner_id="user_test",
+            provider="slack",
+            external_account_id="team",
+            display_name="Team",
+            status="connected",
+            authentication_status="valid",
+        )
+        db.add(account)
+        await db.flush()
+        factory = EnvelopeFactory(account.id, "user_test", "slack", "team")
+        identifiers = []
+        for timestamp, content in [
+            ("300.000000", "Atlas release go/no-go for Thursday?"),
+            ("300.000001", "QA re-tests Friday; the new target is Monday 10 AM."),
+        ]:
+            metadata: dict[str, object] = {
+                "channel_id": "C9",
+                "channel_name": "release",
+                "message_ts": timestamp,
+                "thread_ts": "300.000000",
+            }
+            resource = Resource(
+                id="C9:" + timestamp, name="release " + timestamp, kind="slack_message", parent_id="C9:300.000000",
+                metadata=metadata,
+            )
+            raw = "# " + resource.name + "\n\n" + "\n".join(
+                f"{key}: {json.dumps(value)}" for key, value in metadata.items()
+            ) + "\n\n" + content
+            envelope = factory.text(resource, raw, "message.md", "text/markdown")
+            await register(db, account, envelope)
+            identifiers.append(envelope.source_id)
+    for identifier in identifiers:
+        await ingest_source(identifier)
+        assert (
+            await client.post(f"/api/evidence/sources/{identifier}/index", json={"project": "Atlas"})
+        ).status_code == 200
+    response = await search(client, question="Atlas release go/no-go", max_passages=2, expand_context=True)
+    contents = [h["passage"]["content"] for h in response.json()["passages"]]
+    assert len(contents) == 2
+    assert any("Monday 10 AM" in text for text in contents)
+    assert not any("Planning notes" in text for text in contents)

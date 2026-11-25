@@ -41,6 +41,11 @@ from backend.services.connector_sources import asset_path, discard_unreferenced,
 from backend.services.ingestion import IngestionError, ingest_source
 
 ACTIVE = ("connected", "syncing", "connected_with_warning")
+# Chat snapshot search budget, tuned with scripts/rag_eval.py on the golden set (backend/tests/golden_set.py).
+SNAPSHOT_MAX_PASSAGES = 5
+SNAPSHOT_CONTEXT_TOKENS = 1800  # ~4 full passages; keeps two searches inside the free-tier budget
+SNAPSHOT_CANDIDATE_LIMIT = 24
+SNAPSHOT_MAX_MATERIALS = 8
 
 
 class ReadSource(Contract):
@@ -97,12 +102,29 @@ TOOL_MODELS: dict[str, tuple[type[BaseModel], str]] = {
 }
 
 
-@lru_cache(maxsize=2)
-def tool_definitions(email_enabled: bool = False) -> list[dict[str, object]]:
+# Tools that need a captured connection of one of these providers; others are always offered.
+PROVIDER_TOOLS: dict[str, frozenset[str]] = {
+    "search_provider": frozenset({"gmail", "google_drive", "github", "slack"}),
+    "read_resource": frozenset({"gmail", "google_drive", "github"}),
+    "github_status": frozenset({"github"}),
+    "prepare_file": frozenset({"google_drive", "github"}),
+    "draft_email": frozenset({"gmail"}),
+}
+
+
+@lru_cache(maxsize=64)
+def tool_definitions(
+    email_enabled: bool = False, providers: frozenset[str] | None = None
+) -> list[dict[str, object]]:
+    """Offer only usable tools: unusable schemas waste the model's bounded context on every step.
+
+    `providers=None` keeps the full list for callers that do not know the run's connections.
+    """
     return [
         {"type": "function", "name": name, "description": description, "parameters": model.model_json_schema()}
         for name, (model, description) in TOOL_MODELS.items()
-        if email_enabled or name != "draft_email"
+        if (email_enabled or name != "draft_email")
+        and (providers is None or name not in PROVIDER_TOOLS or bool(PROVIDER_TOOLS[name] & providers))
     ]
 
 
@@ -116,6 +138,9 @@ class Context:
 
     def accounts(self) -> list[dict[str, object]]:
         return records(self.scope.get("accounts", []))
+
+    def providers(self) -> frozenset[str]:
+        return frozenset(string(item.get("provider", "")) for item in self.accounts())
 
 
 async def connection(ctx: Context, identifier: UUID) -> tuple[NativeWorkspace, ConnectorAccount]:
@@ -316,8 +341,9 @@ async def snapshots(ctx: Context, args: SearchSnapshots) -> dict[str, object]:
         all_projects=ctx.request.project is None,
         connector_account_ids=ids,
         include_manual_sources=manual,
-        max_passages=5,
-        context_tokens=2200,
+        max_passages=SNAPSHOT_MAX_PASSAGES,
+        context_tokens=SNAPSHOT_CONTEXT_TOKENS,
+        candidate_limit=SNAPSHOT_CANDIDATE_LIMIT,
         retrieval="hybrid" if get_settings().embeddings.configured else "lexical",
     )
     output: list[Material] = []
@@ -372,7 +398,12 @@ async def snapshots(ctx: Context, args: SearchSnapshots) -> dict[str, object]:
         page = await read_canonical(ctx, ReadSource(source_id=identifier), match_terms=match_terms)
         output.extend(Material.model_validate(item) for item in records(page.get("materials", [])))
     return {
-        "materials": [item.model_dump(mode="json") for item in output[:8]],
+        "materials": [item.model_dump(mode="json") for item in output[:SNAPSHOT_MAX_MATERIALS]],
+        **(
+            {"message": "No passages matched. Try different or broader keywords, or finish and say what is missing."}
+            if not output
+            else {}
+        ),
         "warnings": result.warnings,
         "embedding_calls": result.embedding_calls,
         "embedding_input_tokens": result.embedding_input_tokens,

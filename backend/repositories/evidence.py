@@ -12,6 +12,7 @@ from sqlalchemy.sql import Select
 
 from backend.config import get_settings
 from backend.db.models import EmbeddingJob, EvidenceEmbedding, EvidencePassage, KnowledgeSource, PassageIndex
+from backend.db.session import get_session_factory
 from backend.processing.embedding_input import input_hash, profile
 from backend.processing.passages import PASSAGE_VERSION, build_passages, source_metadata, validate_passage
 from backend.processing.pipeline.validation import validate_result
@@ -131,6 +132,38 @@ async def refresh_index(db: AsyncSession, source: KnowledgeSource, result: Pipel
         await queue_embedding(db, source.id, profile(embedding.revision))
 
 
+async def refresh_stale_indexes(batch: int = 50) -> int:
+    """Rebuild passage indexes created by an older passage version or chunk setting; returns the count."""
+    rebuilt, after = 0, None
+    while True:
+        async with get_session_factory()() as db:
+            statement = select(PassageIndex.source_id).order_by(PassageIndex.source_id).limit(batch)
+            if after is not None:
+                statement = statement.where(PassageIndex.source_id > after)
+            identifiers = list(await db.scalars(statement))
+        if not identifiers:
+            return rebuilt
+        after = identifiers[-1]
+        for identifier in identifiers:
+            async with get_session_factory().begin() as db:
+                key = int.from_bytes(identifier.bytes[:8], "big", signed=True)
+                if not await db.scalar(select(func.pg_try_advisory_xact_lock(key))):
+                    continue  # Being parsed right now; that persist refreshes the index itself.
+                source = await db.get(KnowledgeSource, identifier)
+                index = await db.get(PassageIndex, identifier)
+                if source is None or index is None:
+                    continue
+                db.info["owner_id"] = source.owner_id
+                result = await parsed_source(db, identifier, source.owner_id)
+                if result is None:
+                    continue
+                labels = IndexRequest.model_validate(index.specification)
+                if index.fingerprint == index_fingerprint(result, labels):
+                    continue
+                await refresh_index(db, source, result)
+                rebuilt += 1
+
+
 async def queue_embedding(db: AsyncSession, source_id: UUID, identity: str) -> None:
     """Queue the bounded, rate-limited embedding worker for the current index version only."""
     index = await db.get(PassageIndex, source_id)
@@ -184,7 +217,10 @@ async def verified(db: AsyncSession, rows: list[EvidencePassage]) -> list[Passag
             continue
         labels = IndexRequest.model_validate(index.specification)
         if index.fingerprint != index_fingerprint(result, labels):
-            raise ValueError("Incompatible or stale passage index")
+            # Built by another chunking/passage version: never serve it, but do not fail every search.
+            # refresh_stale_indexes() rebuilds it at startup.
+            logger.warning("Skipping stale passage index source=%s until it is rebuilt", source_id)
+            continue
         metadata = source_metadata(result.canonical, labels)
         for row in group:
             passage = Passage.model_validate(row.payload)
@@ -226,6 +262,7 @@ async def candidates(db: AsyncSession, request: EvidenceRequest) -> list[Evidenc
     ranks = {row[0].id: (float(row[1]), bool(row[2])) for row in records}
     passages = await verified(db, rows)
     hits: list[EvidenceHit] = []
+    by_source_name: list[EvidenceHit] = []
     for p in passages:
         coverage = len(set(terms) & set(re.findall(r"\w+", p.content.lower()))) / len(terms)
         section_match = bool(set(terms) & set(re.findall(r"\w+", str(p.metadata.get("section", "")).lower())))
@@ -233,6 +270,11 @@ async def candidates(db: AsyncSession, request: EvidenceRequest) -> list[Evidenc
         # Keep stemming-only body matches; a shared Project prefix alone is not evidence.
         if matched_body or coverage or section_match:
             hits.append(EvidenceHit(passage=p, score=coverage + rank_value))
+        elif set(terms) & set(re.findall(r"[^\W_]+", str(p.metadata.get("source", "")).lower())):
+            # A file named on_call_rotation.csv is evidence for "on call" when nothing else matches.
+            by_source_name.append(EvidenceHit(passage=p, score=rank_value))
+    if not hits:
+        hits = by_source_name
     hits.sort(key=lambda hit: (-hit.score, hit.passage.id))
     return [hit.model_copy(update={"lexical_rank": i + 1}) for i, hit in enumerate(hits)]
 

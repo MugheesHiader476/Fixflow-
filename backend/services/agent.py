@@ -62,6 +62,56 @@ INSTRUCTIONS = SYSTEM_PROMPT
 WHITESPACE = re.compile(r"[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
 
 
+MODEL_MATERIAL_FIELDS = ("id", "title", "text", "warning")
+# Bookkeeping for the server and UI; the model never needs it to answer or cite.
+SERVER_ONLY_RESULT_FIELDS = frozenset({"embedding_calls", "embedding_input_tokens", "pending_source_id"})
+
+
+def model_output(result: dict[str, object]) -> dict[str, object]:
+    """Model-facing tool result: evidence text and IDs only.
+
+    Full materials (spans, hashes, provenance, ranks) stay in `run.materials`, which drives
+    citation validation and the source list. Sending them back costs ~300 tokens per passage.
+    """
+    view = {key: value for key, value in result.items() if key not in SERVER_ONLY_RESULT_FIELDS}
+    if "materials" in view:
+        view["materials"] = [
+            {key: item[key] for key in MODEL_MATERIAL_FIELDS if item.get(key) is not None}
+            for item in records(view["materials"])
+        ]
+    warnings = view.get("warnings")
+    if isinstance(warnings, list):
+        view["warnings"] = list(dict.fromkeys(str(item) for item in warnings))[:4]
+    return view
+
+
+REPEATED_CALL: dict[str, object] = {
+    "error": "repeated_call",
+    "message": (
+        "This exact call already ran and its result is above. Use different keywords or another tool, "
+        "or call finish and state what evidence is missing."
+    ),
+}
+
+
+def repeated_call(messages: list[dict[str, object]], call: dict[str, object]) -> bool:
+    """Identical tool calls return identical results; re-running them only burns steps and tokens."""
+
+    def normalized(arguments: object) -> object:
+        try:
+            return json.loads(string(arguments))
+        except (ValueError, TypeError):
+            return arguments
+
+    target = (call.get("name"), normalized(call.get("arguments")))
+    return any(
+        item.get("type") == "function_call"
+        and item.get("call_id") != call.get("call_id")
+        and (item.get("name"), normalized(item.get("arguments"))) == target
+        for item in messages
+    )
+
+
 def retry_after(response: httpx.Response) -> float:
     """Bounded provider wait; free-tier token windows reset within a minute."""
     try:
@@ -451,11 +501,16 @@ async def process_step(identifier: UUID) -> None:
                 raise
             await authorize(ctx)
             await ensure_mutable(ctx, automatic=True)
-            response = await grok.respond(messages, tool_definitions(ctx.request.email_enabled), config)
+            response = await grok.respond(
+                messages, tool_definitions(ctx.request.email_enabled, ctx.providers()), config
+            )
         else:
             await authorize(ctx)
-            async with asyncio.timeout(180):
-                result = await dispatch(ctx, call)
+            if repeated_call(messages, call):
+                result = dict(REPEATED_CALL)
+            else:
+                async with asyncio.timeout(180):
+                    result = await dispatch(ctx, call)
             serialized_size(result)
             cleaned = record(redact(result, configured_secrets()))
             originals = records(result.get("materials", []))
@@ -483,6 +538,11 @@ async def process_step(identifier: UUID) -> None:
             result = {"error": "tool_unavailable", "message": str(error.detail)}
         else:
             failure = "Workflow request could not be completed"
+    except grok.DailyQuotaExceeded:
+        failure = (
+            "The chat provider's daily free-tier quota is used up. Try again later (Groq's quota is rolling over "
+            "24 hours) or upgrade the provider plan."
+        )
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         if status in {401, 403}:
@@ -493,7 +553,10 @@ async def process_step(identifier: UUID) -> None:
             # Free tiers meter tokens per minute; wait and resume the same step within the run deadline.
             failure, delay = "Chat provider rate limit; workflow will resume", retry_after(error.response)
         elif status == 413:
-            failure = "The request exceeds the chat provider's per-request token limit; lower GROK__INPUT_TOKEN_LIMIT."
+            failure = (
+                "The request exceeds the chat provider's per-minute token limit; lower GROK__INPUT_TOKEN_LIMIT "
+                "or GROK__MAX_OUTPUT_TOKENS."
+            )
         else:
             failure = "Chat provider is unavailable. Try again later; no automatic paid retry."
     except (
@@ -525,7 +588,7 @@ async def process_step(identifier: UUID) -> None:
                 usage[key] = usage.get(key, 0) + count if usage.get(key, 0) is not None and count is not None else None
             run.usage = usage
             previous_ids = {item.get("call_id") for item in run.messages if item.get("type") == "function_call"}
-            allowed = {value["name"] for value in tool_definitions(ctx.request.email_enabled)}
+            allowed = {value["name"] for value in tool_definitions(ctx.request.email_enabled, ctx.providers())}
             if any(item["call_id"] in previous_ids or item["name"] not in allowed for item in response.calls):
                 run.status, run.error = "failed", "Unknown or duplicate model tool call rejected"
                 return
@@ -565,7 +628,7 @@ async def process_step(identifier: UUID) -> None:
                     {
                         "type": "function_call_output",
                         "call_id": call["call_id"],
-                        "output": json.dumps(result, ensure_ascii=False),
+                        "output": json.dumps(model_output(result), ensure_ascii=False),
                     },
                 ]
                 run.pending_calls = run.pending_calls[1:]

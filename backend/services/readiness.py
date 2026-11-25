@@ -42,7 +42,7 @@ async def database_readiness(owner: str | None = None) -> dict[str, object]:
         "embedding_configured": False,
         "ai_generation": "removed",
         "processing_mode": "parsing_only",
-        "evidence_search": "project_opt_in",
+        "evidence_search": "automatic",
         "evidence_semantic": "configured" if settings.embeddings.configured else "not_configured",
         "ocr": "available" if ocr_available(settings.pipeline) else "not_configured",
         "workspace_agent": "configured" if settings.grok.configured else "not_configured",

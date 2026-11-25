@@ -7,7 +7,7 @@ from typing import cast
 
 import httpx
 
-from backend.connectors.core import record, records, string
+from backend.connectors.core import ConnectorError, record, records, string
 from backend.processing.passages import tokens
 from backend.schemas.agent import GrokConfig
 from backend.security.policy import validate_disclosure
@@ -29,13 +29,31 @@ async def respond(messages: list[dict[str, object]], tools: list[dict[str, objec
     if not config.configured or config.api_key is None:
         raise ValueError("Configure the chat API key and model")
     validate_disclosure(messages, configured_secrets())
-    if tokens(json.dumps([messages, tools], ensure_ascii=False)) > config.input_token_limit:
-        raise ValueError("Workflow context budget exceeded; narrow the request or selected sources")
+    messages, tools = within_budget(messages, tools, config.input_token_limit)
     if config.provider == "groq":
         output, usage = await groq_output(messages, tools, config)
     else:
         output, usage = await xai_output(messages, tools, config)
     return validated_step(output, usage)
+
+
+FINISH_NOW = (
+    "Server note: the context budget for this answer is reached. Call finish now using only evidence already "
+    "returned above, and list anything still missing in limitations."
+)
+
+
+def within_budget(
+    messages: list[dict[str, object]], tools: list[dict[str, object]], limit: int
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Fit the bounded context; near the limit, offer only `finish` so collected evidence is still answered."""
+    if tokens(json.dumps([messages, tools], ensure_ascii=False)) <= limit:
+        return messages, tools
+    finish = [tool for tool in tools if tool.get("name") == "finish"]
+    final: list[dict[str, object]] = [*messages, {"role": "user", "content": FINISH_NOW}]
+    if finish and tokens(json.dumps([final, finish], ensure_ascii=False)) <= limit:
+        return final, finish
+    raise ValueError("Workflow context budget exceeded; narrow the request or selected sources")
 
 
 async def bounded_body(response: httpx.Response) -> bytes:
@@ -174,6 +192,16 @@ async def groq_output(
             body = await bounded_body(response)
             if response.status_code == 400 and attempt == 0 and tool_use_failed(body):
                 continue
+            if response.status_code == 429 and request_too_large(body):
+                # A single request above a per-minute token limit never succeeds by waiting.
+                raise httpx.HTTPStatusError(
+                    "Chat request exceeds a per-minute token limit",
+                    request=response.request,
+                    response=httpx.Response(413, request=response.request),
+                )
+            if response.status_code == 429 and daily_quota(body):
+                # Waiting minutes per step would only stall the run past its deadline.
+                raise DailyQuotaExceeded
             response.raise_for_status()
         break
     payload = record(json.loads(body))
@@ -200,12 +228,28 @@ async def groq_output(
     return output, usage
 
 
-def tool_use_failed(body: bytes) -> bool:
+def provider_error(body: bytes) -> dict[str, object]:
     try:
-        error = record(record(json.loads(body)).get("error", {}))
-    except (ValueError, TypeError):
-        return False
-    return error.get("code") == "tool_use_failed"
+        return record(record(json.loads(body)).get("error", {}))
+    except (ValueError, TypeError, ConnectorError):
+        return {}
+
+
+def tool_use_failed(body: bytes) -> bool:
+    return provider_error(body).get("code") == "tool_use_failed"
+
+
+class DailyQuotaExceeded(RuntimeError):
+    """The provider's per-day token or request quota is used up (e.g. Groq free tier: 200K tokens/day)."""
+
+
+def daily_quota(body: bytes) -> bool:
+    message = str(provider_error(body).get("message", ""))
+    return "per day" in message and ("(TPD)" in message or "(RPD)" in message)
+
+
+def request_too_large(body: bytes) -> bool:
+    return str(provider_error(body).get("message", "")).startswith("Request too large")
 
 
 def validated_step(output: list[dict[str, object]], usage: dict[str, object]) -> GrokStep:
