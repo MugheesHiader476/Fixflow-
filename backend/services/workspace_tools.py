@@ -41,6 +41,11 @@ from backend.services.connector_sources import asset_path, discard_unreferenced,
 from backend.services.ingestion import IngestionError, ingest_source
 
 ACTIVE = ("connected", "syncing", "connected_with_warning")
+# Chat snapshot search budget, tuned with scripts/rag_eval.py on the golden set (backend/tests/golden_set.py).
+SNAPSHOT_MAX_PASSAGES = 5
+SNAPSHOT_CONTEXT_TOKENS = 2200
+SNAPSHOT_CANDIDATE_LIMIT = 24
+SNAPSHOT_MAX_MATERIALS = 8
 
 
 class ReadSource(Contract):
@@ -336,8 +341,9 @@ async def snapshots(ctx: Context, args: SearchSnapshots) -> dict[str, object]:
         all_projects=ctx.request.project is None,
         connector_account_ids=ids,
         include_manual_sources=manual,
-        max_passages=5,
-        context_tokens=2200,
+        max_passages=SNAPSHOT_MAX_PASSAGES,
+        context_tokens=SNAPSHOT_CONTEXT_TOKENS,
+        candidate_limit=SNAPSHOT_CANDIDATE_LIMIT,
         retrieval="hybrid" if get_settings().embeddings.configured else "lexical",
     )
     output: list[Material] = []
@@ -392,7 +398,7 @@ async def snapshots(ctx: Context, args: SearchSnapshots) -> dict[str, object]:
         page = await read_canonical(ctx, ReadSource(source_id=identifier), match_terms=match_terms)
         output.extend(Material.model_validate(item) for item in records(page.get("materials", [])))
     return {
-        "materials": [item.model_dump(mode="json") for item in output[:8]],
+        "materials": [item.model_dump(mode="json") for item in output[:SNAPSHOT_MAX_MATERIALS]],
         "warnings": result.warnings,
         "embedding_calls": result.embedding_calls,
         "embedding_input_tokens": result.embedding_input_tokens,
