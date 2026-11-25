@@ -26,7 +26,7 @@ SOFT_MAX_TOKENS = 650
 DEFAULT_OVERLAP = 0
 LONG_PROSE_OVERLAP = 40
 SLACK_TARGET_TOKENS = 600
-PASSAGE_VERSION = "1-cl100k_base"
+PASSAGE_VERSION = "2-cl100k_base"  # 2: searchable source names in the prefix
 MAX_PASSAGES = 20000
 MAX_PASSAGE_BYTES = 64 * 1024 * 1024
 
@@ -89,10 +89,22 @@ def source_metadata(document: CanonicalDocument, labels: IndexRequest) -> dict[s
     return {key: value[:4096] if isinstance(value, str) else value for key, value in metadata.items()}
 
 
+def searchable_name(value: object) -> str:
+    """`on_call_rotation.csv` → `on call rotation (on_call_rotation.csv)`.
+
+    PostgreSQL full-text search reads a separator-joined file name as one host/file token, so none of
+    its words would match a query; the spaced form keeps them searchable and the original stays visible.
+    """
+    name = str(value or "")
+    words = re.sub(r"[_\-.]+", " ", re.sub(r"\.[A-Za-z0-9]{1,5}$", "", name)).strip()
+    return f"{words} ({name})" if words and words != name and re.search(r"[_\-.]", name) else name
+
+
 def prefix(metadata: dict[str, object]) -> str:
     fields = [("Project", "project"), ("Source", "source"), ("Section", "section"), ("Date", "date")]
     fields += [("Sender", "sender"), ("Subject", "subject"), ("File", "file_path"), ("Function", "function")]
-    return "\n".join(f"{label}: {brief(metadata[key], 24)}" for label, key in fields if key in metadata)
+    values = {**metadata, "source": searchable_name(metadata["source"])} if "source" in metadata else metadata
+    return "\n".join(f"{label}: {brief(values[key], 24)}" for label, key in fields if key in values)
 
 
 def span(block: Block, start: int, end: int, *, rows: bool = False) -> Span:

@@ -262,6 +262,7 @@ async def candidates(db: AsyncSession, request: EvidenceRequest) -> list[Evidenc
     ranks = {row[0].id: (float(row[1]), bool(row[2])) for row in records}
     passages = await verified(db, rows)
     hits: list[EvidenceHit] = []
+    by_source_name: list[EvidenceHit] = []
     for p in passages:
         coverage = len(set(terms) & set(re.findall(r"\w+", p.content.lower()))) / len(terms)
         section_match = bool(set(terms) & set(re.findall(r"\w+", str(p.metadata.get("section", "")).lower())))
@@ -269,6 +270,11 @@ async def candidates(db: AsyncSession, request: EvidenceRequest) -> list[Evidenc
         # Keep stemming-only body matches; a shared Project prefix alone is not evidence.
         if matched_body or coverage or section_match:
             hits.append(EvidenceHit(passage=p, score=coverage + rank_value))
+        elif set(terms) & set(re.findall(r"[^\W_]+", str(p.metadata.get("source", "")).lower())):
+            # A file named on_call_rotation.csv is evidence for "on call" when nothing else matches.
+            by_source_name.append(EvidenceHit(passage=p, score=rank_value))
+    if not hits:
+        hits = by_source_name
     hits.sort(key=lambda hit: (-hit.score, hit.passage.id))
     return [hit.model_copy(update={"lexical_rank": i + 1}) for i, hit in enumerate(hits)]
 

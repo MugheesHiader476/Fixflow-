@@ -8,7 +8,14 @@ from pathlib import Path
 import pytest
 
 from backend.processing import passages as module
-from backend.processing.passages import build_passages, reconstruct, tokens, validate_passage
+from backend.processing.passages import (
+    build_passages,
+    prefix,
+    reconstruct,
+    searchable_name,
+    tokens,
+    validate_passage,
+)
 from backend.processing.pipeline.runner import run_pipeline
 from backend.schemas.evidence import IndexRequest
 
@@ -187,3 +194,9 @@ def test_tokenizer_work_is_bounded_for_large_indivisible_input(
     assert len(values) > 2
     for p in values:
         validate_passage(document, p)
+
+
+def test_source_names_stay_searchable_in_prefix() -> None:
+    assert searchable_name("on_call_rotation.csv") == "on call rotation (on_call_rotation.csv)"
+    assert searchable_name("Weekly Report") == "Weekly Report"
+    assert "Source: on call rotation (on_call_rotation.csv)" in prefix({"source": "on_call_rotation.csv"})
