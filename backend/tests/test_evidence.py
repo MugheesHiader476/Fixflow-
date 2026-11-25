@@ -25,6 +25,7 @@ from backend.db.models import (
     PassageIndex,
 )
 from backend.db.session import get_session_factory
+from backend.repositories.evidence import refresh_stale_indexes
 from backend.schemas.connectors import Resource
 from backend.schemas.evidence import EvidenceRequest
 from backend.services import evidence as evidence_service
@@ -529,3 +530,19 @@ async def test_chat_search_keeps_passages_for_current_status_questions(client: h
         open_ = await evidence_service.search(db, request, live_gate=False)
     assert gated.passages == [] and gated.coverage == "not_searched"
     assert open_.passages and any("confirm live facts" in warning for warning in open_.warnings)
+
+
+async def test_passage_version_change_skips_stale_index_then_rebuilds(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await indexed(client, "Payment testing is blocking the release.")
+    assert (await search(client)).json()["passages"]
+    # A new passage version (e.g. new chunk sizes) makes every existing index stale.
+    monkeypatch.setattr("backend.processing.passages.PASSAGE_VERSION", "test-next-cl100k_base")
+    monkeypatch.setattr("backend.repositories.evidence.PASSAGE_VERSION", "test-next-cl100k_base")
+    stale = await search(client)
+    assert stale.status_code == 200 and stale.json()["passages"] == []
+    assert await refresh_stale_indexes() == 1
+    hits = (await search(client)).json()["passages"]
+    assert hits and "blocking the release" in hits[0]["passage"]["content"]
+    assert await refresh_stale_indexes() == 0

@@ -24,6 +24,7 @@ from backend.api.routes import router
 from backend.config import get_settings
 from backend.connectors.core import ConnectorError
 from backend.db.session import close_database
+from backend.repositories.evidence import refresh_stale_indexes
 from backend.services.agent import worker as agent_worker
 from backend.services.connector_sync import connector_worker
 from backend.services.embeddings import embedding_worker
@@ -35,12 +36,23 @@ logger = logging.getLogger(__name__)
 protect_access_logs()
 
 
+async def rebuild_stale_indexes() -> None:
+    """After a passage-version or chunking change, rebuild old indexes in the background."""
+    try:
+        rebuilt = await refresh_stale_indexes()
+        if rebuilt:
+            logger.info("Rebuilt %s stale passage indexes", rebuilt)
+    except (SQLAlchemyError, PostgresError, OSError, ValueError) as error:
+        logger.error("Passage index maintenance failed (%s)", type(error).__name__)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     worker = asyncio.create_task(ingestion_worker(), name="document-ingestion")
     connectors = asyncio.create_task(connector_worker(), name="connector-sync")
     embeddings = asyncio.create_task(embedding_worker(), name="evidence-embeddings")
     agents = asyncio.create_task(agent_worker(), name="workspace-agents")
+    maintenance = asyncio.create_task(rebuild_stale_indexes(), name="passage-index-maintenance")
     try:
         yield
     finally:
@@ -48,6 +60,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         connectors.cancel()
         embeddings.cancel()
         agents.cancel()
+        maintenance.cancel()
+        with suppress(asyncio.CancelledError):
+            await maintenance
         with suppress(asyncio.CancelledError):
             await worker
         with suppress(asyncio.CancelledError):
